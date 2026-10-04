@@ -13,13 +13,14 @@
 //   - the online copy (GitHub Pages, made by owlbear/publish_online.py), which also loads
 //     on the laptop: it only has 🎯 Target. A pick is saved on the scene, Owlbear shares
 //     it with every open tab, and the Dell's copy reports it with everything else.
-import OBR, { buildText } from "./obr-sdk.js";
+import OBR, { buildShape, buildText } from "./obr-sdk.js";
 import { contains, isRoom, size } from "./areas.js";
 import { HP_KEY, MARK_PREFIX, PLACE_KEY, TARGET_KEY, WHO_KEY } from "./keys.js";
 
 const HEARTBEAT_MS = 10000;
 const DEBOUNCE_MS = 250;
 const TODO_MS = 1000; // how often the Dell's copy asks the panel for map jobs
+const PING_MS = 3000; // how long 📍 rings a token
 const LOCAL = location.hostname === "localhost"; // served by the panel, on the Dell
 
 let timer = null;
@@ -150,6 +151,33 @@ async function setMark(id, text) {
   ]);
 }
 
+async function ping(id) {
+  // 📍 from the panel: a ring around that token for a moment, so the DM sees which one a row
+  // is. Hidden, so only the GM sees it (on the laptop too), never the projector.
+  const [token] = await OBR.scene.items.getItems([id]);
+  if (!token) return;
+  const dpi = await OBR.scene.grid.getDpi();
+  const ringId = `dnd-npc-ping-${id}-${Date.now()}`;
+  await OBR.scene.items.addItems([
+    buildShape()
+      .id(ringId)
+      .shapeType("CIRCLE")
+      .width(dpi * 1.6)
+      .height(dpi * 1.6)
+      .position(token.position)
+      .strokeColor("#ffd27a")
+      .strokeWidth(dpi / 12)
+      .fillOpacity(0)
+      .attachedTo(id)
+      .layer("ATTACHMENT")
+      .visible(false)
+      .locked(true)
+      .disableHit(true)
+      .build(),
+  ]);
+  setTimeout(() => OBR.scene.items.deleteItems([ringId]), PING_MS);
+}
+
 let busy = false;
 async function todo() {
   if (busy) return;
@@ -161,6 +189,7 @@ async function todo() {
       try {
         if (job.op === "hp") await setHp(job.id, job.damage);
         else if (job.op === "mark") await setMark(job.id, job.text);
+        else if (job.op === "ping") await ping(job.id);
       } catch (e) {
         console.warn("dnd-npc map job failed", job, e);
       }
