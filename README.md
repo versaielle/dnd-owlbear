@@ -1,10 +1,3 @@
-# DND NPC targets (Owlbear Rodeo extension)
+# dnd-owlbear
 
-Adds **🎯 Target** to the right-click menu of tokens, for the GM. The pick is saved on the
-scene, where a private companion extension on the GM's own PC reads it.
-
-Add it in Owlbear Rodeo with this URL:
-
-    https://versaielle.github.io/dnd-owlbear/manifest.json
-
-Published from a private project by `owlbear/publish_online.py`; don't edit here.
+Public images for a private Owlbear Rodeo extension: the D&D condition badges shown on tokens (conditions/<name>.png).

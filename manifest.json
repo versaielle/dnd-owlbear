@@ -1,9 +1,0 @@
-{
-  "name": "DND NPC targets",
-  "version": "1.0.0",
-  "manifest_version": 1,
-  "description": "🎯 Target: right-click a token to tell the voice system on the Dell what a spell or attack is aimed at.",
-  "author": "dnd-npc",
-  "icon": "/dnd-owlbear/icon.svg",
-  "background_url": "/dnd-owlbear/background.html"
-}
