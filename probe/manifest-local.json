@@ -1,0 +1,16 @@
+{
+  "name": "DND FX probe (local)",
+  "version": "0.1.0",
+  "manifest_version": 1,
+  "author": "dnd-npc",
+  "description": "Stage-0 probe for the DND NPC spell effects: shaders, ticks, tools, broadcast, fog, hosting.",
+  "icon": "http://localhost:7440/probe/icon.svg",
+  "background_url": "http://localhost:7440/probe/background.html?m=local",
+  "action": {
+    "title": "DND FX probe (local)",
+    "icon": "http://localhost:7440/probe/icon.svg",
+    "popover": "http://localhost:7440/probe/popover.html?m=local",
+    "width": 440,
+    "height": 620
+  }
+}

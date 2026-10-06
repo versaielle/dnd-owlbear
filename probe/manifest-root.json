@@ -1,0 +1,16 @@
+{
+  "name": "DND FX probe (root)",
+  "version": "0.1.0",
+  "manifest_version": 1,
+  "author": "dnd-npc",
+  "description": "Stage-0 probe for the DND NPC spell effects: shaders, ticks, tools, broadcast, fog, hosting.",
+  "icon": "/dnd-owlbear/probe/icon.svg",
+  "background_url": "/dnd-owlbear/probe/background.html?m=root",
+  "action": {
+    "title": "DND FX probe (root)",
+    "icon": "/dnd-owlbear/probe/icon.svg",
+    "popover": "/dnd-owlbear/probe/popover.html?m=root",
+    "width": 440,
+    "height": 620
+  }
+}

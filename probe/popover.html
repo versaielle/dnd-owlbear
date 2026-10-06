@@ -1,0 +1,200 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>DND FX probe</title>
+<style>
+  body { margin: 0; padding: 10px 12px; font: 12px/1.35 system-ui, sans-serif; color: #fff; }
+  h1 { font-size: 14px; margin: 0 0 4px; }
+  h4 { margin: 10px 0 4px; font-size: 10px; letter-spacing: .08em; text-transform: uppercase; opacity: .7; }
+  .sub { opacity: .75; font-size: 11px; word-break: break-all; }
+  .ok { color: #7fd99a; } .warn { color: #f0c36b; } .bad { color: #f08a7b; }
+  button { margin: 2px 4px 2px 0; padding: 4px 8px; border: 0; border-radius: 6px; background: rgba(255,255,255,.14);
+           color: inherit; font: inherit; cursor: pointer; }
+  button:hover { background: rgba(255,255,255,.24); }
+  button.gm { background: rgba(255,210,122,.22); }
+  select, label { font: inherit; color: inherit; }
+  select { background: rgba(0,0,0,.3); border: 1px solid rgba(255,255,255,.2); border-radius: 4px; }
+  table { border-collapse: collapse; width: 100%; font-size: 11px; }
+  td, th { border-bottom: 1px solid rgba(255,255,255,.12); padding: 2px 3px; text-align: left; vertical-align: top; }
+  pre { white-space: pre-wrap; word-break: break-all; margin: 0; font: 10px/1.3 ui-monospace, monospace; max-height: 160px; overflow: auto; }
+  textarea { width: 100%; height: 70px; font: 10px ui-monospace, monospace; background: rgba(0,0,0,.3); color: #ddd; border: 0; }
+  details summary { cursor: pointer; }
+</style>
+</head>
+<body>
+<h1>🧪 DND FX probe</h1>
+<div class="sub" id="who">Connecting…</div>
+
+<h4>Run</h4>
+<label>on <select id="scope"><option value="self">this client</option><option value="all">every client</option></select></label>
+<div>
+  <button data-op="p3" title="Good, broken, missing-uniform and vec4 effects for 8 s">P3 shaders</button>
+  <button data-op="p4" title="3 s normal + 3 s fastUpdate uniform ticks">P4/P5 ticks</button>
+  <button data-op="p8" title="One item per layer at the view centre, 60 s (pan to fog first)">P8 layers</button>
+  <button data-op="p9" title="Hidden-item counts + local rings on hidden tokens, 30 s">P9 hidden</button>
+  <button data-op="p11" title="Fireball-size burst x3 at the view centre">P11 burst</button>
+  <button data-op="p13" title="Cold / warm / prewarmed / lite burst timings">P13 cold/warm</button>
+  <button data-op="report" title="Re-send the report">Report</button>
+  <button data-op="cleanup" title="Delete local probe items (GM: also the P7 circle)">Cleanup</button>
+</div>
+<div>
+  <button data-op="p12" data-to="self" title="One 15 KB + one 20 KB broadcast, then 40 small in 1 s">P12 load (this client)</button>
+</div>
+<div id="gmrow" hidden>
+  <button class="gm" id="p2pop" title="Fetch localhost:7440 and :7420 from this popover (a click = a user gesture)">P2 fetch here</button>
+  <button class="gm" data-op="p7" data-to="self" title="Shared PROP circle + every client's local ATTACHMENT effect">P7 attach test</button>
+  <button class="gm" data-op="p7b" data-to="self" title="Attach the P7 circle to the one selected token">P7b circle → selected token</button>
+  <button class="gm" data-op="p2" data-to="self" title="P2 again from the background">P2 again</button>
+  <label><input type="checkbox" id="nop2"> skip P2 on this device</label>
+</div>
+<div id="out" class="sub"></div>
+
+<h4>Clients</h4>
+<div id="table">Waiting for reports…</div>
+
+<h4>Events (tool, commands)</h4>
+<pre id="events"></pre>
+
+<h4>This client</h4>
+<pre id="mine"></pre>
+
+<details><summary class="sub">All as JSON</summary><textarea id="json" readonly></textarea></details>
+
+<script type="module">
+import OBR from "./obr-sdk.js";
+
+const VARIANT = new URLSearchParams(location.search).get("m") || "unknown";
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+const short = (o) => JSON.stringify(o ?? null);
+let chan = null;
+try { chan = new BroadcastChannel(`dnd-probe-${VARIANT}`); } catch { /* no channel */ }
+let conn = "";
+let role = "";
+let last = null; // the background's last state
+const live = new Map(); // reports heard here directly (if the background channel fails)
+
+function uaShort(ua = "") {
+  if (/CrKey/i.test(ua)) return "Chromecast";
+  const os = /Android/.test(ua) ? "Android" : /iPhone|iPad/.test(ua) ? "iOS" : /Windows/.test(ua) ? "Win" : /Mac OS/.test(ua) ? "Mac" : /Linux/.test(ua) ? "Linux" : "?";
+  const br = /Edg\//.test(ua) ? "Edge" : /Chrome\//.test(ua) ? "Chrome" : /Firefox\//.test(ua) ? "Firefox" : /Safari\//.test(ua) ? "Safari" : "?";
+  return `${br}/${os}`;
+}
+
+function cell(entry) {
+  const rep = entry.report?.results || {};
+  const res = { ...rep, ...entry.results };
+  const runs = res.p4?.runs || [];
+  const p4 = runs.map((r) => `${r.path?.[0] || "?"}:${r.updatesPerSec ?? "x"}`).join(" ");
+  const raf = runs[0]?.rafPerSec;
+  const p3 = res.p3?.cases ? res.p3.cases.map((c) => (c.ok ? "✓" : "✗")).join("") : "";
+  const p10 = res.p10 ? Object.keys(res.p10.foreign || {}).length : "";
+  const p11 = res.p11?.avgUpdatesPerSec ?? "";
+  const p13 = res.p13?.summary ? `${res.p13.summary.cold?.first}/${res.p13.summary.warm?.first}` : "";
+  const p2 = res.p2 ? `${res.p2.probeServer?.ok ? "✓" : "✗"}${res.p2.panel?.status ?? (res.p2.panel?.ok ? "✓" : "✗")}` : "";
+  return { p4, raf, p3, p10, p11, p13, p2 };
+}
+
+function render() {
+  const entries = last?.reports?.length ? last.reports : [...live.values()];
+  if (role === "GM") {
+    if (!entries.length) $("table").textContent = "No reports yet.";
+    else {
+      const rows = entries.map((e) => {
+        const c = cell(e);
+        const info = e.report?.info || {};
+        return `<tr><td>${esc(e.from?.name)}<br><span class="sub">${esc(e.kind)} · ${esc(e.from?.role)} · ${esc(e.conn?.slice(0, 6))}</span></td>
+          <td>${esc(e.from?.variant)}<br><span class="sub">${esc((e.from?.origin || "").replace(/^https?:\/\//, ""))}</span></td>
+          <td>${esc(uaShort(info.ua))}${info.coarse ? " 👆" : ""}</td>
+          <td title="P3 good/broken/missing/vec4">${esc(c.p3)}</td>
+          <td title="P4 updates/s normal fast · rAF/s">${esc(c.p4)}<br><span class="sub">raf ${esc(c.raf)}</span></td>
+          <td title="P2 probe server / panel">${esc(c.p2)}</td>
+          <td title="P10 foreign installs heard">${esc(c.p10)}</td>
+          <td title="P11 avg updates/s · P13 cold/warm first ms">${esc(c.p11)}<br><span class="sub">${esc(c.p13)}</span></td></tr>`;
+      });
+      $("table").innerHTML = `<table><tr><th>who</th><th>install</th><th>UA</th><th>P3</th><th>P4</th><th>P2</th><th>P10</th><th>P11/13</th></tr>${rows.join("")}</table>`;
+    }
+  } else {
+    $("table").textContent = "The GM's popover shows every client.";
+  }
+  const evs = last?.events || [];
+  $("events").textContent = evs.slice(-40).map((e) => `${e.who ? e.who + " " : ""}${short(e)}`).join("\n");
+  const mine = last?.results || {};
+  $("mine").textContent = Object.entries(mine).filter(([k]) => k !== "info" && k !== "events")
+    .map(([k, v]) => `${k}: ${short(v)}`).join("\n").slice(0, 6000);
+  $("json").value = JSON.stringify({ me: last?.me, results: last?.results, reports: entries, events: evs }, null, 1);
+}
+
+function send(op, to) {
+  const cmd = { op, to, ...(op === "p3" ? { holdMs: 8000 } : {}) };
+  if (chan) chan.postMessage({ type: "cmd", conn, cmd });
+  $("out").textContent = `sent ${op} (${to})`;
+}
+
+document.querySelectorAll("button[data-op]").forEach((b) => {
+  b.onclick = () => send(b.dataset.op, b.dataset.to || $("scope").value);
+});
+
+async function hello(url) {
+  const t0 = performance.now();
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), 2000);
+  try {
+    const r = await fetch(url, { signal: ac.signal, cache: "no-store" });
+    return { url, ok: r.ok, status: r.status, ms: Math.round(performance.now() - t0), body: (await r.text()).slice(0, 120) };
+  } catch (e) {
+    return { url, ok: false, error: `${e.name}: ${e.message}`, ms: Math.round(performance.now() - t0) };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+$("p2pop").onclick = async () => {
+  $("out").textContent = "P2 from the popover…";
+  const res = [await hello("http://localhost:7440/api/map/hello"), await hello("http://localhost:7420/api/map/hello")];
+  $("out").innerHTML = res.map((r) => `<div class="${r.ok ? "ok" : "bad"}">${esc(r.url)}: ${esc(r.ok ? r.status + " " + r.body : r.error)} (${r.ms} ms)</div>`).join("");
+  // The background keeps it with its results (and a GM's goes to the log).
+  if (chan) chan.postMessage({ type: "cmd", conn, cmd: { op: "p2popover", to: "self", data: res } });
+};
+
+$("nop2").onchange = (e) => {
+  try {
+    if (e.target.checked) localStorage.setItem("dnd-probe/no-p2", "1");
+    else localStorage.removeItem("dnd-probe/no-p2");
+  } catch { /* storage blocked */ }
+};
+
+if (chan) {
+  chan.onmessage = (e) => {
+    if (e.data?.type === "state" && e.data.conn === conn) {
+      last = e.data;
+      render();
+    }
+  };
+}
+
+OBR.onReady(async () => {
+  conn = await OBR.player.getConnectionId();
+  role = await OBR.player.getRole();
+  const name = await OBR.player.getName();
+  $("who").textContent = `${name} · ${role} · ${conn.slice(0, 8)} · install "${VARIANT}" @ ${location.origin}`;
+  $("gmrow").hidden = role !== "GM";
+  try { $("nop2").checked = localStorage.getItem("dnd-probe/no-p2") === "1"; } catch { /* storage blocked */ }
+  // Fallback: hear reports here too, in case the background channel doesn't work.
+  OBR.broadcast.onMessage("dnd-probe/report", (e) => {
+    const d = e.data;
+    if (d?.type !== "report") return;
+    live.set(`${d.from?.conn}|${d.from?.variant}`, { conn: d.from?.conn, from: d.from, kind: d.kind, report: d, results: {} });
+    if (!last) render();
+  });
+  // P-extra: does a LOCAL broadcast from here reach the background frame? (it records it)
+  OBR.broadcast.sendMessage("dnd-probe/local-test", { t: Date.now() }, { destination: "LOCAL" }).catch(() => {});
+  if (chan) chan.postMessage({ type: "get" });
+  else $("out").innerHTML = `<span class="bad">No BroadcastChannel here: buttons can't reach the background.</span>`;
+  setInterval(() => chan?.postMessage({ type: "get" }), 3000);
+  render();
+});
+</script>
+</body>
+</html>

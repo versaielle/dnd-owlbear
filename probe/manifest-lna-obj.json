@@ -1,0 +1,21 @@
+{
+  "name": "DND FX probe (lna-obj)",
+  "version": "0.1.0",
+  "manifest_version": 1,
+  "author": "dnd-npc",
+  "description": "Stage-0 probe for the DND NPC spell effects: shaders, ticks, tools, broadcast, fog, hosting.",
+  "icon": "https://versaielle.github.io/dnd-owlbear/probe/icon.svg",
+  "background_url": "https://versaielle.github.io/dnd-owlbear/probe/background.html?m=lnaobj",
+  "action": {
+    "title": "DND FX probe (lna-obj)",
+    "icon": "https://versaielle.github.io/dnd-owlbear/probe/icon.svg",
+    "popover": "https://versaielle.github.io/dnd-owlbear/probe/popover.html?m=lnaobj",
+    "width": 440,
+    "height": 620
+  },
+  "permissions": [
+    { "name": "local-network-access", "reason": "Reach the DND panel on this PC (http://localhost)." },
+    { "name": "local-network", "reason": "Reach the DND panel on this PC (http://localhost)." },
+    { "name": "loopback-network", "reason": "Reach the DND panel on this PC (http://localhost)." }
+  ]
+}
