@@ -10,6 +10,10 @@
   button.on { background: #d9a441; color: #1a1408; font-weight: 600; }
   h4 { margin: 8px 2px 2px; font-size: 11px; letter-spacing: .08em; text-transform: uppercase; opacity: .7; }
   .note { opacity: .8; margin: 4px 2px; }
+  [hidden] { display: none !important; }
+  .row { display: flex; gap: 4px; align-items: center; }
+  .row button { flex: 1; }
+  .row input { width: 18px; height: 18px; margin: 0 4px; cursor: pointer; }
 </style>
 </head>
 <body>
@@ -19,10 +23,14 @@
 // The choice is saved on the Owlbear item itself, so it stays with the room. The places, party
 // and NPCs come from the DND panel: straight from it when served by the panel, else through the
 // bridge (LOCAL on the Dell's own tab, sealed for this device only elsewhere: bus.js rpc()).
-import OBR from "./obr-sdk.js?v=4e816a5";
-import { isRoom } from "./areas.js?v=4e816a5";
-import { PLACE_KEY, WHO_KEY } from "./keys.js?v=4e816a5";
-import { ask } from "./bus.js?v=4e816a5";
+// Also "🧭 Bring PCs here" (kind=bring): All PCs, or one PC, in one tap; tick several for "Bring these".
+// And "🎯 Go to PC" (kind=goto): one tap pans the DM's view to that PC's token.
+import OBR from "./obr-sdk.js?v=843a06c";
+import { isRoom } from "./areas.js?v=843a06c";
+import { bringPcs, findPcs, partyNames } from "./gather.js?v=843a06c";
+import { goToPc, pcLabel, scenePcs } from "./goto.js?v=843a06c";
+import { PLACE_KEY, WHO_KEY } from "./keys.js?v=843a06c";
+import { ask } from "./bus.js?v=843a06c";
 
 const kind = new URLSearchParams(location.search).get("kind");
 const app = document.getElementById("app");
@@ -70,8 +78,95 @@ async function setWho(tokens, who, name) {
   await done(who ? `🗺 This is ${name}` : "🗺 Matched by its name again");
 }
 
+// The list stays open after a bring, so the DM can bring the next PC (clicking away closes it).
+async function bring(targetId, chosen, party) {
+  try {
+    await bringPcs(targetId, chosen, party);
+  } catch (e) {
+    OBR.notification.show(`🧭 Bringing the PCs failed: ${e?.error?.message || e?.message || e}`, "ERROR");
+  }
+}
+
+async function bringMenu(targetId) {
+  // Party names only help match tokens by name: "This is…" (pc:<name>) works without the game.
+  const party = await partyNames();
+  const pcs = findPcs(await OBR.scene.items.getItems(), party).filter((p) => p.item.id !== targetId);
+  app.innerHTML = "";
+  app.className = "";
+  if (!pcs.length) {
+    app.className = "note";
+    app.textContent = "No PC tokens on this map. Mark one with 🗺 This is…, or name it after the PC.";
+    OBR.notification.show("🧭 No PC tokens found", "WARNING");
+    return;
+  }
+  heading("🧭 Bring here");
+  add(`All PCs (${pcs.length})`, false, () => bring(targetId, null, party));
+  const ticked = new Set();
+  const several = document.createElement("button");
+  several.className = "on";
+  several.hidden = true;
+  const boxes = [];
+  several.onclick = async () => {
+    await bring(targetId, [...ticked], party);
+    ticked.clear();
+    for (const b of boxes) b.checked = false;
+    several.hidden = true;
+  };
+  for (const { item, name } of pcs) {
+    const row = document.createElement("div");
+    row.className = "row";
+    const b = document.createElement("button");
+    b.textContent = item.visible ? name : `${name} (hidden)`;
+    b.onclick = () => bring(targetId, [item.id], party);
+    const box = document.createElement("input");
+    box.type = "checkbox";
+    box.title = "Pick several";
+    boxes.push(box);
+    box.onchange = () => {
+      if (box.checked) ticked.add(item.id);
+      else ticked.delete(item.id);
+      several.hidden = ticked.size < 1;
+      several.textContent = ticked.size === 1 ? "Bring this 1" : `Bring these ${ticked.size}`;
+    };
+    row.append(b, box);
+    app.append(row);
+  }
+  app.append(several);
+}
+
+async function goTo(id) {
+  try {
+    await goToPc(id);
+  } catch (e) {
+    OBR.notification.show(`🎯 Going to the PC failed: ${e?.error?.message || e?.message || e}`, "ERROR");
+  }
+  await OBR.popover.close("dnd-npc/menu");
+}
+
+async function goToMenu() {
+  const pcs = await scenePcs();
+  app.innerHTML = "";
+  app.className = "";
+  if (!pcs.length) {
+    app.className = "note";
+    app.textContent = "No PC tokens on this map. Mark one with 🗺 This is…, or name it after the PC.";
+    OBR.notification.show("🎯 No PC tokens found", "WARNING");
+    return;
+  }
+  heading("🎯 Go to");
+  for (const pc of pcs) add(pcLabel(pc), false, () => goTo(pc.item.id));
+}
+
 OBR.onReady(async () => {
+  if (kind === "goto") {
+    await goToMenu();
+    return;
+  }
   const ids = (new URLSearchParams(location.search).get("ids") || "").split(",").filter(Boolean);
+  if (kind === "bring") {
+    await bringMenu(ids[0]);
+    return;
+  }
   const items = ids.length ? await OBR.scene.items.getItems(ids) : [];
   let catalog;
   try {

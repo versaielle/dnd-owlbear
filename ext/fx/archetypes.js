@@ -2,7 +2,7 @@
 // it sits where), which layer, and the uniforms its shader gets. Python (fx_events.py) decides
 // WHAT plays and WHEN; this file only turns one part of an FxEvent into an effect's geometry.
 // Pure, no Owlbear import: engine.js, the compile gate and the dev page all use it.
-import { angleOf, clamp, dist, finite, placeRect, rotate } from "./place.js?v=4e816a5";
+import { angleOf, clamp, dist, finite, placeRect, rotate } from "./place.js?v=843a06c";
 
 // The archetype names (section 11.3 of the spec; fx_events.ARCHETYPES must match).
 export const ARCHETYPES = ["bolt", "ray", "arrow", "burst", "cone", "line", "cube", "glow", "smite", "sparkle",

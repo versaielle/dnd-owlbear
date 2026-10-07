@@ -248,6 +248,14 @@ export function _reset() {
 
 // ---- asking the panel from a popover (menus, map check) ----
 
+// Where this frame may fetch this PC's panel itself (e.g. http://localhost:7420), or null: when
+// served from localhost, or on a copy that ticked "🖥 This PC runs the DND panel" and found it.
+// Also the only way to the routes too big for a broadcast (🏘 interiors.json is ~95 KB, over
+// MAX_BYTES), so those menus are only on the copy served by this PC (background.js).
+export function directBase(origin = globalThis.location?.origin) {
+  return isLocalOrigin(origin) ? origin : lsGet(LS.BRIDGE_HERE) === "1" ? lsGet(LS.PANEL_BASE) : null;
+}
+
 // GET a loopback panel route. This device fetches it itself only when it may talk to this
 // PC's panel (served from localhost, or ticked "🖥 This PC runs the DND panel" and found it);
 // any other GM asks the bridge over broadcast. Players never reach the panel.
@@ -258,7 +266,7 @@ export function _reset() {
 // and any other GM device (the laptop) gets the answer sealed with a one-time key only that
 // device holds (ECDH P-256 + AES-GCM, WebCrypto): every other device in the room sees noise.
 export async function ask(api, path, { timeoutMs = 4000, origin = globalThis.location?.origin } = {}) {
-  const direct = isLocalOrigin(origin) ? origin : lsGet(LS.BRIDGE_HERE) === "1" ? lsGet(LS.PANEL_BASE) : null;
+  const direct = directBase(origin);
   if (direct) {
     try {
       const r = await fetch(direct + path);

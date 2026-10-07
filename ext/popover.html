@@ -17,10 +17,16 @@
   select { font: inherit; color: inherit; background: rgba(255,255,255,.12); border: 0; border-radius: 6px; padding: 3px 6px; }
   select option { color: #000; }
   .small { font-size: 11px; }
+  #goto { margin: 4px 0 8px; }
+  #goto h4 { margin-top: 0; }
+  #goto button { margin: 0 4px 4px 0; padding: 4px 10px; }
+  #goto button:hover { background: rgba(255,255,255,.25); }
+  [hidden] { display: none !important; }
 </style>
 </head>
 <body>
 <h1 id="title">🗺 DND NPC</h1>
+<div id="goto" hidden><h4>🎯 Go to PC</h4><div id="pcs"></div></div>
 <div id="status" class="dim">Asking the extension…</div>
 <div id="buttons"></div>
 
@@ -55,8 +61,11 @@
 // the panel serves, "DND NPC (this PC)", which is the bridge, and the Pages one, "DND NPC", which
 // draws and aims. Both boxes hear every LOCAL message, so this box tags what it asks with its own
 // copy's host and only shows the answers from its own copy.
-import OBR from "./obr-sdk.js?v=4e816a5";
-import { CH, LS, QUALITIES, ask, isLocalOrigin, lsGet, lsSet, on, send } from "./bus.js?v=4e816a5";
+//
+// At the top, "🎯 Go to PC": one button per PC token, which pans the view there (goto.js).
+import OBR from "./obr-sdk.js?v=843a06c";
+import { CH, LS, QUALITIES, ask, isLocalOrigin, lsGet, lsSet, on, send } from "./bus.js?v=843a06c";
+import { goToPc, pcLabel, scenePcs } from "./goto.js?v=843a06c";
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
@@ -112,7 +121,8 @@ function render(s) {
 
   // This copy's part on this tab, and the controls that only matter where it draws.
   $("copy-note").textContent = s.relay_only
-    ? "Effects, aiming and the 🗺 menus here come from the “DND NPC” copy: use its box for those."
+    ? "Effects, aiming, 🎯 Go to PC and the 🗺 menus here come from the “DND NPC” copy: use its box for those. "
+      + "🏘 Set up interiors, 🏘 Check portals, 👥 Place townsfolk and 🧭 Bring PCs here come from this copy (they need this PC's interiors.json)."
     : local ? "Served by the DND panel on this PC: on the Dell's GM tab this copy is the bridge (automatic)."
     : "On the Dell, the “DND NPC (this PC)” copy (served by the panel) is the bridge; this copy draws and aims.";
   $("device").style.display = s.relay_only ? "none" : "";
@@ -126,6 +136,29 @@ function render(s) {
 
 function askBg(need) {
   send(OBR, CH.LOCAL_ASK, { need, host: HOST }, "LOCAL");
+}
+
+async function goTo(id) {
+  try {
+    await goToPc(id);
+    await OBR.action.close();
+  } catch (e) {
+    OBR.notification.show(`🎯 Going to the PC failed: ${e?.error?.message || e?.message || e}`, "ERROR");
+  }
+}
+
+async function pcButtons() {
+  const box = document.getElementById("pcs");
+  const pcs = await scenePcs();
+  box.innerHTML = "";
+  for (const pc of pcs) {
+    const b = document.createElement("button");
+    b.textContent = pcLabel(pc);
+    b.onclick = () => goTo(pc.item.id);
+    box.append(b);
+  }
+  if (!pcs.length) box.innerHTML = `<span class="warn">No PC tokens on this map.</span>`;
+  document.getElementById("goto").hidden = false;
 }
 
 async function check() {
@@ -181,6 +214,7 @@ OBR.onReady(async () => {
   on(OBR, CH.LOCAL_STATE, (s) => { if (s?.host === HOST) render(s); }); // the other copy's answers aren't ours
   askBg("state");
   setInterval(() => askBg("state"), 2000);
+  pcButtons().catch((e) => console.warn("dnd-npc go-to list failed", e));
   setTimeout(() => {
     if (!heard) $("status").innerHTML = `<p class="bad">The extension's background didn't answer. Reload the room.</p>`;
   }, 4000);

@@ -7,7 +7,7 @@
 // After a click the keyboard focus sits in this popover, so it handles Enter, Esc and [ ] itself
 // and forwards them (the arrows too, only when the tool opened it with ?arrows=1). hudHtml and
 // keyToCmd are pure (checked by check_aim.mjs); mountHud wires them to the page (hud.html).
-import { CH, DEFAULT_COLOR } from "./consts.js?v=4e816a5";
+import { CH, DEFAULT_COLOR } from "./consts.js?v=843a06c";
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 const icon = (f) => new URL(`../icons/${f}`, import.meta.url).href;

@@ -16,16 +16,19 @@
 // and the locked templates (aim/), and on a player's device their spells (player/). Those load
 // with import() and may fail on their own: the map jobs, rings and HP keep working without them.
 import OBR, { buildCurve, buildEffect, buildImage, buildLabel, buildPath, buildShape, buildText, Math2, MathM }
-  from "./obr-sdk.js?v=4e816a5";
-import { contains, isRoom, size } from "./areas.js?v=4e816a5";
-import { BADGE_KEY, BADGE_URL, BUBBLES_KEY, BUBBLES_NAME_KEY, COND_KEY, CONDITIONS, DOWN_COLOR, GRIMOIRE_KEY, MARK_PREFIX, PLACE_KEY, RING_KEY, TARGET_COLOR, WHO_KEY } from "./keys.js?v=4e816a5";
+  from "./obr-sdk.js?v=843a06c";
+import { contains, isRoom, size } from "./areas.js?v=843a06c";
+import { checkPortals, describe, panelLog, setUpInteriors } from "./interiors.js?v=843a06c";
+import { placeTownsfolk } from "./gather.js?v=843a06c";
+import { BADGE_KEY, BADGE_URL, BUBBLES_KEY, BUBBLES_NAME_KEY, COND_KEY, CONDITIONS, DOWN_COLOR, GRIMOIRE_KEY, MARK_PREFIX, PLACE_KEY, RING_KEY, TARGET_COLOR, WHO_KEY } from "./keys.js?v=843a06c";
 import { CH, DEFAULT_SETTINGS, LS, buildOf, forMe, here, isLocalOrigin, kindOf, lsGet, on as busOn, send as busSend,
-  setConnection, setSceneWrite, startSceneReader, tierOf } from "./bus.js?v=4e816a5";
+  setConnection, setSceneWrite, startSceneReader, tierOf } from "./bus.js?v=843a06c";
 
 const HEARTBEAT_MS = 10000;
 const DEBOUNCE_MS = 250;
 const TODO_MS = 1000; // how often the Dell's copy asks the panel for map jobs
 const PING_MS = 3000; // how long 📍 rings a token
+const GO_TO_KEY = "J"; // the key for 🎯 Go to PC ("jump")
 
 let timer = null;
 
@@ -413,11 +416,21 @@ async function todo() {
 // The 🗺 menus' ids. Owlbear's ids look room-wide rather than per extension, so the copy served
 // by the panel on this PC uses its own: when it steps aside for the Pages copy on the same tab
 // (the dual install) it can only ever remove its own menus, never the Pages copy's.
-const MENU_IDS = { place: "dnd-npc/mark-place", who: "dnd-npc/this-is", cond: "dnd-npc/conditions" };
-const LOCAL_MENU_IDS = { place: "dnd-npc/local/mark-place", who: "dnd-npc/local/this-is", cond: "dnd-npc/local/conditions" };
+const MENU_IDS = { place: "dnd-npc/mark-place", who: "dnd-npc/this-is", cond: "dnd-npc/conditions",
+                   goto: "dnd-npc/go-to-pc" };
+const LOCAL_MENU_IDS = { place: "dnd-npc/local/mark-place", who: "dnd-npc/local/this-is", cond: "dnd-npc/local/conditions",
+                         goto: "dnd-npc/local/go-to-pc" };
+// 🎯 Go to PC's toolbar button and key (a tool action, removed with tool.removeAction).
+const GOTO_KEY_ID = "dnd-npc/go-to-pc-key";
+const LOCAL_GOTO_KEY_ID = "dnd-npc/local/go-to-pc-key";
+// 🏘, 👥 and 🧭 need interiors.json, which only the panel on this PC can hand over (far too big for
+// the bridge's broadcasts): only the copy the panel serves makes these, even when it only relays
+// on the Dell's tab (the Pages copy there can't reach the panel), and never removes them.
+const THIS_PC_MENU_IDS = { interiors: "dnd-npc/local/interiors", bring: "dnd-npc/local/bring-pcs",
+                           portals: "dnd-npc/local/check-portals", townsfolk: "dnd-npc/local/townsfolk" };
 const ICON = here("./icon.svg", import.meta.url);
 
-function menus(ids = MENU_IDS) {
+function menus(ids = MENU_IDS, gotoKeyId = GOTO_KEY_ID) {
   OBR.contextMenu.create({
     id: ids.place,
     icons: [{
@@ -446,6 +459,87 @@ function menus(ids = MENU_IDS) {
     }],
     embed: { url: here("./conditions.html", import.meta.url), height: 176 },
   });
+  // On anything at all: the list of PCs (menu.html), one tap pans the view to that one (goto.js).
+  // It only needs the party's names (through the bridge when this copy can't reach the panel).
+  OBR.contextMenu.create({
+    id: ids.goto,
+    icons: [{ icon: ICON, label: "🎯 Go to PC", filter: { roles: ["GM"] } }],
+    onClick: (context) => openMenu("goto", context),
+  });
+  // ...and the same list from a key, with nothing selected: a button on every tool's bar.
+  try {
+    Promise.resolve(OBR.tool.createAction({
+      id: gotoKeyId,
+      shortcut: GO_TO_KEY,
+      icons: [{ icon: ICON, label: `🎯 Go to PC (${GO_TO_KEY})`, filter: { roles: ["GM"] } }],
+      onClick: () => openMenu("goto", { items: [] }),
+    })).catch((e) => console.warn("dnd-npc: the Go to PC key", e));
+  } catch (e) {
+    console.warn("dnd-npc: the Go to PC key", e);
+  }
+}
+
+// The copy served by this PC only (see THIS_PC_MENU_IDS).
+function thisPcMenus() {
+  // On the town map: lay the building maps out beside it and mark them up (interiors.js).
+  OBR.contextMenu.create({
+    id: THIS_PC_MENU_IDS.interiors,
+    icons: [{
+      icon: ICON,
+      label: "🏘 Set up interiors",
+      filter: { roles: ["GM"], max: 1, every: [{ key: "layer", value: "MAP" }, { key: "type", value: "IMAGE" }] },
+    }],
+    onClick: async (context) => {
+      try {
+        await setUpInteriors(context.items[0].id);
+      } catch (e) {
+        console.warn("dnd-npc interiors failed", e);
+        OBR.notification.show(`🏘 Setting up interiors failed: ${describe(e)}`, "ERROR");
+        // ...and the whole error to the panel's window, where it can be read
+        panelLog({ what: "interiors", error: describe(e), stack: String(e?.stack || ""),
+                   detail: JSON.stringify(e, Object.getOwnPropertyNames(e || {})).slice(0, 4000) });
+      }
+    },
+  });
+  // On the town map: each NPC of interiors.json's town.townsfolk to its room (gather.js).
+  OBR.contextMenu.create({
+    id: THIS_PC_MENU_IDS.townsfolk,
+    icons: [{
+      icon: ICON,
+      label: "👥 Place townsfolk",
+      filter: { roles: ["GM"], max: 1, every: [{ key: "layer", value: "MAP" }, { key: "type", value: "IMAGE" }] },
+    }],
+    onClick: async () => {
+      try {
+        await placeTownsfolk();
+      } catch (e) {
+        console.warn("dnd-npc townsfolk failed", e);
+        OBR.notification.show(`👥 Placing townsfolk failed: ${describe(e)}`, "ERROR");
+        panelLog({ what: "townsfolk", error: describe(e), stack: String(e?.stack || ""), detail: "" });
+      }
+    },
+  });
+  // On a map image, a room drawing or a token: move the PCs' tokens there (gather.js). The list
+  // (menu.html) offers "All PCs" and each PC, one tap each. The first icon whose filter matches shows.
+  OBR.contextMenu.create({
+    id: THIS_PC_MENU_IDS.bring,
+    icons: [
+      [{ key: "layer", value: "MAP" }, { key: "type", value: "IMAGE" }],
+      [{ key: "layer", value: "DRAWING" }],
+      [{ key: "layer", value: "CHARACTER" }],
+    ].map((every) => ({ icon: ICON, label: "🧭 Bring PCs here", filter: { roles: ["GM"], max: 1, every } })),
+    onClick: (context) => openMenu("bring", context),
+  });
+  OBR.contextMenu.create({
+    id: THIS_PC_MENU_IDS.portals,
+    icons: [{
+      icon: ICON,
+      label: "🏘 Check portals",
+      filter: { roles: ["GM"], max: 1, every: [{ key: "layer", value: "MAP" }, { key: "type", value: "IMAGE" }] },
+    }],
+    onClick: (context) => checkPortals(context.items[0].id).catch((e) =>
+      OBR.notification.show(`🏘 Check failed: ${describe(e)}`, "ERROR")),
+  });
 }
 
 // ---- Step 36: every screen, and the bridge on the Dell ----
@@ -464,13 +558,13 @@ const JOBS = {
 // The parts that load on their own (R4): a broken one is left out and the rest carry on.
 // Literal paths, so the publisher can stamp each with the build.
 const MODULES = {
-  bridge: () => import("./bridge.js?v=4e816a5"),
-  fx: () => import("./fx/engine.js?v=4e816a5"),
-  samples: () => import("./fx/samples.js?v=4e816a5"),
-  aim: () => import("./aim/tool.js?v=4e816a5"),
-  geometry: () => import("./aim/geometry.js?v=4e816a5"),
-  rings: () => import("./aim/rings.js?v=4e816a5"),
-  player: () => import("./player/state.js?v=4e816a5"),
+  bridge: () => import("./bridge.js?v=843a06c"),
+  fx: () => import("./fx/engine.js?v=843a06c"),
+  samples: () => import("./fx/samples.js?v=843a06c"),
+  aim: () => import("./aim/tool.js?v=843a06c"),
+  geometry: () => import("./aim/geometry.js?v=843a06c"),
+  rings: () => import("./aim/rings.js?v=843a06c"),
+  player: () => import("./player/state.js?v=843a06c"),
 };
 
 const HELLO_MS = 30000; // each screen says hello this often, so the panel's screens list stays fresh
@@ -737,6 +831,7 @@ export async function boot(api = sdk, opts = {}) {
     player = null;
     if (role === "GM") {
       for (const id of Object.values(LOCAL_MENU_IDS)) Promise.resolve().then(() => O.contextMenu.remove(id)).catch(() => {});
+      Promise.resolve().then(() => O.tool.removeAction(LOCAL_GOTO_KEY_ID)).catch(() => {});
     }
     bridge?.relayOnly?.();
     pushState();
@@ -888,7 +983,8 @@ export async function boot(api = sdk, opts = {}) {
 
     // ---- the GM: menus, and the bridge (or the old loops) ----
     if (role === "GM") {
-      if (!ctx.relayOnly) menus(local ? LOCAL_MENU_IDS : MENU_IDS);
+      if (!ctx.relayOnly) menus(local ? LOCAL_MENU_IDS : MENU_IDS, local ? LOCAL_GOTO_KEY_ID : GOTO_KEY_ID);
+      if (local) thisPcMenus(); // 🏘, 👥 and 🧭: on this copy even when it only relays (THIS_PC_MENU_IDS)
       O.scene.items.onChange(soon);
       O.scene.grid.onChange(soon);
       O.scene.onReadyChange(soon);
