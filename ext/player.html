@@ -1,0 +1,141 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  body { margin: 0; padding: 12px 14px 16px; font: 14px/1.35 system-ui, sans-serif; color: #fff; background: transparent;
+         -webkit-tap-highlight-color: transparent; }
+  body.demo { background: #222639; width: 380px; min-height: 560px; box-sizing: border-box; }
+  h1 { font-size: 16px; margin: 0; }
+  .who { opacity: .8; margin: 2px 0 10px; font-size: 13px; }
+  h4 { margin: 14px 2px 6px; font-size: 11px; letter-spacing: .08em; text-transform: uppercase; opacity: .7; }
+  .hint { margin: 10px 0; padding: 10px 12px; border-radius: 10px; background: rgba(240, 195, 107, .12); color: #f0c36b; }
+  .note { margin: 6px 2px 0; font-size: 12px; color: #f0c36b; }
+  .card { display: flex; align-items: center; gap: 10px; margin: 4px 0 6px; padding: 10px 12px; border-radius: 10px;
+          background: rgba(255, 255, 255, .08); border-left: 4px solid #8fb8ff; }
+  .card.wait { border-left-color: #ffb347; }
+  .card.ok { border-left-color: #5cff9d; }
+  .card.no { border-left-color: #f08a7b; }
+  .card.dim { opacity: .7; border-left-color: rgba(255, 255, 255, .3); }
+  .card .txt { flex: 1; min-width: 0; }
+  .card small { display: block; opacity: .75; }
+  button { font: inherit; color: inherit; border: 0; cursor: pointer; touch-action: manipulation; }
+  .withdraw { flex: none; min-height: 40px; padding: 0 12px; border-radius: 8px; background: rgba(255, 255, 255, .14); }
+  .withdraw:hover { background: rgba(255, 255, 255, .24); }
+  .item { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 52px; margin: 0 0 6px; padding: 6px 10px;
+          border-radius: 10px; background: rgba(255, 255, 255, .07); text-align: left; }
+  .item:hover, .item:focus-visible { background: rgba(255, 255, 255, .16); outline: none; }
+  .item.on { background: rgba(127, 178, 255, .22); box-shadow: inset 0 0 0 2px #7fb2ff; }
+  .item .ic { flex: none; width: 26px; font-size: 20px; text-align: center; }
+  .item .txt { flex: 1; min-width: 0; }
+  .item b { font-weight: 600; }
+  .item small { display: block; opacity: .75; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .item .tag { flex: none; font-size: 10px; padding: 2px 6px; border-radius: 6px; background: rgba(255, 255, 255, .14); opacity: .85; }
+  .item .go { flex: none; opacity: .5; font-size: 18px; }
+</style>
+</head>
+<body>
+<div id="app">Loading…</div>
+<script type="module">
+// The player's popover: "Your spells & attacks". It shows the snapshot from the player's
+// state in the background (player/state.js) and asks it to aim or withdraw; the background
+// does the rest, so closing this popover never loses a request. ?demo shows canned data
+// without Owlbear (for checking the layout in a plain browser).
+import { view } from "./player/view.js?v=a0b5bb5";
+import { CH } from "./aim/consts.js?v=a0b5bb5";
+
+const app = document.getElementById("app");
+const params = new URLSearchParams(location.search);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+let snap = null;
+let ask = () => {};
+let close = () => {};
+let waited = false;
+
+function render() {
+  const v = view(snap);
+  let html = `<h1>${esc(v.title)}</h1>`;
+  html += v.who ? `<div class="who">as <b>${esc(v.who)}</b></div>` : `<div class="who">&nbsp;</div>`;
+  if (v.status) {
+    const s = v.status;
+    html += `<div class="card ${esc(s.tone)}"><div class="txt">${esc(s.text)}<small>${esc(s.name)}${s.note ? ` · ${esc(s.note)}` : ""}</small></div>`
+      + (s.canWithdraw ? `<button class="withdraw" data-withdraw="${esc(s.req)}">✕ Withdraw</button>` : "") + `</div>`;
+  }
+  if (v.hint) html += `<div class="hint">${esc(!snap && waited ? "The map extension isn't answering yet. Close this and open it again in a moment." : v.hint)}</div>`;
+  if (v.note) html += `<div class="note">${esc(v.note)}</div>`;
+  for (const g of v.groups) {
+    html += `<h4>${esc(g.name)}</h4>`;
+    for (const i of g.items) {
+      html += `<button class="item${i.key === v.aiming ? " on" : ""}" data-key="${esc(i.key)}" title="${esc(i.action === "confirm" ? "Cast on yourself" : i.action === "aim" ? "Aim it on the map" : "Pick a target")}">`
+        + `<span class="ic">${i.icon}</span><span class="txt"><b>${esc(i.name)}</b><small>${esc(i.sub)}</small></span>`
+        + (i.conc ? `<span class="tag" title="Concentration">conc.</span>` : "") + `<span class="go">›</span></button>`;
+    }
+  }
+  app.innerHTML = html;
+}
+
+app.addEventListener("click", (ev) => {
+  const item = ev.target.closest("[data-key]");
+  if (item) {
+    ask({ need: "aim", key: item.dataset.key });
+    close();
+    return;
+  }
+  const w = ev.target.closest("[data-withdraw]");
+  if (w) ask({ need: "withdraw", req: w.dataset.withdraw });
+});
+
+const DEMO_ITEMS = [
+  { key: "atk:shortbow", name: "Shortbow", group: "Attacks", kind: "attack", mode: "pick", range_ft: 80, long_ft: 320, label: "Shortbow · 80/320 ft" },
+  { key: "atk:club", name: "Club", group: "Attacks", kind: "attack", mode: "pick", range_ft: 5, label: "Club · 5 ft" },
+  { key: "fire_bolt", name: "Fire Bolt", group: "Cantrips", kind: "spell", mode: "pick", range_ft: 120, label: "Fire Bolt · 120 ft" },
+  { key: "shillelagh", name: "Shillelagh", group: "Cantrips", kind: "spell", mode: "self", label: "Shillelagh" },
+  { key: "entangle", name: "Entangle", group: "Level 1", kind: "spell", mode: "area", range_ft: 90, area: { shape: "square", size: 20, from: "point" },
+    label: "Entangle · 20-ft square", save_label: "Strength save", conc: true },
+  { key: "thunderwave", name: "Thunderwave", group: "Level 1", kind: "spell", mode: "area", area: { shape: "cube", size: 15, from: "self" },
+    label: "Thunderwave · 15-ft cube", save_label: "Constitution save" },
+  { key: "cure_wounds", name: "Cure Wounds", group: "Level 1", kind: "spell", mode: "pick", range_ft: 5, label: "Cure Wounds · touch" },
+];
+const DEMO = {
+  list: { kind: "player", me: "demo", entry: { character: "Wren", token: "t1", items: DEMO_ITEMS, player_casts: true }, player_casts: true, request: null, aiming: null },
+  waiting: { kind: "player", me: "demo", entry: { character: "Wren", token: "t1", items: DEMO_ITEMS, player_casts: true }, player_casts: true,
+             request: { req: "c1-1", key: "entangle", name: "Entangle", status: "waiting", note: "" }, aiming: null },
+  declined: { kind: "player", me: "demo", entry: { character: "Wren", token: null, items: DEMO_ITEMS, player_casts: true }, player_casts: true,
+              request: { req: "c1-2", key: "fire_bolt", name: "Fire Bolt", status: "declined", note: "not your turn yet" }, aiming: null },
+  unlinked: { kind: "player", me: "demo", entry: null, player_casts: null, request: null, aiming: null },
+  voice: { kind: "player", me: "demo", entry: { character: "Wren", token: "t1", items: [], player_casts: false }, player_casts: false, request: null, aiming: null },
+};
+
+if (params.has("demo")) {
+  document.body.classList.add("demo");
+  snap = DEMO[params.get("demo")] || DEMO.list;
+  ask = (m) => console.log("demo ask", JSON.stringify(m));
+  render();
+} else {
+  render();
+  try {
+    const { default: OBR } = await import("./obr-sdk.js?v=a0b5bb5");
+    // audience "all": a local message, but it passes the bus's audience check if the background filters.
+    ask = (m) => OBR.broadcast.sendMessage(CH.LOCAL_ASK, { v: 1, audience: "all", ...m }, { destination: "LOCAL" }).catch(() => {});
+    close = () => OBR.action.close().catch(() => {});
+    OBR.onReady(() => {
+      OBR.broadcast.onMessage(CH.LOCAL_STATE, (ev) => {
+        if (ev.data?.kind !== "player") return; // the GM view's snapshots aren't ours
+        snap = ev.data;
+        render();
+      });
+      ask({ need: "state" });
+      setTimeout(() => {
+        waited = true;
+        if (!snap) render();
+      }, 2000);
+    });
+  } catch (e) {
+    app.textContent = "The extension couldn't load. Reload the page.";
+    console.warn("dnd-npc player popover", e);
+  }
+}
+</script>
+</body>
+</html>

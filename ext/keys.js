@@ -1,0 +1,34 @@
+// Where the extension keeps its links in Owlbear (item metadata, saved with the room).
+export const PLACE_KEY = "dnd-npc/place"; // on a drawing: the narrator's place key
+export const WHO_KEY = "dnd-npc/who"; // on a token: "pc:<character name>" or "npc:<persona slug>"
+// Owlbear's own "Colored Rings" extension: a ring is a circle attached to a token, tagged
+// with this key, its colour in style.strokeColor. A BLUE ring marks a spell's target.
+export const RING_KEY = "rodeo.owlbear.colored-rings/metadata";
+export const TARGET_COLOR = "#1a6aff"; // Colored Rings' blue
+export const DOWN_COLOR = "#ff4d4d"; // Colored Rings' red: the creature is down at 0 HP
+export const CHOOSE_COLOR = "#ffffff"; // Colored Rings' white: show this token's conditions on the panel
+// D&D conditions on a token: the list is kept on the token itself (its metadata), and the
+// extension shows each as a round badge on the token's rim (an image attached to it).
+export const COND_KEY = "dnd-npc/conditions"; // on a token: ["prone", "restrained"]
+export const BADGE_KEY = "dnd-npc/badge"; // on a badge image: {name, sig}
+export const CONDITIONS = ["blinded", "charmed", "deafened", "exhaustion", "frightened", "grappled",
+  "incapacitated", "invisible", "paralyzed", "petrified", "poisoned", "prone", "restrained", "stunned",
+  "unconscious"];
+// Every screen loads the badges (the laptop and the projector can't reach this PC), so they're
+// on the public page. owlbear/conditions/make_badges.py makes them.
+export const BADGE_URL = "https://versaielle.github.io/dnd-owlbear/conditions/";
+export const MARK_PREFIX = "dnd-npc-mark-"; // + token id: the hidden note on a monster ("Hexed · hurt")
+// GM's Grimoire on a token: {hp, maxHp, armorClass, stats: {tempHp}}. Only read once, to copy
+// a monster's HP and AC over to Stat Bubbles (the DM switched to Stat Bubbles on 2026-10-03).
+export const GRIMOIRE_KEY = "com.bitperfect-software.hp-tracker/data";
+// "Stat Bubbles for D&D": its name tag (shown instead of Owlbear's own label) is kept on the token here.
+export const BUBBLES_NAME_KEY = "com.owlbear-rodeo-bubbles-extension/name";
+// ...and its stats: {"health", "max health", "temporary health", "armor class", "hide" (GM only)}.
+// HP and AC are read from here, and the panel's damage is written here.
+export const BUBBLES_KEY = "com.owlbear-rodeo-bubbles-extension/metadata";
+// Spell effects (Step 36). Local effect items carry FX_KEY ({until}), so a sweep can find and
+// delete any left behind; a living zone's shared outline carries ZONE_KEY ({id, zid, spell, look,
+// color, power, seed}); the aim tool's preview items carry AIM_KEY.
+export const FX_KEY = "dnd-npc/fx";
+export const ZONE_KEY = "dnd-npc/zone";
+export const AIM_KEY = "dnd-npc/aim";

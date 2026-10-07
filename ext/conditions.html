@@ -1,0 +1,76 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  body { margin: 0; padding: 6px 8px; font: 12px/1.3 system-ui, sans-serif; color: #fff; background: transparent; }
+  #grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; }
+  button { border: 2px solid transparent; border-radius: 999px; padding: 0; background: none; cursor: pointer;
+           opacity: .45; aspect-ratio: 1; }
+  button img { width: 100%; height: 100%; display: block; }
+  button:hover { opacity: .8; }
+  button.on { opacity: 1; border-color: #d9a441; }
+  button.some { opacity: .75; border-style: dashed; border-color: #d9a441; }
+  #name { margin: 6px 2px 0; min-height: 15px; opacity: .85; text-transform: capitalize; }
+</style>
+</head>
+<body>
+<div id="grid"></div>
+<div id="name"></div>
+<script type="module">
+// The "Conditions" right-click menu on a token (any GM screen): tap a badge to switch that
+// condition on or off for the selected tokens. Lit = on. The badges on the map follow
+// (background.js), and the panel hears about it with the next map report.
+import OBR from "./obr-sdk.js?v=a0b5bb5";
+import { BADGE_URL, COND_KEY, CONDITIONS } from "./keys.js?v=a0b5bb5";
+
+const grid = document.getElementById("grid");
+const nameBox = document.getElementById("name");
+const buttons = {};
+
+const conditionsOf = (i) => (Array.isArray(i.metadata?.[COND_KEY]) ? i.metadata[COND_KEY] : []);
+
+async function selected() {
+  const ids = (await OBR.player.getSelection()) || [];
+  return ids.length ? OBR.scene.items.getItems(ids) : [];
+}
+
+async function show() {
+  const items = await selected();
+  for (const c of CONDITIONS) {
+    const n = items.filter((i) => conditionsOf(i).includes(c)).length;
+    buttons[c].className = n && n === items.length ? "on" : n ? "some" : "";
+  }
+}
+
+async function toggle(c) {
+  const items = await selected();
+  if (!items.length) return;
+  const on = !items.every((i) => conditionsOf(i).includes(c)); // all have it: off for all; else on for all
+  await OBR.scene.items.updateItems(items.map((i) => i.id), (found) => {
+    for (const i of found) {
+      const now = conditionsOf(i).filter((x) => x !== c);
+      i.metadata[COND_KEY] = on ? CONDITIONS.filter((x) => x === c || now.includes(x)) : now;
+    }
+  });
+  await show();
+}
+
+for (const c of CONDITIONS) {
+  const b = document.createElement("button");
+  b.title = c;
+  b.innerHTML = `<img src="${BADGE_URL}${c}.png" alt="${c}">`; // the same badges the map shows
+  b.onclick = () => toggle(c);
+  b.onmouseenter = () => { nameBox.textContent = c; };
+  b.onmouseleave = () => { nameBox.textContent = ""; };
+  buttons[c] = b;
+  grid.append(b);
+}
+
+OBR.onReady(() => {
+  show();
+  OBR.scene.items.onChange(show);
+});
+</script>
+</body>
+</html>

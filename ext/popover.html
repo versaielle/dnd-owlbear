@@ -1,0 +1,191 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  body { margin: 0; padding: 12px 14px; font: 13px/1.4 system-ui, sans-serif; color: #fff; }
+  h1 { font-size: 15px; margin: 0 0 8px; }
+  h4 { margin: 12px 0 4px; font-size: 11px; letter-spacing: .08em; text-transform: uppercase; opacity: .7; }
+  .ok { color: #7fd99a; } .warn { color: #f0c36b; } .bad { color: #f08a7b; } .dim { opacity: .65; }
+  ul { margin: 0; padding-left: 18px; }
+  p { margin: 4px 0; }
+  button { margin: 6px 6px 0 0; padding: 6px 12px; border: 0; border-radius: 6px; background: rgba(255,255,255,.12);
+           color: inherit; font: inherit; cursor: pointer; }
+  button:hover { background: rgba(255,255,255,.2); }
+  label { display: flex; gap: 8px; align-items: flex-start; margin: 5px 0; cursor: pointer; }
+  label input { margin-top: 3px; }
+  select { font: inherit; color: inherit; background: rgba(255,255,255,.12); border: 0; border-radius: 6px; padding: 3px 6px; }
+  select option { color: #000; }
+  .small { font-size: 11px; }
+</style>
+</head>
+<body>
+<h1 id="title">🗺 DND NPC</h1>
+<div id="status" class="dim">Asking the extension…</div>
+<div id="buttons"></div>
+
+<h4>This device</h4>
+<p class="small dim" id="copy-note"></p>
+<div id="device">
+<label><input type="checkbox" id="aim"> <span>🎯 Open the aim tool here</span></label>
+<label><input type="checkbox" id="table"> <span>📺 This screen is the table's screen</span></label>
+<label>✨ Effects here <select id="quality">
+  <option value="auto">auto (panel's choice)</option><option value="full">full</option>
+  <option value="lite">lite</option><option value="off">off</option></select></label>
+<button id="test">🧪 Test effect here</button> <span id="test-note" class="small"></span>
+</div>
+<details class="small" style="margin-top:8px" id="advanced"><summary class="dim">Advanced</summary>
+<label id="here-row"><input type="checkbox" id="here"> <span>🖥 Try to be the bridge from this copy<br>
+  <span class="dim">Leave it off. Chrome stops the Pages site reaching the DND panel on this PC (probe P2, Oct 2026),
+  so the Dell's bridge is the “DND NPC (this PC)” copy.</span></span></label>
+<label><input type="checkbox" id="scene"> <span>Also send through the scene (only when two copies of the
+  extension can't hear each other: the dual install's fallback)</span></label>
+</details>
+
+<h4>🗺 Map check</h4>
+<div id="app" class="dim">Checking…</div>
+<button id="again">Check again</button>
+<a href="#" id="probe" style="color:#9cf;margin-left:8px;display:none">🧪 probe</a>
+<script type="module">
+// The extension's box. A player is sent to their own spells (player.html). The GM sees whether
+// this tab is the bridge to the DND panel (only the Dell's tab can be), this device's settings,
+// and the map check: is the voice system listening, and what on this map isn't linked yet.
+//
+// On the Dell's GM tab two copies of the extension run side by side (the dual install): the one
+// the panel serves, "DND NPC (this PC)", which is the bridge, and the Pages one, "DND NPC", which
+// draws and aims. Both boxes hear every LOCAL message, so this box tags what it asks with its own
+// copy's host and only shows the answers from its own copy.
+import OBR from "./obr-sdk.js?v=a0b5bb5";
+import { CH, LS, QUALITIES, ask, isLocalOrigin, lsGet, lsSet, on, send } from "./bus.js?v=a0b5bb5";
+
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+const list = (items) => `<ul>${items.map((i) => `<li>${esc(i)}</li>`).join("")}</ul>`;
+const local = isLocalOrigin(location.origin);
+const HOST = local ? "local" : "pages";
+let heard = false;
+
+const BRIDGE_TEXT = {
+  bridge: ["ok", "✅ This tab is the bridge to the DND panel"],
+  legacy: ["ok", "✅ This tab feeds the DND panel (older panel: the 1-second loop)"],
+  standby: ["warn", "⏸ Standby: another tab is the bridge"],
+  finding: ["dim", "🔎 Looking for the DND panel on this PC…"],
+  starting: ["dim", "⏳ Starting: is the “DND NPC” copy on this tab too?"],
+  "no-panel": ["bad", "❌ No DND panel found"],
+  off: ["dim", "○ Effects and aiming only (this copy never talks to the panel)"],
+  failed: ["bad", "❌ The bridge failed to load"],
+};
+
+function render(s) {
+  heard = true;
+  const b = s.bridge || {};
+  const sameTabBridge = !local && s.heard && s.heard.conn === s.conn && b.state !== "bridge";
+  const [cls, text] = sameTabBridge ? ["ok", "✅ The “DND NPC (this PC)” copy on this tab is the bridge"]
+    : BRIDGE_TEXT[b.state] || ["dim", b.state || "?"];
+  let html = `<p class="${cls}">${esc(text)}</p>`;
+  if (b.base && (b.state === "bridge" || b.state === "legacy")) {
+    html += `<p class="small dim">${esc(b.base)} · panel ${esc(b.panel || "?")} · ${b.screens ?? 0} other screen(s)</p>`;
+  }
+  if (b.reason && b.state !== "bridge" && !sameTabBridge) html += `<p class="small">${esc(b.reason)}</p>`;
+  if (s.relay_only) {
+    html += `<p class="small warn">The “DND NPC” copy (from the Pages site) draws and aims on this tab; this copy only relays.</p>`;
+  }
+  if (s.heard && b.state !== "bridge") {
+    html += `<p class="small ${s.heard.age_s > 15 ? "warn" : "ok"}">Bridge heard ${s.heard.age_s} s ago (panel ${esc(s.heard.panel)}).</p>`;
+  } else if (!s.heard && b.state !== "bridge" && b.state !== "legacy" && b.state !== "starting") {
+    html += `<p class="small warn">No bridge heard yet: is the Dell's GM tab open, with the panel running?</p>`;
+  }
+  if (!s.relay_only) {
+    html += s.fx_ok ? `<p class="small ok">✨ Effects ready</p>`
+      : `<p class="small bad">✨ Effects unavailable${s.errors?.fx ? ` (${esc(s.errors.fx)})` : ""}</p>`;
+    if (s.started && !s.aim_ok) html += `<p class="small warn">🎯 Aim tool unavailable${s.errors?.aim ? ` (${esc(s.errors.aim)})` : ""}</p>`;
+  }
+  html += `<p class="small dim">build ${esc(s.build)} · ${esc(s.host)} · ${esc(s.kind)}</p>`;
+  $("status").className = "";
+  $("status").innerHTML = html;
+
+  const buttons = [];
+  if (b.state === "standby") buttons.push(`<button data-need="force">Make this tab the bridge</button>`);
+  if (b.state === "no-panel" || (b.state === "off" && s.opted_in)) buttons.push(`<button data-need="find-panel">Look again</button>`);
+  $("buttons").innerHTML = buttons.join("");
+  for (const el of $("buttons").querySelectorAll("button")) el.onclick = () => askBg(el.dataset.need);
+
+  // This copy's part on this tab, and the controls that only matter where it draws.
+  $("copy-note").textContent = s.relay_only
+    ? "Effects, aiming and the 🗺 menus here come from the “DND NPC” copy: use its box for those."
+    : local ? "Served by the DND panel on this PC: on the Dell's GM tab this copy is the bridge (automatic)."
+    : "On the Dell, the “DND NPC (this PC)” copy (served by the panel) is the bridge; this copy draws and aims.";
+  $("device").style.display = s.relay_only ? "none" : "";
+  $("here").checked = !!s.opted_in && !local;
+  $("aim").checked = !!s.aim_here;
+  $("table").checked = !!s.table_screen;
+  $("scene").checked = !!s.scene_bus;
+  $("quality").value = QUALITIES.includes(s.quality) ? s.quality : "auto";
+  if (s.note !== undefined) $("test-note").textContent = s.note || "";
+}
+
+function askBg(need) {
+  send(OBR, CH.LOCAL_ASK, { need, host: HOST }, "LOCAL");
+}
+
+async function check() {
+  const app = $("app");
+  let c;
+  try {
+    c = await ask(OBR, "/api/map/check");
+  } catch (e) {
+    app.innerHTML = `<p class="bad">❌ Can't reach the voice system from here: ${esc(e.message)}.</p>`;
+    return;
+  }
+  if (!c.connected) {
+    app.innerHTML = `<p class="warn">The voice system is running but hasn't heard from the map yet. Wait a few seconds.</p>`;
+    return;
+  }
+  const some = (x) => (Array.isArray(x) ? x : []);
+  let html = `<p class="ok">✅ Connected to the voice system</p>`;
+  // Asked through the bridge from a device that can't receive it privately, names come as counts.
+  const counted = (n, what) => `<p class="dim">${Number(n) || 0} ${what} (names only on the Dell's tab).</p>`;
+  html += `<h4>Rooms marked on this map</h4>` + (some(c.rooms).length ? list(c.rooms)
+    : c.rooms_count ? counted(c.rooms_count, "room(s) marked") : `<p class="warn">None yet: right-click a drawing → 🗺 Mark as place.</p>`);
+  if (c.unmarked) html += `<p class="warn">${c.unmarked} drawing(s) not marked as a place (fine if they're just decoration).</p>`;
+  if (some(c.unknown_places).length) html += `<p class="bad">Marked with a place this adventure doesn't have: ${esc(c.unknown_places.join(", "))}. Mark them again.</p>`;
+  html += `<h4>Party tokens</h4>` + (some(c.pcs).length ? list(c.pcs) : `<p class="warn">None found.</p>`);
+  if (some(c.pcs_missing).length) html += `<p class="warn">No token for: ${esc(c.pcs_missing.join(", "))}. Name a token after them, or right-click → 🗺 This is…</p>`;
+  html += `<h4>NPC tokens</h4>` + (some(c.npcs).length ? list(c.npcs)
+    : c.npcs_count ? counted(c.npcs_count, "NPC token(s)") : `<p>None.</p>`);
+  if (some(c.creatures).length) html += `<h4>Other tokens (not linked; fine for monsters)</h4>` + list(c.creatures);
+  else if (c.creatures_count) html += `<p class="dim">${c.creatures_count} other token(s) not linked (fine for monsters).</p>`;
+  app.className = "";
+  app.innerHTML = html;
+}
+
+$("title").textContent = local ? "🗺 DND NPC (this PC)" : "🗺 DND NPC";
+if (local) $("here-row").style.display = "none"; // automatic: the panel serves this copy
+$("here").onchange = (e) => { lsSet(LS.BRIDGE_HERE, e.target.checked ? "1" : null); askBg(e.target.checked ? "find-panel" : "refresh"); };
+$("aim").onchange = (e) => { lsSet(LS.AIM_HERE, e.target.checked ? null : "0"); askBg("refresh"); };
+$("table").onchange = (e) => { lsSet(LS.TABLE_SCREEN, e.target.checked ? "1" : null); askBg("refresh"); };
+$("scene").onchange = (e) => { lsSet(LS.SCENE_BUS, e.target.checked ? "1" : null); askBg("refresh"); };
+$("quality").onchange =(e) => { lsSet(LS.QUALITY, e.target.value === "auto" ? null : e.target.value); askBg("refresh"); };
+$("test").onclick = () => { $("test-note").textContent = "…"; askBg("test"); };
+$("again").onclick = check;
+if (local) {
+  $("probe").style.display = "";
+  $("probe").onclick = () => { location.href = "./probe.html" + location.search; };
+}
+
+OBR.onReady(async () => {
+  if ((await OBR.player.getRole()) !== "GM") {
+    location.replace("./player.html" + location.search); // "Your spells & attacks"
+    return;
+  }
+  on(OBR, CH.LOCAL_STATE, (s) => { if (s?.host === HOST) render(s); }); // the other copy's answers aren't ours
+  askBg("state");
+  setInterval(() => askBg("state"), 2000);
+  setTimeout(() => {
+    if (!heard) $("status").innerHTML = `<p class="bad">The extension's background didn't answer. Reload the room.</p>`;
+  }, 4000);
+  check();
+});
+</script>
+</body>
+</html>
