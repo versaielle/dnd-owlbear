@@ -45,8 +45,8 @@
 <script type="module">
 // The aim HUD popover (opened by aim/tool.js, bottom centre of the map). ?demo=area|pick|self|far
 // shows a canned state without Owlbear (for checking the layout in a plain browser).
-import OBR from "../obr-sdk.js?v=07c06cc";
-import { mountHud } from "./hud.js?v=07c06cc";
+import OBR from "../obr-sdk.js?v=4e816a5";
+import { mountHud } from "./hud.js?v=4e816a5";
 
 const params = new URLSearchParams(location.search);
 const hud = mountHud(document, OBR, { arrows: params.get("arrows") === "1" });

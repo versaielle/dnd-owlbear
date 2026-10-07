@@ -18,15 +18,19 @@
 // panel's own split); ONE 30 Hz timer moves every live effect's progress in ONE batched update;
 // every item is deleted at its deadline whatever happened to its add or updates, and a sweep
 // catches anything left behind; a screen never has more than 12 live effects (6 in lite).
-import { ALIASES, ARCHETYPES, PALETTE, SPEC, TIMING, colors, defaultDur, defaultHit, hostFor, maxDur, uniformValues } from "./archetypes.js?v=07c06cc";
-import { fallbackItem } from "./fallback.js?v=07c06cc";
-import { numberItem } from "./numbers.js?v=07c06cc";
-import { finite, footprint, fromBounds, gridOf, rotate } from "./place.js?v=07c06cc";
-import { customUniforms, fillUniforms, shaderFor } from "./shaders.js?v=07c06cc";
-import { createZones, setZoneBuilder } from "./zones.js?v=07c06cc";
+import { ALIASES, ARCHETYPES, PALETTE, SPEC, TIMING, colors, defaultDur, defaultHit, hostFor, maxDur, uniformValues } from "./archetypes.js?v=4e816a5";
+import { fallbackItem } from "./fallback.js?v=4e816a5";
+import { numberItem } from "./numbers.js?v=4e816a5";
+import { finite, footprint, fromBounds, gridOf, rotate } from "./place.js?v=4e816a5";
+import { customUniforms, fillUniforms, shaderFor } from "./shaders.js?v=4e816a5";
+import { createZones, setZoneBuilder } from "./zones.js?v=4e816a5";
 
 export const FX_KEY = "dnd-npc/fx"; // on every one-shot item: {until} (wall-clock ms), for the sweep
 export const CAP = { full: 12, lite: 6 };
+// Above the fog (the user's call, live test 2026-10-06): the table sees the magic it just
+// confirmed even where its screen is fogged. Nothing secret reaches a screen's event (R2), and
+// living zones (zones.js, PROP) and the token rings (ATTACHMENT) stay under the fog.
+export const FX_LAYER = "POINTER";
 const TICK_MS = 33;
 const SWEEP_MS = 10000;
 const GRACE_MS = 150;
@@ -96,7 +100,7 @@ export function createFx(api = {}, ctx = {}) {
   const ready = (async () => {
     const need = ["buildEffect", "buildShape", "buildText"];
     if (api.OBR && need.every((k) => typeof api[k] === "function")) return api;
-    const sdk = await import("../obr-sdk.js?v=07c06cc");
+    const sdk = await import("../obr-sdk.js?v=4e816a5");
     return { OBR: sdk.default, buildEffect: sdk.buildEffect, buildShape: sdk.buildShape, buildText: sdk.buildText,
       buildLabel: sdk.buildLabel, buildImage: sdk.buildImage, Math2: sdk.Math2, MathM: sdk.MathM, ...api };
   })().then((a) => {
@@ -113,8 +117,8 @@ export function createFx(api = {}, ctx = {}) {
     return r.ok ? r.json() : null;
   });
   (async () => {
-    try { const p = await loadJson(new URL("./palette.json?v=07c06cc", import.meta.url).href); if (p && typeof p === "object") palette = { ...PALETTE, ...p }; } catch (e) { /* built-in copy */ }
-    try { const t = await loadJson(new URL("./timing.json?v=07c06cc", import.meta.url).href); if (t && typeof t === "object") timing = { ...TIMING, ...t }; } catch (e) { /* built-in copy */ }
+    try { const p = await loadJson(new URL("./palette.json?v=4e816a5", import.meta.url).href); if (p && typeof p === "object") palette = { ...PALETTE, ...p }; } catch (e) { /* built-in copy */ }
+    try { const t = await loadJson(new URL("./timing.json?v=4e816a5", import.meta.url).href); if (t && typeof t === "object") timing = { ...TIMING, ...t }; } catch (e) { /* built-in copy */ }
   })();
 
   const val = (v) => (typeof v === "function" ? v() : v);
@@ -435,7 +439,7 @@ export function createFx(api = {}, ctx = {}) {
       .effectType(host.viewport ? "VIEWPORT" : "STANDALONE")
       .sksl(sksl)
       .uniforms(fillUniforms(decl, values(0), warn))
-      .layer(spec.layer || "ATTACHMENT")
+      .layer(spec.layer || FX_LAYER)
       .locked(true)
       .disableHit(true)
       .disableAutoZIndex(true)
@@ -523,7 +527,7 @@ export function createFx(api = {}, ctx = {}) {
           const item = full.buildEffect().effectType("STANDALONE").sksl(sksl)
             .uniforms(fillUniforms(customUniforms(sksl), { ...(SPEC[name]?.params || {}), fade: 0, progress: 0, colA: { x: 1, y: 1, z: 1 }, colB: { x: 1, y: 1, z: 1 }, seed: 1, power: 1, cell: G.dpi, shape: 1, ofs: { x: 0, y: 0 }, density: 1, hit: 0.5 }, warn))
             .width(S).height(S).position({ x: c.x - S / 2, y: c.y - S / 2 })
-            .layer("ATTACHMENT").locked(true).disableHit(true).disableAutoZIndex(true).zIndex(zIndex++)
+            .layer(FX_LAYER).locked(true).disableHit(true).disableAutoZIndex(true).zIndex(zIndex++)
             .name("dnd-npc fx warm-up").metadata({ [FX_KEY]: { until: clock.wall() + 1000 } }).build();
           live.set(item.id, { id: item.id, item, kind: "warm", rank: 0, t0: clock.now(), ticking: false, added: false });
           later(() => remove(item.id), 150);

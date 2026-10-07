@@ -27,15 +27,19 @@
 // screen can't tell, so no creature is named, listed or counted there; a tap still picks one
 // ("→ a target") and its ring stays below the fog. A creature's name on a player's screen is
 // only one the players see on the map (geometry.tokenLabel publicOnly). PCs are always named.
-import * as F from "./fog.js?v=07c06cc";
-import * as G from "./geometry.js?v=07c06cc";
+import * as F from "./fog.js?v=4e816a5";
+import * as G from "./geometry.js?v=4e816a5";
 import {
   ACTION_CANCEL, ACTION_LOCK, AIM_KEY, AMBER, CH, DEFAULT_COLOR, DRAW_MS, FADE_MS, FALLBACK_TOOL, FILL_OPACITY,
   HIGHLIGHT_SCALE, HUD_HEIGHT, HUD_HEIGHT_PICK, HUD_ID, HUD_WIDTH, MODE_PICK, MODE_PLACE, SECRET_OPACITY,
   SHOW_TTL_MS, STROKE_CELLS, STROKE_OPACITY, TOOL_ID,
-} from "./consts.js?v=07c06cc";
+} from "./consts.js?v=4e816a5";
 
 const MOVE = 0, LINE = 1, CLOSE = 5; // Path commands
+// The template's outline, label and range ring sit above the fog, so a player aiming into the
+// dark still sees their own shape; the rings on caught tokens stay under it (ATTACHMENT), so a
+// sweep never shows where a fogged creature stands.
+const TEMPLATE_LAYER = "POINTER";
 // What a redraw may change on an item already drawn (anything else means a new item).
 const KEYS = ["position", "rotation", "width", "height", "style", "text", "commands", "shapeType", "visible", "scale"];
 const HUD_MS = 150; // the HUD's status line updates at most this often
@@ -84,7 +88,7 @@ export function installAim(api = {}, ctx = {}, hooks = {}) {
   let sdk = null;
   async function B() {
     if (api.buildShape && api.buildLabel && api.buildPath) return api;
-    sdk ||= import("../obr-sdk.js?v=07c06cc").catch((e) => {
+    sdk ||= import("../obr-sdk.js?v=4e816a5").catch((e) => {
       sdk = null;
       throw e;
     });
@@ -355,7 +359,7 @@ export function installAim(api = {}, ctx = {}, hooks = {}) {
       const cmds = G.outline(area, 8).map((p, i) => [i ? LINE : MOVE, p.x - o.x, p.y - o.y]);
       b = bs.buildPath().commands([...cmds, [CLOSE]]).position(o);
     }
-    return finishItem(look(b, g, color, { dashed }), id, "RULER", name, meta);
+    return finishItem(look(b, g, color, { dashed }), id, TEMPLATE_LAYER, name, meta);
   }
 
   function labelItem(bs, id, text, area, g, meta) {
@@ -365,7 +369,7 @@ export function installAim(api = {}, ctx = {}, hooks = {}) {
     b = maybe(b, "backgroundColor", "#1d1b2a");
     b = maybe(b, "backgroundOpacity", 0.85);
     b = maybe(b, "minViewScale", 1);
-    return finishItem(b, id, "TEXT", "🎯 label", meta);
+    return finishItem(b, id, TEMPLATE_LAYER, "🎯 label", meta);
   }
 
   function ringItem(bs, id, fp, radius, g, color, { secret = false, layer = "ATTACHMENT", opacity = STROKE_OPACITY, dashed = false } = {}, meta) {
@@ -478,7 +482,7 @@ export function installAim(api = {}, ctx = {}, hooks = {}) {
     const fromPoint = sess.mode === "pick" || (sess.mode === "area" && !G.isSelf(spec.area));
     if (rangeFt > 0 && fromPoint && sess.casterFp && !sess.virtual) {
       const r = rangeFt * g.pxPerFt + Math.max(sess.casterFp.w, sess.casterFp.h) / 2;
-      put(ringItem(bs, P + "range", sess.casterFp, r, g, color, { layer: "RULER", opacity: 0.5, dashed: true }, meta("range")));
+      put(ringItem(bs, P + "range", sess.casterFp, r, g, color, { layer: TEMPLATE_LAYER, opacity: 0.5, dashed: true }, meta("range")));
     }
     const lit = sess.mode === "pick" ? (sess.pick ? [{ id: sess.pick, secret: false }] : []) : sess.caught;
     for (const c of lit) {

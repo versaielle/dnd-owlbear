@@ -16,11 +16,11 @@
 // and the locked templates (aim/), and on a player's device their spells (player/). Those load
 // with import() and may fail on their own: the map jobs, rings and HP keep working without them.
 import OBR, { buildCurve, buildEffect, buildImage, buildLabel, buildPath, buildShape, buildText, Math2, MathM }
-  from "./obr-sdk.js?v=07c06cc";
-import { contains, isRoom, size } from "./areas.js?v=07c06cc";
-import { BADGE_KEY, BADGE_URL, BUBBLES_KEY, BUBBLES_NAME_KEY, COND_KEY, CONDITIONS, DOWN_COLOR, GRIMOIRE_KEY, MARK_PREFIX, PLACE_KEY, RING_KEY, TARGET_COLOR, WHO_KEY } from "./keys.js?v=07c06cc";
+  from "./obr-sdk.js?v=4e816a5";
+import { contains, isRoom, size } from "./areas.js?v=4e816a5";
+import { BADGE_KEY, BADGE_URL, BUBBLES_KEY, BUBBLES_NAME_KEY, COND_KEY, CONDITIONS, DOWN_COLOR, GRIMOIRE_KEY, MARK_PREFIX, PLACE_KEY, RING_KEY, TARGET_COLOR, WHO_KEY } from "./keys.js?v=4e816a5";
 import { CH, DEFAULT_SETTINGS, LS, buildOf, forMe, here, isLocalOrigin, kindOf, lsGet, on as busOn, send as busSend,
-  setConnection, setSceneWrite, startSceneReader, tierOf } from "./bus.js?v=07c06cc";
+  setConnection, setSceneWrite, startSceneReader, tierOf } from "./bus.js?v=4e816a5";
 
 const HEARTBEAT_MS = 10000;
 const DEBOUNCE_MS = 250;
@@ -464,13 +464,13 @@ const JOBS = {
 // The parts that load on their own (R4): a broken one is left out and the rest carry on.
 // Literal paths, so the publisher can stamp each with the build.
 const MODULES = {
-  bridge: () => import("./bridge.js?v=07c06cc"),
-  fx: () => import("./fx/engine.js?v=07c06cc"),
-  samples: () => import("./fx/samples.js?v=07c06cc"),
-  aim: () => import("./aim/tool.js?v=07c06cc"),
-  geometry: () => import("./aim/geometry.js?v=07c06cc"),
-  rings: () => import("./aim/rings.js?v=07c06cc"),
-  player: () => import("./player/state.js?v=07c06cc"),
+  bridge: () => import("./bridge.js?v=4e816a5"),
+  fx: () => import("./fx/engine.js?v=4e816a5"),
+  samples: () => import("./fx/samples.js?v=4e816a5"),
+  aim: () => import("./aim/tool.js?v=4e816a5"),
+  geometry: () => import("./aim/geometry.js?v=4e816a5"),
+  rings: () => import("./aim/rings.js?v=4e816a5"),
+  player: () => import("./player/state.js?v=4e816a5"),
 };
 
 const HELLO_MS = 30000; // each screen says hello this often, so the panel's screens list stays fresh

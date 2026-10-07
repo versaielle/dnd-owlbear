@@ -2,7 +2,7 @@
 // layer that drifts up 0.6 of a cell over its 900 ms and fades out over the last 30%.
 // The item is built with Owlbear's buildText, then its style is set directly on the built item,
 // so it works whatever the SDK's text-builder method names are.
-import { finite } from "./place.js?v=07c06cc";
+import { finite } from "./place.js?v=4e816a5";
 
 // Fill colour per tone; every number gets a dark outline so it reads on any map.
 export const TONES = {
@@ -30,7 +30,7 @@ export function numberItem(api, part, fp, G, { stack = 0, until = 0, key = "dnd-
     .plainText(text)
     .textType("PLAIN")
     .position({ x: x0, y: y0 })
-    .layer("TEXT")
+    .layer("POINTER")
     .locked(true)
     .disableHit(true)
     .disableAutoZIndex(true)

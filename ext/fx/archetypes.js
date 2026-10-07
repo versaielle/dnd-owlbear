@@ -2,7 +2,7 @@
 // it sits where), which layer, and the uniforms its shader gets. Python (fx_events.py) decides
 // WHAT plays and WHEN; this file only turns one part of an FxEvent into an effect's geometry.
 // Pure, no Owlbear import: engine.js, the compile gate and the dev page all use it.
-import { angleOf, clamp, dist, finite, placeRect, rotate } from "./place.js?v=07c06cc";
+import { angleOf, clamp, dist, finite, placeRect, rotate } from "./place.js?v=4e816a5";
 
 // The archetype names (section 11.3 of the spec; fx_events.ARCHETYPES must match).
 export const ARCHETYPES = ["bolt", "ray", "arrow", "burst", "cone", "line", "cube", "glow", "smite", "sparkle",
@@ -127,7 +127,7 @@ export const SPEC = {
   impact: { color: "steel", params: { dirv: { x: 0, y: 0 }, strength: 1 }, rank: 2 },
   resist: { color: "arcane", params: { dirv: { x: 0, y: 0 } }, rank: 1 },
   death: { color: "down", params: { beats: 0, smoke: 1 }, rank: 7 },
-  flash: { color: "fire", params: { amt: 0.25 }, rank: 3, viewport: true, layer: "RULER" },
+  flash: { color: "fire", params: { amt: 0.25 }, rank: 3, viewport: true, layer: "POINTER" },
   shake: { color: "steel", params: { amp: 10 }, rank: 3, viewport: true, layer: "POST_PROCESS" },
 };
 

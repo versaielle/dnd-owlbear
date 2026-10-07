@@ -42,8 +42,8 @@
 // state in the background (player/state.js) and asks it to aim or withdraw; the background
 // does the rest, so closing this popover never loses a request. ?demo shows canned data
 // without Owlbear (for checking the layout in a plain browser).
-import { view } from "./player/view.js?v=07c06cc";
-import { CH } from "./aim/consts.js?v=07c06cc";
+import { view } from "./player/view.js?v=4e816a5";
+import { CH } from "./aim/consts.js?v=4e816a5";
 
 const app = document.getElementById("app");
 const params = new URLSearchParams(location.search);
@@ -115,7 +115,7 @@ if (params.has("demo")) {
 } else {
   render();
   try {
-    const { default: OBR } = await import("./obr-sdk.js?v=07c06cc");
+    const { default: OBR } = await import("./obr-sdk.js?v=4e816a5");
     // audience "all": a local message, but it passes the bus's audience check if the background filters.
     ask = (m) => OBR.broadcast.sendMessage(CH.LOCAL_ASK, { v: 1, audience: "all", ...m }, { destination: "LOCAL" }).catch(() => {});
     close = () => OBR.action.close().catch(() => {});

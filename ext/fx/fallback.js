@@ -7,7 +7,7 @@
 //   death                           the same ring, in red
 //   number                          unchanged (numbers.js); flash and shake are skipped
 // Every shape is a local item on the ATTACHMENT layer, locked and click-through.
-import { placeRect, rotate } from "./place.js?v=07c06cc";
+import { placeRect, rotate } from "./place.js?v=4e816a5";
 
 const TRAVEL = ["bolt", "ray", "arrow"];
 const AREA = ["burst", "cone", "line", "cube"];
@@ -33,7 +33,7 @@ function shape(api, type, w, h, pos, rot, col, extra) {
     .strokeColor(col)
     .strokeOpacity(extra.stroke ?? 0.9)
     .strokeWidth(extra.width ?? 4)
-    .layer("ATTACHMENT")
+    .layer("POINTER")
     .locked(true)
     .disableHit(true)
     .disableAutoZIndex(true)
