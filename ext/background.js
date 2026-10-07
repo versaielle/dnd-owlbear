@@ -16,11 +16,11 @@
 // and the locked templates (aim/), and on a player's device their spells (player/). Those load
 // with import() and may fail on their own: the map jobs, rings and HP keep working without them.
 import OBR, { buildCurve, buildEffect, buildImage, buildLabel, buildPath, buildShape, buildText, Math2, MathM }
-  from "./obr-sdk.js?v=a0b5bb5";
-import { contains, isRoom, size } from "./areas.js?v=a0b5bb5";
-import { BADGE_KEY, BADGE_URL, BUBBLES_KEY, BUBBLES_NAME_KEY, COND_KEY, CONDITIONS, DOWN_COLOR, GRIMOIRE_KEY, MARK_PREFIX, PLACE_KEY, RING_KEY, TARGET_COLOR, WHO_KEY } from "./keys.js?v=a0b5bb5";
+  from "./obr-sdk.js?v=842f61f";
+import { contains, isRoom, size } from "./areas.js?v=842f61f";
+import { BADGE_KEY, BADGE_URL, BUBBLES_KEY, BUBBLES_NAME_KEY, COND_KEY, CONDITIONS, DOWN_COLOR, GRIMOIRE_KEY, MARK_PREFIX, PLACE_KEY, RING_KEY, TARGET_COLOR, WHO_KEY } from "./keys.js?v=842f61f";
 import { CH, DEFAULT_SETTINGS, LS, buildOf, forMe, here, isLocalOrigin, kindOf, lsGet, on as busOn, send as busSend,
-  setConnection, setSceneWrite, startSceneReader, tierOf } from "./bus.js?v=a0b5bb5";
+  setConnection, setSceneWrite, startSceneReader, tierOf } from "./bus.js?v=842f61f";
 
 const HEARTBEAT_MS = 10000;
 const DEBOUNCE_MS = 250;
@@ -464,13 +464,13 @@ const JOBS = {
 // The parts that load on their own (R4): a broken one is left out and the rest carry on.
 // Literal paths, so the publisher can stamp each with the build.
 const MODULES = {
-  bridge: () => import("./bridge.js?v=a0b5bb5"),
-  fx: () => import("./fx/engine.js?v=a0b5bb5"),
-  samples: () => import("./fx/samples.js?v=a0b5bb5"),
-  aim: () => import("./aim/tool.js?v=a0b5bb5"),
-  geometry: () => import("./aim/geometry.js?v=a0b5bb5"),
-  rings: () => import("./aim/rings.js?v=a0b5bb5"),
-  player: () => import("./player/state.js?v=a0b5bb5"),
+  bridge: () => import("./bridge.js?v=842f61f"),
+  fx: () => import("./fx/engine.js?v=842f61f"),
+  samples: () => import("./fx/samples.js?v=842f61f"),
+  aim: () => import("./aim/tool.js?v=842f61f"),
+  geometry: () => import("./aim/geometry.js?v=842f61f"),
+  rings: () => import("./aim/rings.js?v=842f61f"),
+  player: () => import("./player/state.js?v=842f61f"),
 };
 
 const HELLO_MS = 30000; // each screen says hello this often, so the panel's screens list stays fresh
@@ -506,7 +506,12 @@ export async function boot(api = sdk, opts = {}) {
   const O = api.OBR;
   bridge = null;
   legacy = false;
-  const T = opts.timers || { setTimeout, clearTimeout, setInterval, clearInterval, now: () => Date.now() };
+  // Wrapped, never the bare functions: Chrome throws "Illegal invocation" for T.setInterval(...)
+  // when setInterval itself sits on a plain object (Node doesn't, so only the live tab showed it).
+  const T = opts.timers || {
+    setTimeout: (f, ms) => setTimeout(f, ms), clearTimeout: (t) => clearTimeout(t),
+    setInterval: (f, ms) => setInterval(f, ms), clearInterval: (t) => clearInterval(t), now: () => Date.now(),
+  };
   const load = opts.importer || ((name) => MODULES[name]());
   const origin = opts.origin ?? globalThis.location?.origin ?? "";
   const local = isLocalOrigin(origin);
@@ -707,7 +712,7 @@ export async function boot(api = sdk, opts = {}) {
     ctx.relayOnly = true;
     ctx.log("the Pages copy is on this tab too: this copy only relays");
     if (!started) {
-      start(); // heard before the wait ran out: start now, as a relay only
+      safeStart(); // heard before the wait ran out: start now, as a relay only
       return;
     }
     // It came late: this copy was already drawing here. Stop, without touching anything the
@@ -842,6 +847,18 @@ export async function boot(api = sdk, opts = {}) {
   if (sceneFallback()) startSceneReader(api, conn);
   applySettings(ctx.settings);
 
+  function safeStart() {
+    // A throw part-way through start() would leave this copy silent (no bridge, no reason):
+    // keep the reason for the popover ("❌ The bridge failed to load: …").
+    try {
+      start();
+    } catch (e) {
+      errors.bridge = errors.bridge || `start: ${String(e?.stack || e?.message || e).slice(0, 400)}`;
+      console.warn("dnd-npc: start failed", e);
+      try { pushState(); } catch { /* the popover asks again */ }
+    }
+  }
+
   function start() {
     // From here this copy knows whether it draws on this tab. A copy that only relays starts
     // none of the drawing parts: no aim tool, no player's spells, no zone decorations, no menus.
@@ -878,9 +895,21 @@ export async function boot(api = sdk, opts = {}) {
       T.setInterval(send, HEARTBEAT_MS);
       if (bridgeMod?.startBridge) {
         ctx.onStatus = pushState;
-        bridge = bridgeMod.startBridge(api, ctx, {
-          fx, aim, rings, geometry, jobs: JOBS, summary, fetchImpl: opts.fetchImpl, timers: opts.timers,
-        });
+        try {
+          bridge = bridgeMod.startBridge(api, ctx, {
+            fx, aim, rings, geometry, jobs: JOBS, summary, fetchImpl: opts.fetchImpl, timers: opts.timers,
+          });
+        } catch (e) {
+          // Say why in the popover ("❌ The bridge failed to load: …"), and on a tab the panel
+          // serves fall back to game night 1's loops rather than leave the map unheard.
+          bridge = null;
+          errors.bridge = String(e?.stack || e?.message || e).slice(0, 400);
+          console.warn("dnd-npc: the bridge didn't start", e);
+          if (local) {
+            legacy = true;
+            T.setInterval(todo, TODO_MS);
+          }
+        }
       } else if (local) {
         // bridge.js broke, but this tab is served by the panel itself: run game night 1's loops.
         legacy = true;
@@ -894,9 +923,9 @@ export async function boot(api = sdk, opts = {}) {
 
   if (local) {
     hello(); // also "who's here?": the Pages copy on this tab, if any, answers at once
-    T.setTimeout(start, DUAL_WAIT_MS);
+    T.setTimeout(safeStart, DUAL_WAIT_MS);
   } else {
-    start();
+    safeStart();
     hello();
   }
   return {

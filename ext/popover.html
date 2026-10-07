@@ -55,8 +55,8 @@
 // the panel serves, "DND NPC (this PC)", which is the bridge, and the Pages one, "DND NPC", which
 // draws and aims. Both boxes hear every LOCAL message, so this box tags what it asks with its own
 // copy's host and only shows the answers from its own copy.
-import OBR from "./obr-sdk.js?v=a0b5bb5";
-import { CH, LS, QUALITIES, ask, isLocalOrigin, lsGet, lsSet, on, send } from "./bus.js?v=a0b5bb5";
+import OBR from "./obr-sdk.js?v=842f61f";
+import { CH, LS, QUALITIES, ask, isLocalOrigin, lsGet, lsSet, on, send } from "./bus.js?v=842f61f";
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
