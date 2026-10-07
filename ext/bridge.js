@@ -25,8 +25,8 @@
 // Every Owlbear call and fetch goes through `api` and `mods`, so check_bridge.mjs can run it
 // against a fake room and a fake clock.
 import { CH, DEFAULT_SETTINGS, LS, PANEL_PORTS, RPC_PATHS, canSeal, lsGet, lsSet, on, seal, send, setConnection,
-  setSceneWrite } from "./bus.js?v=842f61f";
-import { RING_KEY, TARGET_COLOR } from "./keys.js?v=842f61f";
+  setSceneWrite } from "./bus.js?v=07c06cc";
+import { RING_KEY, TARGET_COLOR } from "./keys.js?v=07c06cc";
 
 const HELLO_TIMEOUT_MS = 800; // per port, when looking for the panel
 const FIND_RETRY_MS = 30000; // no panel found: look again
@@ -745,8 +745,12 @@ export function startBridge(api, ctx, mods = {}) {
     const who = await playerOf(ev.connectionId);
     if (who?.role !== "GM") return; // the menus are the GM's
     const here = ev.connectionId === conn;
-    const dest = here ? "LOCAL" : "ALL";
     const key = typeof msg.key === "string" && msg.key ? msg.key : null;
+    // LOCAL never reaches the OTHER extension's frames on this tab (seen live 2026-10-06: the
+    // Pages copy's map check and 🗺 menus timed out), so a same-tab asker that sent a key gets
+    // the sealed answer over ALL like any other GM device. LOCAL only when there's no key.
+    const localOnly = here && !key;
+    const dest = localOnly ? "LOCAL" : "ALL";
     const reply = (status, extra = {}) => send(api, CH.RPC_REPLY, { audience: "gm", id: msg.id, status, ...extra }, dest);
     if (!RPC_PATHS.includes(msg.path)) return reply(403);
     if (!here && !key && msg.path === "/api/map/catalog") return reply(403, { error: CATALOG_IN_CLEAR });
@@ -757,7 +761,7 @@ export function startBridge(api, ctx, mods = {}) {
     } catch {
       return reply(502);
     }
-    if (here) {
+    if (localOnly) {
       if (!reply(r.status, { body })) reply(413);
       return;
     }

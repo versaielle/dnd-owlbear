@@ -127,23 +127,29 @@ export function forMe(msg, me) {
 export const TABLE_UA = /CrKey|Chromecast|GoogleTV|Android TV|AFT[A-Z]|BRAVIA|SMART-TV|Tizen|Web0S/i;
 
 // The rule itself, from plain facts, so it can be checked offline.
-export function kindOf({ role, playerId, ua = "", coarse = false, tableFlag = false, settings = {} } = {}) {
+// Owlbear's Cast receiver joins the room as a player named "Cast Receiver" (seen live 2026-10-06;
+// its user agent matched none of TABLE_UA).
+export const CAST_RECEIVER_NAME = /^cast receiver$/i;
+
+export function kindOf({ role, playerId, ua = "", coarse = false, tableFlag = false, settings = {}, name = "" } = {}) {
   if (role === "GM") return "gm";
   const tablePlayers = Array.isArray(settings?.table_players) ? settings.table_players : [];
-  if (TABLE_UA.test(ua || "") || (playerId && tablePlayers.includes(playerId)) || tableFlag) return "table";
+  if (TABLE_UA.test(ua || "") || CAST_RECEIVER_NAME.test(String(name || "").trim())
+      || (playerId && tablePlayers.includes(playerId)) || tableFlag) return "table";
   if (coarse) return "touch";
   return "other";
 }
 
 export async function clientKind(api, settings = {}) {
   const OBR = api?.OBR ?? api;
-  let role = "PLAYER", playerId = null;
+  let role = "PLAYER", playerId = null, name = "";
   try { role = await OBR.player.getRole(); } catch { /* not ready: a player */ }
   try { playerId = OBR.player.id; } catch { /* not ready */ }
+  try { name = await OBR.player.getName(); } catch { /* not ready */ }
   let coarse = false;
   try { coarse = !!globalThis.matchMedia?.("(pointer: coarse)")?.matches; } catch { /* no window */ }
   return kindOf({ role, playerId, ua: globalThis.navigator?.userAgent || "", coarse,
-                  tableFlag: lsGet(LS.TABLE_SCREEN) === "1", settings });
+                  tableFlag: lsGet(LS.TABLE_SCREEN) === "1", settings, name });
 }
 
 // The effects tier on this device: the popover's own choice, else the panel's for this kind.
