@@ -34,3 +34,7 @@ export const BUBBLES_KEY = "com.owlbear-rodeo-bubbles-extension/metadata";
 export const FX_KEY = "dnd-npc/fx";
 export const ZONE_KEY = "dnd-npc/zone";
 export const AIM_KEY = "dnd-npc/aim";
+// The party's names, kept in the Owlbear ROOM's metadata (an array of names), so every copy of
+// the extension (the laptop's Pages copy too) can match PC tokens by name without the panel.
+// A GM copy writes it whenever it gets the party from the panel and it differs (gather.js).
+export const PARTY_KEY = "dnd-npc/party";

@@ -27,13 +27,13 @@
 // screen can't tell, so no creature is named, listed or counted there; a tap still picks one
 // ("→ a target") and its ring stays below the fog. A creature's name on a player's screen is
 // only one the players see on the map (geometry.tokenLabel publicOnly). PCs are always named.
-import * as F from "./fog.js?v=843a06c";
-import * as G from "./geometry.js?v=843a06c";
+import * as F from "./fog.js?v=23059e2";
+import * as G from "./geometry.js?v=23059e2";
 import {
   ACTION_CANCEL, ACTION_LOCK, AIM_KEY, AMBER, CH, DEFAULT_COLOR, DRAW_MS, FADE_MS, FALLBACK_TOOL, FILL_OPACITY,
   HIGHLIGHT_SCALE, HUD_HEIGHT, HUD_HEIGHT_PICK, HUD_ID, HUD_WIDTH, MODE_PICK, MODE_PLACE, SECRET_OPACITY,
   SHOW_TTL_MS, STROKE_CELLS, STROKE_OPACITY, TOOL_ID,
-} from "./consts.js?v=843a06c";
+} from "./consts.js?v=23059e2";
 
 const MOVE = 0, LINE = 1, CLOSE = 5; // Path commands
 // The template's outline, label and range ring sit above the fog, so a player aiming into the
@@ -88,7 +88,7 @@ export function installAim(api = {}, ctx = {}, hooks = {}) {
   let sdk = null;
   async function B() {
     if (api.buildShape && api.buildLabel && api.buildPath) return api;
-    sdk ||= import("../obr-sdk.js?v=843a06c").catch((e) => {
+    sdk ||= import("../obr-sdk.js?v=23059e2").catch((e) => {
       sdk = null;
       throw e;
     });

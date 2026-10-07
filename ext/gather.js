@@ -13,11 +13,11 @@
 // Also "👥 Place townsfolk" (GM only, on the town map): each NPC listed in interiors.json's
 // town.townsfolk goes to its own square in its room, next to its piece of furniture.
 // check_interiors.mjs tests the pure parts offline.
-import OBR, { MathM } from "./obr-sdk.js?v=843a06c";
-import { contains, isRoom, outline } from "./areas.js?v=843a06c";
-import { ask, directBase } from "./bus.js?v=843a06c";
-import { bounds, listed, loadInteriors, mapToScene, matchImages, normName, toScene } from "./interiors.js?v=843a06c";
-import { BUBBLES_NAME_KEY, INTERIOR_KEY, WHO_KEY } from "./keys.js?v=843a06c";
+import OBR, { MathM } from "./obr-sdk.js?v=23059e2";
+import { contains, isRoom, outline } from "./areas.js?v=23059e2";
+import { ask, directBase } from "./bus.js?v=23059e2";
+import { bounds, listed, loadInteriors, mapToScene, matchImages, normName, toScene } from "./interiors.js?v=23059e2";
+import { BUBBLES_NAME_KEY, INTERIOR_KEY, PARTY_KEY, WHO_KEY } from "./keys.js?v=23059e2";
 
 const RADIUS = 12; // squares around the spot that are tried
 
@@ -377,17 +377,100 @@ export function townsfolkText({ moves, notFound, noMap, noRoom }) {
   return s;
 }
 
-// ---- live ----
+// ---- the party's names, remembered in the room ----
+// The names only help match tokens by name ("This is…" (pc:<name>) works without them). They
+// come from the panel, which the laptop only reaches through the Dell's bridge, so each copy
+// that gets them from the panel also keeps them in the Owlbear room's metadata (PARTY_KEY): the
+// laptop then finds the PCs even on a night the Dell's panel isn't running.
 
-// The party's names (only to match tokens by name: "This is…" (pc:<name>) works without them),
-// from the panel: straight from it when this copy can, else through the bridge (bus.js ask()).
-export async function partyNames() {
+const MAX_NAMES = 20, MAX_NAME = 80; // room metadata is 16 KB for everything: keep it small
+
+// A name list as stored: strings, trimmed, non-empty, no repeats, in order (anything else -> []).
+export function cleanParty(x) {
+  if (!Array.isArray(x)) return [];
+  const out = [];
+  for (const n of x) {
+    const s = typeof n === "string" ? n.trim().slice(0, MAX_NAME) : "";
+    if (s && !out.includes(s) && out.length < MAX_NAMES) out.push(s);
+  }
+  return out;
+}
+
+// The names to use: the panel's when it answered with some (it wins), else the room's.
+export function mergeParty(stored, fetched) {
+  const f = cleanParty(fetched);
+  return f.length ? f : cleanParty(stored);
+}
+
+// What to write to the room, or null: the panel's names when there are some and they differ
+// from what the room has (so nothing is written twice).
+export function partyToStore(stored, fetched) {
+  const f = cleanParty(fetched), s = Array.isArray(stored) ? stored : [];
+  if (!f.length) return null;
+  return s.length === f.length && s.every((n, k) => n === f[k]) ? null : f;
+}
+
+// The room's remembered names (instant: Owlbear already has the room's metadata).
+export async function storedParty(O = OBR) {
   try {
-    const c = await ask(OBR, "/api/map/catalog");
-    return Array.isArray(c?.party) ? c.party : [];
+    return cleanParty((await O.room.getMetadata())?.[PARTY_KEY]);
   } catch {
     return [];
   }
+}
+
+// Keep names just got from the panel in the room, when they differ (GM only: players can't
+// write room metadata). `stored`: the room's raw value when already read. True when written.
+export async function rememberParty(fetched, O = OBR, stored) {
+  if (!cleanParty(fetched).length) return false;
+  try {
+    if (stored === undefined) stored = (await O.room.getMetadata())?.[PARTY_KEY];
+    const names = partyToStore(stored, fetched);
+    if (!names || (await O.player.getRole()) !== "GM") return false;
+    await O.room.setMetadata({ [PARTY_KEY]: names });
+    return true;
+  } catch (e) {
+    console.warn("dnd-npc: couldn't keep the party in the room", e);
+    return false;
+  }
+}
+
+// Text for a list with no PC tokens: with no party names at all, how to get them remembered.
+export function noPcsText(party) {
+  return party?.length ? "No PC tokens on this map. Mark one with 🗺 This is…, or name it after the PC."
+    : "No PC tokens found. Start the game (or tools\\owlbear_only.py) on the Dell once so the party is "
+      + "remembered in this room, or mark tokens with 🗺 This is…";
+}
+
+// ---- live ----
+
+// The party's names: the room's (instant), then the panel's (straight from it when this copy
+// can, else through the bridge: bus.js ask(), which gives up after its timeout); the panel's win
+// when it answers, and are then kept in the room.
+export async function partyNames() {
+  let raw;
+  try {
+    raw = (await OBR.room.getMetadata())?.[PARTY_KEY];
+  } catch {
+    raw = undefined;
+  }
+  const refresh = async () => {
+    let fetched = [];
+    try {
+      fetched = cleanParty((await ask(OBR, "/api/map/catalog"))?.party);
+    } catch {
+      fetched = [];
+    }
+    if (fetched.length) await rememberParty(fetched, OBR, raw ?? null);
+    return fetched;
+  };
+  // The room already knows the party: answer at once and refresh it from the panel meanwhile
+  // (without the Dell's panel, asking takes the full timeout).
+  if (cleanParty(raw).length) {
+    refresh().catch(() => {});
+    return mergeParty(raw, []);
+  }
+  return mergeParty(raw, await refresh());
 }
 
 // From the menu: bring the chosen PC tokens (ids; null = all of them) to the target item.
@@ -416,7 +499,7 @@ export async function bringPcs(targetId, chosen, party) {
   }
   const g = gather(json, target, items, party, sceneDpi, { chosen, box, anchor });
   if (!g.moves.length) {
-    OBR.notification.show("🧭 No PC tokens found (mark one with 🗺 This is…, or name it after the PC)", "WARNING");
+    OBR.notification.show(`🧭 ${noPcsText(party)}`, "WARNING");
     return;
   }
   await moveTokens(new Map(g.moves.map((m) => [m.id, m.position])));

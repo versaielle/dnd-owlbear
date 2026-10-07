@@ -2,8 +2,8 @@
 // fit across (or kept as it is when already closer), and the token is selected. Offered from
 // the right-click menu on anything (menu.html, kind=goto), the toolbar button's box
 // (popover.html) and a key (background.js). The PC tokens are gather.js's.
-import OBR from "./obr-sdk.js?v=843a06c";
-import { findPcs, partyNames, tokenBox } from "./gather.js?v=843a06c";
+import OBR from "./obr-sdk.js?v=23059e2";
+import { findPcs, partyNames, tokenBox } from "./gather.js?v=23059e2";
 
 const SQUARES = 12; // squares across the screen after the jump
 
@@ -14,12 +14,13 @@ export function viewOn(point, { dpi, width, height, scale, squares = SQUARES }) 
   return { position: { x: -point.x * s + width / 2, y: -point.y * s + height / 2 }, scale: s };
 }
 
-// The PC tokens in the scene, by name ([{item, name}]); hidden ones too.
+// The PC tokens in the scene, by name ([{item, name}]; hidden ones too), and the party's names
+// they were matched with (the room's remembered ones when the panel can't be reached).
 export async function scenePcs() {
   // Party names only help match tokens by name: "This is…" (pc:<name>) works without the game.
   const party = await partyNames();
-  if (!(await OBR.scene.isReady())) return [];
-  return findPcs(await OBR.scene.items.getItems(), party);
+  if (!(await OBR.scene.isReady())) return { pcs: [], party };
+  return { pcs: findPcs(await OBR.scene.items.getItems(), party), party };
 }
 
 export const pcLabel = ({ item, name }) => (item.visible ? name : `${name} (hidden)`);

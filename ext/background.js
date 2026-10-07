@@ -16,13 +16,13 @@
 // and the locked templates (aim/), and on a player's device their spells (player/). Those load
 // with import() and may fail on their own: the map jobs, rings and HP keep working without them.
 import OBR, { buildCurve, buildEffect, buildImage, buildLabel, buildPath, buildShape, buildText, Math2, MathM }
-  from "./obr-sdk.js?v=843a06c";
-import { contains, isRoom, size } from "./areas.js?v=843a06c";
-import { checkPortals, describe, panelLog, setUpInteriors } from "./interiors.js?v=843a06c";
-import { placeTownsfolk } from "./gather.js?v=843a06c";
-import { BADGE_KEY, BADGE_URL, BUBBLES_KEY, BUBBLES_NAME_KEY, COND_KEY, CONDITIONS, DOWN_COLOR, GRIMOIRE_KEY, MARK_PREFIX, PLACE_KEY, RING_KEY, TARGET_COLOR, WHO_KEY } from "./keys.js?v=843a06c";
+  from "./obr-sdk.js?v=23059e2";
+import { contains, isRoom, size } from "./areas.js?v=23059e2";
+import { checkPortals, describe, panelLog, setUpInteriors } from "./interiors.js?v=23059e2";
+import { placeTownsfolk, rememberParty } from "./gather.js?v=23059e2";
+import { BADGE_KEY, BADGE_URL, BUBBLES_KEY, BUBBLES_NAME_KEY, COND_KEY, CONDITIONS, DOWN_COLOR, GRIMOIRE_KEY, MARK_PREFIX, PLACE_KEY, RING_KEY, TARGET_COLOR, WHO_KEY } from "./keys.js?v=23059e2";
 import { CH, DEFAULT_SETTINGS, LS, buildOf, forMe, here, isLocalOrigin, kindOf, lsGet, on as busOn, send as busSend,
-  setConnection, setSceneWrite, startSceneReader, tierOf } from "./bus.js?v=843a06c";
+  setConnection, setSceneWrite, startSceneReader, tierOf } from "./bus.js?v=23059e2";
 
 const HEARTBEAT_MS = 10000;
 const DEBOUNCE_MS = 250;
@@ -558,13 +558,13 @@ const JOBS = {
 // The parts that load on their own (R4): a broken one is left out and the rest carry on.
 // Literal paths, so the publisher can stamp each with the build.
 const MODULES = {
-  bridge: () => import("./bridge.js?v=843a06c"),
-  fx: () => import("./fx/engine.js?v=843a06c"),
-  samples: () => import("./fx/samples.js?v=843a06c"),
-  aim: () => import("./aim/tool.js?v=843a06c"),
-  geometry: () => import("./aim/geometry.js?v=843a06c"),
-  rings: () => import("./aim/rings.js?v=843a06c"),
-  player: () => import("./player/state.js?v=843a06c"),
+  bridge: () => import("./bridge.js?v=23059e2"),
+  fx: () => import("./fx/engine.js?v=23059e2"),
+  samples: () => import("./fx/samples.js?v=23059e2"),
+  aim: () => import("./aim/tool.js?v=23059e2"),
+  geometry: () => import("./aim/geometry.js?v=23059e2"),
+  rings: () => import("./aim/rings.js?v=23059e2"),
+  player: () => import("./player/state.js?v=23059e2"),
 };
 
 const HELLO_MS = 30000; // each screen says hello this often, so the panel's screens list stays fresh
@@ -954,6 +954,17 @@ export async function boot(api = sdk, opts = {}) {
     }
   }
 
+  // Once at start, on the Dell's own copy: keep the party's names in the Owlbear room when the
+  // panel answers (rememberParty compares first, so nothing is written when they're the same).
+  // The laptop's Pages copy then matches PC tokens by name even without the Dell's bridge.
+  function keepParty() {
+    const get = opts.fetchImpl || ((url) => fetch(url));
+    (async () => {
+      const r = await get(`${origin}/api/map/catalog`);
+      if (r?.ok) await rememberParty((await r.json())?.party, O);
+    })().catch(() => { /* no panel yet: the 🗺 menus keep the party when they get it */ });
+  }
+
   function start() {
     // From here this copy knows whether it draws on this tab. A copy that only relays starts
     // none of the drawing parts: no aim tool, no player's spells, no zone decorations, no menus.
@@ -985,6 +996,7 @@ export async function boot(api = sdk, opts = {}) {
     if (role === "GM") {
       if (!ctx.relayOnly) menus(local ? LOCAL_MENU_IDS : MENU_IDS, local ? LOCAL_GOTO_KEY_ID : GOTO_KEY_ID);
       if (local) thisPcMenus(); // 🏘, 👥 and 🧭: on this copy even when it only relays (THIS_PC_MENU_IDS)
+      if (local) keepParty();
       O.scene.items.onChange(soon);
       O.scene.grid.onChange(soon);
       O.scene.onReadyChange(soon);

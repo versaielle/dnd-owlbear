@@ -18,9 +18,9 @@
 // (GET /api/map/interiors). That is why background.js offers 🏘 and 🧭 only on the copy the panel
 // serves ("DND NPC (this PC)"); this file itself is published to Pages with the rest (menu.html
 // imports gather.js, which imports this) but never fetches anything there.
-import OBR, { buildCurve, buildShape } from "./obr-sdk.js?v=843a06c";
-import { directBase } from "./bus.js?v=843a06c";
-import { INTERIOR_KEY, PLACE_KEY } from "./keys.js?v=843a06c";
+import OBR, { buildCurve, buildShape } from "./obr-sdk.js?v=23059e2";
+import { directBase } from "./bus.js?v=23059e2";
+import { INTERIOR_KEY, PLACE_KEY } from "./keys.js?v=23059e2";
 
 const GAP_FLOORS = 2, GAP_ROWS = 3, GAP_TOWN = 6, GAP_COLUMNS = 6; // in squares
 // Owlbear rate-limits requests ("RateLimitHit: Too many requests" with 20-item batches, live
