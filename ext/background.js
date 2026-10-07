@@ -16,13 +16,13 @@
 // and the locked templates (aim/), and on a player's device their spells (player/). Those load
 // with import() and may fail on their own: the map jobs, rings and HP keep working without them.
 import OBR, { buildCurve, buildEffect, buildImage, buildLabel, buildPath, buildShape, buildText, Math2, MathM }
-  from "./obr-sdk.js?v=23059e2";
-import { contains, isRoom, size } from "./areas.js?v=23059e2";
-import { checkPortals, describe, panelLog, setUpInteriors } from "./interiors.js?v=23059e2";
-import { placeTownsfolk, rememberParty } from "./gather.js?v=23059e2";
-import { BADGE_KEY, BADGE_URL, BUBBLES_KEY, BUBBLES_NAME_KEY, COND_KEY, CONDITIONS, DOWN_COLOR, GRIMOIRE_KEY, MARK_PREFIX, PLACE_KEY, RING_KEY, TARGET_COLOR, WHO_KEY } from "./keys.js?v=23059e2";
+  from "./obr-sdk.js?v=0635c01";
+import { contains, isRoom, size } from "./areas.js?v=0635c01";
+import { checkPortals, describe, panelLog, setUpInteriors } from "./interiors.js?v=0635c01";
+import { placeTownsfolk, rememberParty } from "./gather.js?v=0635c01";
+import { BADGE_KEY, BADGE_URL, BUBBLES_KEY, BUBBLES_NAME_KEY, COND_KEY, CONDITIONS, DOWN_COLOR, GRIMOIRE_KEY, MARK_PREFIX, PLACE_KEY, RING_KEY, TARGET_COLOR, WHO_KEY } from "./keys.js?v=0635c01";
 import { CH, DEFAULT_SETTINGS, LS, buildOf, forMe, here, isLocalOrigin, kindOf, lsGet, on as busOn, send as busSend,
-  setConnection, setSceneWrite, startSceneReader, tierOf } from "./bus.js?v=23059e2";
+  setConnection, setSceneWrite, startSceneReader, tierOf } from "./bus.js?v=0635c01";
 
 const HEARTBEAT_MS = 10000;
 const DEBOUNCE_MS = 250;
@@ -417,17 +417,18 @@ async function todo() {
 // by the panel on this PC uses its own: when it steps aside for the Pages copy on the same tab
 // (the dual install) it can only ever remove its own menus, never the Pages copy's.
 const MENU_IDS = { place: "dnd-npc/mark-place", who: "dnd-npc/this-is", cond: "dnd-npc/conditions",
-                   goto: "dnd-npc/go-to-pc" };
+                   goto: "dnd-npc/go-to-pc", bring: "dnd-npc/bring-pcs" };
 const LOCAL_MENU_IDS = { place: "dnd-npc/local/mark-place", who: "dnd-npc/local/this-is", cond: "dnd-npc/local/conditions",
-                         goto: "dnd-npc/local/go-to-pc" };
+                         goto: "dnd-npc/local/go-to-pc", bring: "dnd-npc/local/bring-pcs" };
 // 🎯 Go to PC's toolbar button and key (a tool action, removed with tool.removeAction).
 const GOTO_KEY_ID = "dnd-npc/go-to-pc-key";
 const LOCAL_GOTO_KEY_ID = "dnd-npc/local/go-to-pc-key";
-// 🏘, 👥 and 🧭 need interiors.json, which only the panel on this PC can hand over (far too big for
+// 🏘 and 👥 need interiors.json, which only the panel on this PC can hand over (far too big for
 // the bridge's broadcasts): only the copy the panel serves makes these, even when it only relays
 // on the Dell's tab (the Pages copy there can't reach the panel), and never removes them.
-const THIS_PC_MENU_IDS = { interiors: "dnd-npc/local/interiors", bring: "dnd-npc/local/bring-pcs",
-                           portals: "dnd-npc/local/check-portals", townsfolk: "dnd-npc/local/townsfolk" };
+// (🧭 Bring PCs here is one of menus(): what it needs is on the map images, MAP_INFO_KEY.)
+const THIS_PC_MENU_IDS = { interiors: "dnd-npc/local/interiors", portals: "dnd-npc/local/check-portals",
+                           townsfolk: "dnd-npc/local/townsfolk" };
 const ICON = here("./icon.svg", import.meta.url);
 
 function menus(ids = MENU_IDS, gotoKeyId = GOTO_KEY_ID) {
@@ -465,6 +466,18 @@ function menus(ids = MENU_IDS, gotoKeyId = GOTO_KEY_ID) {
     id: ids.goto,
     icons: [{ icon: ICON, label: "🎯 Go to PC", filter: { roles: ["GM"] } }],
     onClick: (context) => openMenu("goto", context),
+  });
+  // On a map image, a room drawing or a token: move the PCs' tokens there (gather.js). The list
+  // (menu.html) offers "All PCs" and each PC, one tap each. The first icon whose filter matches
+  // shows. A building map's entry and furniture are on its image (MAP_INFO_KEY), so any copy can.
+  OBR.contextMenu.create({
+    id: ids.bring,
+    icons: [
+      [{ key: "layer", value: "MAP" }, { key: "type", value: "IMAGE" }],
+      [{ key: "layer", value: "DRAWING" }],
+      [{ key: "layer", value: "CHARACTER" }],
+    ].map((every) => ({ icon: ICON, label: "🧭 Bring PCs here", filter: { roles: ["GM"], max: 1, every } })),
+    onClick: (context) => openMenu("bring", context),
   });
   // ...and the same list from a key, with nothing selected: a button on every tool's bar.
   try {
@@ -519,17 +532,6 @@ function thisPcMenus() {
       }
     },
   });
-  // On a map image, a room drawing or a token: move the PCs' tokens there (gather.js). The list
-  // (menu.html) offers "All PCs" and each PC, one tap each. The first icon whose filter matches shows.
-  OBR.contextMenu.create({
-    id: THIS_PC_MENU_IDS.bring,
-    icons: [
-      [{ key: "layer", value: "MAP" }, { key: "type", value: "IMAGE" }],
-      [{ key: "layer", value: "DRAWING" }],
-      [{ key: "layer", value: "CHARACTER" }],
-    ].map((every) => ({ icon: ICON, label: "🧭 Bring PCs here", filter: { roles: ["GM"], max: 1, every } })),
-    onClick: (context) => openMenu("bring", context),
-  });
   OBR.contextMenu.create({
     id: THIS_PC_MENU_IDS.portals,
     icons: [{
@@ -558,13 +560,13 @@ const JOBS = {
 // The parts that load on their own (R4): a broken one is left out and the rest carry on.
 // Literal paths, so the publisher can stamp each with the build.
 const MODULES = {
-  bridge: () => import("./bridge.js?v=23059e2"),
-  fx: () => import("./fx/engine.js?v=23059e2"),
-  samples: () => import("./fx/samples.js?v=23059e2"),
-  aim: () => import("./aim/tool.js?v=23059e2"),
-  geometry: () => import("./aim/geometry.js?v=23059e2"),
-  rings: () => import("./aim/rings.js?v=23059e2"),
-  player: () => import("./player/state.js?v=23059e2"),
+  bridge: () => import("./bridge.js?v=0635c01"),
+  fx: () => import("./fx/engine.js?v=0635c01"),
+  samples: () => import("./fx/samples.js?v=0635c01"),
+  aim: () => import("./aim/tool.js?v=0635c01"),
+  geometry: () => import("./aim/geometry.js?v=0635c01"),
+  rings: () => import("./aim/rings.js?v=0635c01"),
+  player: () => import("./player/state.js?v=0635c01"),
 };
 
 const HELLO_MS = 30000; // each screen says hello this often, so the panel's screens list stays fresh
@@ -995,7 +997,7 @@ export async function boot(api = sdk, opts = {}) {
     // ---- the GM: menus, and the bridge (or the old loops) ----
     if (role === "GM") {
       if (!ctx.relayOnly) menus(local ? LOCAL_MENU_IDS : MENU_IDS, local ? LOCAL_GOTO_KEY_ID : GOTO_KEY_ID);
-      if (local) thisPcMenus(); // 🏘, 👥 and 🧭: on this copy even when it only relays (THIS_PC_MENU_IDS)
+      if (local) thisPcMenus(); // 🏘 and 👥: on this copy even when it only relays (THIS_PC_MENU_IDS)
       if (local) keepParty();
       O.scene.items.onChange(soon);
       O.scene.grid.onChange(soon);

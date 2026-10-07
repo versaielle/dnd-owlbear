@@ -15,12 +15,14 @@
 //
 // interiors.json names the adventure's places, and at ~95 KB it is far too big for the bridge's
 // broadcasts (bus.js MAX_BYTES), so it only comes straight from the panel on this PC
-// (GET /api/map/interiors). That is why background.js offers 🏘 and 🧭 only on the copy the panel
+// (GET /api/map/interiors). That is why background.js offers 🏘 and 👥 only on the copy the panel
 // serves ("DND NPC (this PC)"); this file itself is published to Pages with the rest (menu.html
-// imports gather.js, which imports this) but never fetches anything there.
-import OBR, { buildCurve, buildShape } from "./obr-sdk.js?v=23059e2";
-import { directBase } from "./bus.js?v=23059e2";
-import { INTERIOR_KEY, PLACE_KEY } from "./keys.js?v=23059e2";
+// imports gather.js, which imports this) but never fetches anything there. What 🧭 Bring PCs here
+// needs of it (each map's entry, stairs and furniture: numbers, no names) is written on the map
+// images themselves (MAP_INFO_KEY, mapInfo()), so 🧭 works on every copy.
+import OBR, { buildCurve, buildShape } from "./obr-sdk.js?v=0635c01";
+import { directBase } from "./bus.js?v=0635c01";
+import { INTERIOR_KEY, MAP_INFO_KEY, PLACE_KEY } from "./keys.js?v=0635c01";
 
 const GAP_FLOORS = 2, GAP_ROWS = 3, GAP_TOWN = 6, GAP_COLUMNS = 6; // in squares
 // Owlbear rate-limits requests ("RateLimitHit: Too many requests" with 20-item batches, live
@@ -188,8 +190,29 @@ function link(a, b) {
   return [a, b];
 }
 
+// What 🧭 Bring PCs here needs of a map (or of the town), kept on its image (MAP_INFO_KEY):
+// {v: 1, w, entry, stairs, props}, in the file's image pixels, rounded, only the props that block.
+// Numbers only, no names. Kept under MAP_INFO_MAX bytes of JSON by leaving out the smallest props
+// (the real maps need ~1.3 KB at most).
+export const MAP_INFO_MAX = 8000;
+export function mapInfo(map) {
+  const r = Math.round;
+  const xy = (p) => (p ? [r(pt(p).x), r(pt(p).y)] : null);
+  let props = (map?.props || []).filter((pr) => pr.blocks !== false && pr.box?.length === 4
+    && pr.box.every(Number.isFinite)).map((pr) => pr.box.map(r));
+  const info = (list) => ({ v: 1, w: r(map?.width || 0), entry: xy(map?.entry), stairs: xy(map?.links?.[0]?.at),
+                            props: list });
+  if (JSON.stringify(info(props)).length > MAP_INFO_MAX) {
+    const area = (b) => Math.abs((b[2] - b[0]) * (b[3] - b[1]));
+    const keep = [...props].sort((a, b) => area(b) - area(a));
+    while (keep.length && JSON.stringify(info(keep)).length > MAP_INFO_MAX) keep.pop();
+    props = props.filter((b) => keep.includes(b));
+  }
+  return info(props);
+}
+
 // Everything the action does, worked out without touching Owlbear: the image moves
-// (updates) and the items to add, in groups that must go in the same addItems call
+// (updates, each with its map's mapInfo; `townInfo` for the town's own) and the items to add, in groups that must go in the same addItems call
 // (the two ends of a portal: Portals strips an origin whose destination isn't there).
 export function plan(json, town, images, sceneDpi, newId) {
   const pps = json.px_per_square;
@@ -204,7 +227,7 @@ export function plan(json, town, images, sceneDpi, newId) {
     // An image uploaded at another size than the file says still gets 1 square = pps file px.
     const ratio = m.width ? img.image.width / m.width : 1;
     const grid = { ...img.grid, dpi: pps * ratio, offset: { x: 0, y: 0 } };
-    updates.push({ id: img.id, position: at[m.name], dpi: grid.dpi });
+    updates.push({ id: img.id, position: at[m.name], dpi: grid.dpi, info: mapInfo(m) });
     const image = { ...img, position: at[m.name], rotation: 0, scale: { x: 1, y: 1 }, grid };
     placed.set(m.name, { map: m, image, here: mapToScene(m, image, sceneDpi) });
   }
@@ -272,7 +295,8 @@ export function plan(json, town, images, sceneDpi, newId) {
     }
   }
   const missing = maps.filter((m) => !found.has(m.name)).map((m) => m.name);
-  return { updates, groups, counts, missing, notes };
+  const townInfo = mapInfo({ width: json.town?.width });
+  return { updates, townInfo, groups, counts, missing, notes };
 }
 
 // Groups packed into addItems calls of at most n items, a group never split.
@@ -422,11 +446,18 @@ export async function setUpInteriors(townId) {
   const old = await OBR.scene.items.getItems((i) => i.metadata?.[INTERIOR_KEY]);
   if (old.length) await step("removing the old marks", () => OBR.scene.items.deleteItems(old.map((i) => i.id)));
   // Every map goes (back) to its spot: one the DM has moved by hand since is moved back too.
+  // Each gets what 🧭 Bring PCs here needs (MAP_INFO_KEY), and so does the town (no entry, no
+  // props), so a bring on any copy finds everything on the images.
   const to = new Map(p.updates.map((u) => [u.id, u]));
   if (to.size) {
-    await step(`moving ${to.size} maps`, () => OBR.scene.items.updateItems([...to.keys()], (items) => {
+    await step(`moving ${to.size} maps`, () => OBR.scene.items.updateItems([...to.keys(), town.id], (items) => {
       for (const i of items) {
+        if (i.id === town.id) {
+          i.metadata[MAP_INFO_KEY] = p.townInfo;
+          continue;
+        }
         const u = to.get(i.id);
+        i.metadata[MAP_INFO_KEY] = u.info;
         i.position = u.position;
         i.rotation = 0;
         i.scale = { x: 1, y: 1 };

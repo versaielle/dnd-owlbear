@@ -3,21 +3,26 @@
 // The menu (menu.html, kind=bring) offers "All PCs" and each PC on their own.
 //
 // Where they go:
-//   a building map in interiors.json  its entry (ground floors), else its first stairs, else its middle
+//   a building map                    its entry (ground floors), else its first stairs, else its middle
 //   any other map image (the town)    the middle of the image
 //   a room drawing                    its middle, or a point inside it when that's outside (an L)
 //   a token                           the squares around it (not its own)
 // Squares are kept off portal circles (the Portals extension would teleport a token dropped
-// there) and off furniture (interiors.json's props that block, on the maps in the scene).
+// there) and off furniture (the props that block, on the maps in the scene).
+//
+// A building map's entry, stairs and furniture come from its image's MAP_INFO_KEY, which
+// "🏘 Set up interiors" writes (interiors.js mapInfo()): every copy reads that, the laptop's
+// Pages copy too, which can never reach interiors.json. Only a map without it yet (interiors
+// not set up since) falls back to interiors.json, on the copy the panel serves.
 //
 // Also "👥 Place townsfolk" (GM only, on the town map): each NPC listed in interiors.json's
 // town.townsfolk goes to its own square in its room, next to its piece of furniture.
 // check_interiors.mjs tests the pure parts offline.
-import OBR, { MathM } from "./obr-sdk.js?v=23059e2";
-import { contains, isRoom, outline } from "./areas.js?v=23059e2";
-import { ask, directBase } from "./bus.js?v=23059e2";
-import { bounds, listed, loadInteriors, mapToScene, matchImages, normName, toScene } from "./interiors.js?v=23059e2";
-import { BUBBLES_NAME_KEY, INTERIOR_KEY, PARTY_KEY, WHO_KEY } from "./keys.js?v=23059e2";
+import OBR, { MathM } from "./obr-sdk.js?v=0635c01";
+import { contains, isRoom, outline } from "./areas.js?v=0635c01";
+import { ask, directBase } from "./bus.js?v=0635c01";
+import { bounds, listed, loadInteriors, mapToScene, matchImages, normName, toScene } from "./interiors.js?v=0635c01";
+import { BUBBLES_NAME_KEY, INTERIOR_KEY, MAP_INFO_KEY, PARTY_KEY, WHO_KEY } from "./keys.js?v=0635c01";
 
 const RADIUS = 12; // squares around the spot that are tried
 
@@ -95,15 +100,40 @@ function sceneBox(box, here) {
   return { min: { x: Math.min(...xs), y: Math.min(...ys) }, max: { x: Math.max(...xs), y: Math.max(...ys) } };
 }
 
-// The furniture nobody can stand on, as scene boxes: every prop of interiors.json that blocks
-// (not rugs, stairs, garden beds…), on each map whose image is in the scene. A square whose
-// centre is inside one is avoided, like a token's.
+const isMapImage = (i) => i.layer === "MAP" && i.type === "IMAGE";
+const xyOk = (p) => p === null || p === undefined || (Array.isArray(p) && p.length === 2 && p.every(Number.isFinite));
+
+// A map image's MAP_INFO_KEY (interiors.js mapInfo()), or null when it has none (or a broken one).
+export function mapInfoOf(image) {
+  const m = image?.metadata?.[MAP_INFO_KEY];
+  if (!m || typeof m !== "object" || m.v !== 1 || !xyOk(m.entry) || !xyOk(m.stairs)) return null;
+  const props = Array.isArray(m.props) ? m.props.filter((b) => Array.isArray(b) && b.length === 4 && b.every(Number.isFinite)) : [];
+  return { w: Number.isFinite(m.w) && m.w > 0 ? m.w : 0, entry: m.entry || null, stairs: m.stairs || null, props };
+}
+
+// True when interiors.json could still add something: a map image in the scene without MAP_INFO_KEY.
+export function needsInteriors(items) {
+  return items.some((i) => isMapImage(i) && !mapInfoOf(i));
+}
+
+// The furniture nobody can stand on, as scene boxes: every prop that blocks (not rugs, stairs,
+// garden beds…) on each map image in the scene, from the image's MAP_INFO_KEY, or from
+// interiors.json for an image without it. A square whose centre is inside one is avoided, like a token's.
 export function propBoxes(json, items, sceneDpi) {
-  if (!json) return [];
+  const images = items.filter(isMapImage);
+  const out = [], rest = [];
+  for (const image of images) {
+    const info = mapInfoOf(image);
+    if (!info) {
+      rest.push(image);
+      continue;
+    }
+    const here = mapToScene({ width: info.w }, image, sceneDpi);
+    for (const b of info.props) out.push(sceneBox(b, here));
+  }
+  if (!json || !rest.length) return out;
   const maps = listed(json);
-  const images = items.filter((i) => i.layer === "MAP" && i.type === "IMAGE");
-  const out = [];
-  for (const [name, image] of matchImages(maps, images)) {
+  for (const [name, image] of matchImages(maps, rest)) {
     const map = maps.find((m) => m.name === name);
     const here = mapToScene(map, image, sceneDpi);
     for (const pr of map.props || []) if (pr.blocks !== false && pr.box?.length === 4) out.push(sceneBox(pr.box, here));
@@ -145,12 +175,24 @@ export function insidePoint(room, box, dpi) {
   return first ? MathM.decompose(MathM.multiply(MathM.fromItem(room), MathM.fromPosition(first))).position : c;
 }
 
+// A map image's name for the notice: its label or name, without the file's extension.
+function imageName(image) {
+  return tokenLabel(image).replace(/\.(png|jpe?g|webp|gif|avif)$/i, "").trim() || "the map";
+}
+
 // Where "Bring PCs here" on this item sends them: {kind, name, point, allowed(p), avoid[]},
 // or null for something it can't (a line, text, a prop). `box` is the item's scene bounds when known.
 export function targetFor(json, target, sceneDpi, { box } = {}) {
   if (target.layer === "MAP" && target.type === "IMAGE") {
     const area = bounds(target, sceneDpi);
     const allowed = (p) => inBox(area, p);
+    const info = mapInfoOf(target);
+    if (info) {
+      // Laid out by 🏘 Set up interiors: everything needed is on the image (the same on every copy).
+      const px = info.entry || info.stairs;
+      const point = px ? mapToScene({ width: info.w }, target, sceneDpi)(px) : centreOf(box || area);
+      return { kind: "map", name: imageName(target), point, allowed, avoid: [] };
+    }
     const names = [target.name, target.text?.plainText].map(normName).filter(Boolean);
     const map = listed(json || {}).find((m) => names.includes(normName(m.name)));
     if (map) {
@@ -160,7 +202,7 @@ export function targetFor(json, target, sceneDpi, { box } = {}) {
       return { kind: "map", name: map.name, point, allowed, avoid: [] };
     }
     const town = json?.town?.name && names.includes(normName(json.town.name));
-    return { kind: "map", name: town ? json.town.name : tokenLabel(target) || "the map", point: centreOf(box || area),
+    return { kind: "map", name: town ? json.town.name : imageName(target), point: centreOf(box || area),
              allowed, avoid: [] };
   }
   if (isRoom(target)) {
@@ -473,55 +515,65 @@ export async function partyNames() {
   return mergeParty(raw, await refresh());
 }
 
-// From the menu: bring the chosen PC tokens (ids; null = all of them) to the target item.
-export async function bringPcs(targetId, chosen, party) {
-  const [target] = await OBR.scene.items.getItems([targetId]);
+// From the menu: bring the chosen PC tokens (ids; null = all of them) to the target item. Works
+// on every copy: interiors.json is only asked for (`load`, only the panel's own copy gets it)
+// when a map image in the scene has no MAP_INFO_KEY yet, and nothing breaks without it.
+// `O` and `load` are only swapped by the offline check.
+export async function bringPcs(targetId, chosen, party, { O = OBR, load = loadInteriors } = {}) {
+  const [target] = await O.scene.items.getItems([targetId]);
   if (!target) return;
-  const sceneDpi = await OBR.scene.grid.getDpi();
-  const items = await OBR.scene.items.getItems();
-  const json = await loadInteriors();
+  const sceneDpi = await O.scene.grid.getDpi();
+  const items = await O.scene.items.getItems();
+  let json = null;
+  if (needsInteriors(items)) {
+    try {
+      json = (await load()) || null;
+    } catch {
+      json = null;
+    }
+  }
   let box;
   try {
-    box = await OBR.scene.items.getItemBounds([targetId]);
+    box = await O.scene.items.getItemBounds([targetId]);
   } catch {
     box = undefined;
   }
   const t = targetFor(json, target, sceneDpi, { box });
   if (!t) {
-    OBR.notification.show("🧭 PCs can be brought to a map, a room or a token", "WARNING");
+    O.notification.show("🧭 PCs can be brought to a map, a room or a token", "WARNING");
     return;
   }
   let anchor;
   try {
-    anchor = await OBR.scene.grid.snapPosition(t.point, 1, false, true);
+    anchor = await O.scene.grid.snapPosition(t.point, 1, false, true);
   } catch {
     anchor = undefined;
   }
   const g = gather(json, target, items, party, sceneDpi, { chosen, box, anchor });
   if (!g.moves.length) {
-    OBR.notification.show(`🧭 ${noPcsText(party)}`, "WARNING");
+    O.notification.show(`🧭 ${noPcsText(party)}`, "WARNING");
     return;
   }
-  await moveTokens(new Map(g.moves.map((m) => [m.id, m.position])));
-  OBR.notification.show(`🧭 ${g.moves.length} PC${g.moves.length === 1 ? "" : "s"} brought to ${g.name}`, "SUCCESS");
+  await moveTokens(new Map(g.moves.map((m) => [m.id, m.position])), O);
+  O.notification.show(`🧭 ${g.moves.length} PC${g.moves.length === 1 ? "" : "s"} brought to ${g.name}`, "SUCCESS");
 }
 
 // Tokens (id -> position) moved in one updateItems call. Smoke & Spectre stops a token at the
 // first wall it crosses, which would leave it stuck on another map. Like the Portals extension's
 // teleport: hide what's attached to the tokens (that's how Smoke tracks them), move, then show it
 // again in a separate step. Only the position changes: a hidden token stays hidden.
-async function moveTokens(to) {
+async function moveTokens(to, O = OBR) {
   const ids = [...to.keys()];
   const shown = (list) => list.filter((i) => i.visible).map((i) => i.id);
-  const scene = shown(await OBR.scene.items.getItemAttachments(ids));
-  const local = shown(await OBR.scene.local.getItemAttachments(ids));
+  const scene = shown(await O.scene.items.getItemAttachments(ids));
+  const local = shown(await O.scene.local.getItemAttachments(ids));
   const setVisible = async (on) => {
-    if (scene.length) await OBR.scene.items.updateItems(scene, (ds) => { for (const d of ds) d.visible = on; });
-    if (local.length) await OBR.scene.local.updateItems(local, (ds) => { for (const d of ds) d.visible = on; });
+    if (scene.length) await O.scene.items.updateItems(scene, (ds) => { for (const d of ds) d.visible = on; });
+    if (local.length) await O.scene.local.updateItems(local, (ds) => { for (const d of ds) d.visible = on; });
   };
   await setVisible(false);
   try {
-    await OBR.scene.items.updateItems(ids, (drafts) => {
+    await O.scene.items.updateItems(ids, (drafts) => {
       for (const d of drafts) d.position = to.get(d.id);
     });
     await new Promise((r) => setTimeout(r, 300));

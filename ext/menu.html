@@ -25,12 +25,12 @@
 // bridge (LOCAL on the Dell's own tab, sealed for this device only elsewhere: bus.js rpc()).
 // Also "🧭 Bring PCs here" (kind=bring): All PCs, or one PC, in one tap; tick several for "Bring these".
 // And "🎯 Go to PC" (kind=goto): one tap pans the DM's view to that PC's token.
-import OBR from "./obr-sdk.js?v=23059e2";
-import { isRoom } from "./areas.js?v=23059e2";
-import { bringPcs, findPcs, noPcsText, partyNames, rememberParty } from "./gather.js?v=23059e2";
-import { goToPc, pcLabel, scenePcs } from "./goto.js?v=23059e2";
-import { PLACE_KEY, WHO_KEY } from "./keys.js?v=23059e2";
-import { ask } from "./bus.js?v=23059e2";
+import OBR from "./obr-sdk.js?v=0635c01";
+import { isRoom } from "./areas.js?v=0635c01";
+import { bringPcs, findPcs, noPcsText, partyNames, rememberParty } from "./gather.js?v=0635c01";
+import { goToPc, pcLabel, scenePcs } from "./goto.js?v=0635c01";
+import { PLACE_KEY, WHO_KEY } from "./keys.js?v=0635c01";
+import { ask } from "./bus.js?v=0635c01";
 
 const kind = new URLSearchParams(location.search).get("kind");
 const app = document.getElementById("app");

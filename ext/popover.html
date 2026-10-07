@@ -63,10 +63,10 @@
 // copy's host and only shows the answers from its own copy.
 //
 // At the top, "🎯 Go to PC": one button per PC token, which pans the view there (goto.js).
-import OBR from "./obr-sdk.js?v=23059e2";
-import { CH, LS, QUALITIES, ask, isLocalOrigin, lsGet, lsSet, on, send } from "./bus.js?v=23059e2";
-import { goToPc, pcLabel, scenePcs } from "./goto.js?v=23059e2";
-import { noPcsText } from "./gather.js?v=23059e2";
+import OBR from "./obr-sdk.js?v=0635c01";
+import { CH, LS, QUALITIES, ask, isLocalOrigin, lsGet, lsSet, on, send } from "./bus.js?v=0635c01";
+import { goToPc, pcLabel, scenePcs } from "./goto.js?v=0635c01";
+import { noPcsText } from "./gather.js?v=0635c01";
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
@@ -122,8 +122,8 @@ function render(s) {
 
   // This copy's part on this tab, and the controls that only matter where it draws.
   $("copy-note").textContent = s.relay_only
-    ? "Effects, aiming, 🎯 Go to PC and the 🗺 menus here come from the “DND NPC” copy: use its box for those. "
-      + "🏘 Set up interiors, 🏘 Check portals, 👥 Place townsfolk and 🧭 Bring PCs here come from this copy (they need this PC's interiors.json)."
+    ? "Effects, aiming, 🎯 Go to PC, 🧭 Bring PCs here and the 🗺 menus here come from the “DND NPC” copy: use its box for those. "
+      + "🏘 Set up interiors, 🏘 Check portals and 👥 Place townsfolk come from this copy (they need this PC's interiors.json)."
     : local ? "Served by the DND panel on this PC: on the Dell's GM tab this copy is the bridge (automatic)."
     : "On the Dell, the “DND NPC (this PC)” copy (served by the panel) is the bridge; this copy draws and aims.";
   $("device").style.display = s.relay_only ? "none" : "";

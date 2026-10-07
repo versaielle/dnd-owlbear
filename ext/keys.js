@@ -19,6 +19,12 @@ export const CONDITIONS = ["blinded", "charmed", "deafened", "exhaustion", "frig
 export const BADGE_URL = "https://versaielle.github.io/dnd-owlbear/conditions/";
 // On everything "🏘 Set up interiors" made (rooms, walls, portals): {map, kind}. A re-run deletes it all.
 export const INTERIOR_KEY = "dnd-npc/interior";
+// On each map image "🏘 Set up interiors" lays out (the building maps and the town): what 🧭 Bring
+// PCs here needs from interiors.json, so it works on a copy that can't reach the panel (the
+// laptop's Pages copy). {v: 1, w: the file's width in px, entry: [x, y] | null, stairs: [x, y] |
+// null, props: [[x0, y0, x1, y1], ...]}, in that file's image pixels, only furniture that blocks.
+// Numbers only, never a name (the room's metadata reaches every device).
+export const MAP_INFO_KEY = "dnd-npc/map";
 export const MARK_PREFIX = "dnd-npc-mark-"; // + token id: the hidden note on a monster ("Hexed · hurt")
 // GM's Grimoire on a token: {hp, maxHp, armorClass, stats: {tempHp}}. Only read once, to copy
 // a monster's HP and AC over to Stat Bubbles (the DM switched to Stat Bubbles on 2026-10-03).
