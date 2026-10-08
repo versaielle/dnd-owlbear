@@ -18,11 +18,11 @@
 // Also "👥 Place townsfolk" (GM only, on the town map): each NPC listed in interiors.json's
 // town.townsfolk goes to its own square in its room, next to its piece of furniture.
 // check_interiors.mjs tests the pure parts offline.
-import OBR, { MathM } from "./obr-sdk.js?v=0635c01";
-import { contains, isRoom, outline } from "./areas.js?v=0635c01";
-import { ask, directBase } from "./bus.js?v=0635c01";
-import { bounds, listed, loadInteriors, mapToScene, matchImages, normName, toScene } from "./interiors.js?v=0635c01";
-import { BUBBLES_NAME_KEY, INTERIOR_KEY, MAP_INFO_KEY, PARTY_KEY, WHO_KEY } from "./keys.js?v=0635c01";
+import OBR, { MathM } from "./obr-sdk.js?v=b6b85c2-d73ac97";
+import { contains, isRoom, outline } from "./areas.js?v=b6b85c2-d73ac97";
+import { ask, directBase } from "./bus.js?v=b6b85c2-d73ac97";
+import { bounds, listed, loadInteriors, mapToScene, matchImages, normName, toScene } from "./interiors.js?v=b6b85c2-d73ac97";
+import { BUBBLES_NAME_KEY, INTERIOR_KEY, MAP_INFO_KEY, PARTY_KEY, WHO_KEY } from "./keys.js?v=b6b85c2-d73ac97";
 
 const RADIUS = 12; // squares around the spot that are tried
 

@@ -1098,6 +1098,9 @@ export function lint(sksl, name = "") {
   return bad;
 }
 
+// The clocks and the helper functions, for fx/lights.js (its shaders keep the same rules).
+export { CLOCK, CLOCK_STATIC, HELPERS };
+
 // Every shader we can make: [{name, tier, sksl}].
 export function allShaders() {
   const out = [];

@@ -40,6 +40,20 @@ export const BUBBLES_KEY = "com.owlbear-rodeo-bubbles-extension/metadata";
 export const FX_KEY = "dnd-npc/fx";
 export const ZONE_KEY = "dnd-npc/zone";
 export const AIM_KEY = "dnd-npc/aim";
+// Lights (candles, torches, magic light; fx/lights.js). On a token or a light-source item:
+// LIGHT_KEY {kind} is the light the DM gave it (right-click 🔥 Light), SPELL_LIGHT_KEY
+// {kind, magic} one from a spell cast on the panel (kept apart, so a spell ending never puts
+// out a torch the PC carries). LIGHT_BASE_KEY keeps Smoke & Spectre's own values from before
+// our first light, to put back when the last one goes (fx/lightmeta.js). Our local flame and
+// darkvision items carry LIGHT_FX_KEY {source, host, part}. Kinds and numbers only: players
+// can read every item's metadata.
+export const LIGHT_KEY = "dnd-npc/light";
+export const SPELL_LIGHT_KEY = "dnd-npc/spell-light";
+export const LIGHT_BASE_KEY = "dnd-npc/light-base";
+export const LIGHT_FX_KEY = "dnd-npc/fx-light";
+// Smoke & Spectre's metadata prefix: "<SMOKE>/visionRange" etc. on tokens, "<SMOKE>/isDarkVision"
+// on its own local darkvision rings.
+export const SMOKE = "com.battle-system.smoke";
 // The party's names, kept in the Owlbear ROOM's metadata (an array of names), so every copy of
 // the extension (the laptop's Pages copy too) can match PC tokens by name without the panel.
 // A GM copy writes it whenever it gets the party from the panel and it differs (gather.js).

@@ -16,13 +16,13 @@
 // and the locked templates (aim/), and on a player's device their spells (player/). Those load
 // with import() and may fail on their own: the map jobs, rings and HP keep working without them.
 import OBR, { buildCurve, buildEffect, buildImage, buildLabel, buildPath, buildShape, buildText, Math2, MathM }
-  from "./obr-sdk.js?v=0635c01";
-import { contains, isRoom, size } from "./areas.js?v=0635c01";
-import { checkPortals, describe, panelLog, setUpInteriors } from "./interiors.js?v=0635c01";
-import { placeTownsfolk, rememberParty } from "./gather.js?v=0635c01";
-import { BADGE_KEY, BADGE_URL, BUBBLES_KEY, BUBBLES_NAME_KEY, COND_KEY, CONDITIONS, DOWN_COLOR, GRIMOIRE_KEY, MARK_PREFIX, PLACE_KEY, RING_KEY, TARGET_COLOR, WHO_KEY } from "./keys.js?v=0635c01";
+  from "./obr-sdk.js?v=b6b85c2-d73ac97";
+import { contains, isRoom, size } from "./areas.js?v=b6b85c2-d73ac97";
+import { checkPortals, describe, panelLog, setUpInteriors } from "./interiors.js?v=b6b85c2-d73ac97";
+import { placeTownsfolk, rememberParty } from "./gather.js?v=b6b85c2-d73ac97";
+import { BADGE_KEY, BADGE_URL, BUBBLES_KEY, BUBBLES_NAME_KEY, COND_KEY, CONDITIONS, DOWN_COLOR, GRIMOIRE_KEY, MARK_PREFIX, PLACE_KEY, RING_KEY, TARGET_COLOR, WHO_KEY } from "./keys.js?v=b6b85c2-d73ac97";
 import { CH, DEFAULT_SETTINGS, LS, buildOf, forMe, here, isLocalOrigin, kindOf, lsGet, on as busOn, send as busSend,
-  setConnection, setSceneWrite, startSceneReader, tierOf } from "./bus.js?v=0635c01";
+  setConnection, setSceneWrite, startSceneReader, tierOf } from "./bus.js?v=b6b85c2-d73ac97";
 
 const HEARTBEAT_MS = 10000;
 const DEBOUNCE_MS = 250;
@@ -416,10 +416,10 @@ async function todo() {
 // The 🗺 menus' ids. Owlbear's ids look room-wide rather than per extension, so the copy served
 // by the panel on this PC uses its own: when it steps aside for the Pages copy on the same tab
 // (the dual install) it can only ever remove its own menus, never the Pages copy's.
-const MENU_IDS = { place: "dnd-npc/mark-place", who: "dnd-npc/this-is", cond: "dnd-npc/conditions",
+const MENU_IDS = { place: "dnd-npc/mark-place", who: "dnd-npc/this-is", cond: "dnd-npc/conditions", light: "dnd-npc/light",
                    goto: "dnd-npc/go-to-pc", bring: "dnd-npc/bring-pcs" };
 const LOCAL_MENU_IDS = { place: "dnd-npc/local/mark-place", who: "dnd-npc/local/this-is", cond: "dnd-npc/local/conditions",
-                         goto: "dnd-npc/local/go-to-pc", bring: "dnd-npc/local/bring-pcs" };
+                         light: "dnd-npc/local/light", goto: "dnd-npc/local/go-to-pc", bring: "dnd-npc/local/bring-pcs" };
 // 🎯 Go to PC's toolbar button and key (a tool action, removed with tool.removeAction).
 const GOTO_KEY_ID = "dnd-npc/go-to-pc-key";
 const LOCAL_GOTO_KEY_ID = "dnd-npc/local/go-to-pc-key";
@@ -430,6 +430,7 @@ const LOCAL_GOTO_KEY_ID = "dnd-npc/local/go-to-pc-key";
 const THIS_PC_MENU_IDS = { interiors: "dnd-npc/local/interiors", portals: "dnd-npc/local/check-portals",
                            townsfolk: "dnd-npc/local/townsfolk" };
 const ICON = here("./icon.svg", import.meta.url);
+const LIGHT_MENU_HEIGHT = 150; // light.html's chips fit in this
 
 function menus(ids = MENU_IDS, gotoKeyId = GOTO_KEY_ID) {
   OBR.contextMenu.create({
@@ -459,6 +460,18 @@ function menus(ids = MENU_IDS, gotoKeyId = GOTO_KEY_ID) {
       filter: { roles: ["GM"], every: [{ key: "layer", value: "CHARACTER" }] },
     }],
     embed: { url: here("./conditions.html", import.meta.url), height: 176 },
+  });
+  // 🔥 Light: the light a token carries (a PC's torch) or gives off (a sconce, a brazier), in
+  // the menu itself (light.html): the flame every screen draws, and Smoke & Spectre's range
+  // set from the D&D numbers (fx/lightmeta.js).
+  OBR.contextMenu.create({
+    id: ids.light,
+    icons: ["CHARACTER", "PROP", "MOUNT"].map((layer) => ({
+      icon: ICON,
+      label: "🔥 Light",
+      filter: { roles: ["GM"], every: [{ key: "layer", value: layer }, { key: "type", value: "IMAGE" }] },
+    })),
+    embed: { url: here("./light.html", import.meta.url), height: LIGHT_MENU_HEIGHT },
   });
   // On anything at all: the list of PCs (menu.html), one tap pans the view to that one (goto.js).
   // It only needs the party's names (through the bridge when this copy can't reach the panel).
@@ -546,6 +559,15 @@ function thisPcMenus() {
 
 // ---- Step 36: every screen, and the bridge on the Dell ----
 
+// The lights from spells in effect, written on the tokens (fx/lightjobs.js). Only while this
+// tab is the bridge does it re-apply the list when a scene opens; the PCs it knows (the
+// bridge's heartbeat) count as PCs, as in the 🔥 Light menu and fx/lighting.js.
+async function spellLights(job) {
+  return (await MODULES.lightjobs()).syncSpellLights(OBR, job, {
+    stillBridge: () => !!bridge?.isBridge(), isPc: (id) => !!pcTokensNow?.has(id),
+  });
+}
+
 // The map jobs from game night 1, for the bridge: the functions above, unchanged.
 const JOBS = {
   hp: (job) => setHp(job.id, job.damage),
@@ -555,18 +577,24 @@ const JOBS = {
   cond: (job) => setCondition(job.ids, job.name, job.on),
   down: (job) => ringDown(job.id),
   stats: (job) => seedStats(job.id, job.hp, job.ac),
+  // The lights from spells in effect (Light, Dancing Lights...), the whole list each time:
+  // {lights: [{magic, id, kind, pc}]}. Written on the tokens (fx/lightjobs.js); every screen
+  // draws them from there.
+  lights: (job) => spellLights(job),
 };
 
 // The parts that load on their own (R4): a broken one is left out and the rest carry on.
 // Literal paths, so the publisher can stamp each with the build.
 const MODULES = {
-  bridge: () => import("./bridge.js?v=0635c01"),
-  fx: () => import("./fx/engine.js?v=0635c01"),
-  samples: () => import("./fx/samples.js?v=0635c01"),
-  aim: () => import("./aim/tool.js?v=0635c01"),
-  geometry: () => import("./aim/geometry.js?v=0635c01"),
-  rings: () => import("./aim/rings.js?v=0635c01"),
-  player: () => import("./player/state.js?v=0635c01"),
+  bridge: () => import("./bridge.js?v=b6b85c2-d73ac97"),
+  fx: () => import("./fx/engine.js?v=b6b85c2-d73ac97"),
+  samples: () => import("./fx/samples.js?v=b6b85c2-d73ac97"),
+  aim: () => import("./aim/tool.js?v=b6b85c2-d73ac97"),
+  geometry: () => import("./aim/geometry.js?v=b6b85c2-d73ac97"),
+  rings: () => import("./aim/rings.js?v=b6b85c2-d73ac97"),
+  player: () => import("./player/state.js?v=b6b85c2-d73ac97"),
+  lights: () => import("./fx/lighting.js?v=b6b85c2-d73ac97"),
+  lightjobs: () => import("./fx/lightjobs.js?v=b6b85c2-d73ac97"),
 };
 
 const HELLO_MS = 30000; // each screen says hello this often, so the panel's screens list stays fresh
@@ -580,6 +608,7 @@ const DUAL_WAIT_MS = 5000;
 const NOTE_VARIANTS = ["DEFAULT", "ERROR", "INFO", "SUCCESS", "WARNING"];
 
 let bridge = null; // bridge.js on a GM tab (it decides whether this tab is THE bridge)
+let pcTokensNow = null; // this copy's ctx.pcTokens, for the jobs (JOBS.lights)
 let legacy = false; // a localhost tab whose bridge.js didn't load: the game-night-1 loops
 
 const sdk = { OBR, buildCurve, buildEffect, buildImage, buildLabel, buildPath, buildShape, buildText, Math2, MathM };
@@ -623,6 +652,7 @@ export async function boot(api = sdk, opts = {}) {
     log: (text) => console.log(`dnd-npc ${text}`),
   };
   const me = { role, playerId: ctx.playerId };
+  pcTokensNow = ctx.pcTokens;
   const kindNow = () => kindOf({
     role, playerId: ctx.playerId, ua: globalThis.navigator?.userAgent || "",
     coarse: (() => { try { return !!globalThis.matchMedia?.("(pointer: coarse)")?.matches; } catch { return false; } })(),
@@ -657,9 +687,9 @@ export async function boot(api = sdk, opts = {}) {
       return null;
     }
   };
-  const [bridgeMod, fxMod, aimMod, geometry, rings, playerMod] = await Promise.all([
+  const [bridgeMod, fxMod, aimMod, geometry, rings, playerMod, lightsMod] = await Promise.all([
     role === "GM" ? tryLoad("bridge") : null, tryLoad("fx"), tryLoad("aim"), tryLoad("geometry"), tryLoad("rings"),
-    role === "GM" ? null : tryLoad("player"),
+    role === "GM" ? null : tryLoad("player"), tryLoad("lights"),
   ]);
 
   let fx = null;
@@ -672,6 +702,17 @@ export async function boot(api = sdk, opts = {}) {
     console.warn("dnd-npc: effects didn't start", e);
   }
   ctx.fx_ok = !!fx;
+
+  let lights = null;
+  try {
+    // The flames, and on the table screen the darkvision rings (fx/lighting.js). Like the
+    // zones: nothing is drawn until start(), and never on a copy that only relays.
+    lights = lightsMod?.createLights ? lightsMod.createLights(api, ctx) : null;
+  } catch (e) {
+    errors.lights = String(e?.message || e);
+    console.warn("dnd-npc: lights didn't start", e);
+  }
+  ctx.lights_ok = !!lights;
 
   let started = false; // false until this copy knows whether it draws on this tab (start())
   const drawsHere = () => started && !ctx.relayOnly;
@@ -736,6 +777,11 @@ export async function boot(api = sdk, opts = {}) {
       } catch (e) {
         console.warn("dnd-npc: effects settings", e);
       }
+      try {
+        lights?.setSettings?.(next);
+      } catch (e) {
+        console.warn("dnd-npc: lights settings", e);
+      }
     }
     if (moved && !quiet) hello();
     return moved;
@@ -759,6 +805,7 @@ export async function boot(api = sdk, opts = {}) {
       ctx.pcTokens.clear();
       for (const id of hb.pc_tokens) ctx.pcTokens.add(id);
     }
+    try { lights?.pcTokensChanged?.(); } catch (e) { console.warn("dnd-npc: lights", e); } // a hidden PC's light may show now
     const moved = hb.settings ? applySettings({ ...DEFAULT_SETTINGS, ...hb.settings,
       quality: { ...DEFAULT_SETTINGS.quality, ...(hb.settings.quality || {}) } }, { quiet: true }) : false;
     if (hb.scene_bus || sceneFallback()) startSceneReader(api, conn);
@@ -797,6 +844,7 @@ export async function boot(api = sdk, opts = {}) {
         : { state: !started ? "starting" : legacy ? "legacy" : errors.bridge ? "failed" : "off", reason: errors.bridge || "" },
       heard: lastHb ? { conn: lastHb.conn, panel: lastHb.panel, build: lastHb.build, age_s: Math.round((T.now() - lastHbAt) / 1000) } : null,
       fx_ok: ctx.fx_ok, aim_ok: !!aim, errors, settings: ctx.settings,
+      lights_ok: ctx.lights_ok, lights: lights?.status?.() ?? null,
     };
   }
   const pushState = () => { if (role === "GM") busSend(api, CH.LOCAL_STATE, snapshot(), "LOCAL"); };
@@ -816,6 +864,7 @@ export async function boot(api = sdk, opts = {}) {
     // both copies, the Pages copy's created last) is left in place, and only this copy's own
     // menus are removed.
     try { fx?.zones?.stop?.(); } catch (e) { console.warn("dnd-npc: zones", e); }
+    try { lights?.stop?.(); } catch (e) { console.warn("dnd-npc: lights", e); }
     try { fx?.clear?.(); } catch (e) { console.warn("dnd-npc: effects", e); }
     applySettings(ctx.settings, { quiet: true }); // tier off
     try {
@@ -988,6 +1037,7 @@ export async function boot(api = sdk, opts = {}) {
         console.warn("dnd-npc: the player's spells didn't start", e);
       }
       try { fx?.zones?.start?.(); } catch (e) { console.warn("dnd-npc: zones", e); }
+      try { lights?.start?.(); } catch (e) { console.warn("dnd-npc: lights", e); }
       O.scene.isReady().then((r) => {
         if (r && drawsHere()) fx?.warm?.();
       }).catch((e) => console.warn(e));
@@ -1041,6 +1091,7 @@ export async function boot(api = sdk, opts = {}) {
   return {
     ctx, snapshot, errors, stepAside,
     get started() { return started; }, get fx() { return fx; }, get aim() { return aim; }, get player() { return player; },
+    get lights() { return lights; },
   };
 }
 

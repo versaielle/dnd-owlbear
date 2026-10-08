@@ -63,10 +63,10 @@
 // copy's host and only shows the answers from its own copy.
 //
 // At the top, "🎯 Go to PC": one button per PC token, which pans the view there (goto.js).
-import OBR from "./obr-sdk.js?v=0635c01";
-import { CH, LS, QUALITIES, ask, isLocalOrigin, lsGet, lsSet, on, send } from "./bus.js?v=0635c01";
-import { goToPc, pcLabel, scenePcs } from "./goto.js?v=0635c01";
-import { noPcsText } from "./gather.js?v=0635c01";
+import OBR from "./obr-sdk.js?v=b6b85c2-d73ac97";
+import { CH, LS, QUALITIES, ask, isLocalOrigin, lsGet, lsSet, on, send } from "./bus.js?v=b6b85c2-d73ac97";
+import { goToPc, pcLabel, scenePcs } from "./goto.js?v=b6b85c2-d73ac97";
+import { noPcsText } from "./gather.js?v=b6b85c2-d73ac97";
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);

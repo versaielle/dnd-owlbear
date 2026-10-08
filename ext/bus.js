@@ -55,7 +55,7 @@ export const LS = {
 
 // What every client assumes until the bridge's first heartbeat brings the panel's settings.
 export const DEFAULT_SETTINGS = {
-  fx: true, style: "shader", zones: true, sfx: true, player_casts: true, shake: true,
+  fx: true, style: "shader", zones: true, lights: true, sfx: true, player_casts: true, shake: true,
   quality: { gm: "full", table: "full", touch: "lite", other: "full" },
   table_players: [], uniform_path: "normal",
 };
