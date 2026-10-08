@@ -22,6 +22,8 @@
   #goto button { margin: 0 4px 4px 0; padding: 4px 10px; }
   #goto button:hover { background: rgba(255,255,255,.25); }
   [hidden] { display: none !important; }
+  #lighting h5 { margin: 8px 0 2px; font-size: 10px; letter-spacing: .06em; text-transform: uppercase; opacity: .55; }
+  #lt-release { font-size: 11px; padding: 4px 10px; }
 </style>
 </head>
 <body>
@@ -29,6 +31,15 @@
 <div id="goto" hidden><h4>🎯 Go to PC</h4><div id="pcs"></div></div>
 <div id="status" class="dim">Asking the extension…</div>
 <div id="buttons"></div>
+
+<div id="lighting"><h4>🔥 Lighting</h4>
+<div id="lt-scene"><p class="dim small">Loading…</p></div>
+<h5>PCs</h5><div id="lt-pcs"></div>
+<h5>Lit objects</h5><div id="lt-lit"></div>
+<div id="lt-said" class="small"></div>
+<h5>Screens heard</h5><div id="lt-screens"></div>
+<button id="lt-release" title="Gives every token our lights manage back to plain Smoke &amp; Spectre (sight and darkvision back in Smoke's own panel)">Release lights to Smoke</button>
+</div>
 
 <h4>This device</h4>
 <p class="small dim" id="copy-note"></p>
@@ -63,10 +74,12 @@
 // copy's host and only shows the answers from its own copy.
 //
 // At the top, "🎯 Go to PC": one button per PC token, which pans the view there (goto.js).
-import OBR from "./obr-sdk.js?v=b6b85c2-d73ac97";
-import { CH, LS, QUALITIES, ask, isLocalOrigin, lsGet, lsSet, on, send } from "./bus.js?v=b6b85c2-d73ac97";
-import { goToPc, pcLabel, scenePcs } from "./goto.js?v=b6b85c2-d73ac97";
-import { noPcsText } from "./gather.js?v=b6b85c2-d73ac97";
+// Then "🔥 Lighting" (lightpanel.js): the scene's darkness, each PC's sight, darkvision and light,
+// the lit objects, the screens heard, and "Release lights to Smoke". It needs no panel.
+import OBR from "./obr-sdk.js?v=585985a-dc1dbb6";
+import { CH, LS, QUALITIES, ask, isLocalOrigin, lsGet, lsSet, on, send } from "./bus.js?v=585985a-dc1dbb6";
+import { goToPc, pcLabel, scenePcs } from "./goto.js?v=585985a-dc1dbb6";
+import { noPcsText } from "./gather.js?v=585985a-dc1dbb6";
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
@@ -74,6 +87,7 @@ const list = (items) => `<ul>${items.map((i) => `<li>${esc(i)}</li>`).join("")}<
 const local = isLocalOrigin(location.origin);
 const HOST = local ? "local" : "pages";
 let heard = false;
+let lighting = null; // lightpanel.js once loaded
 
 const BRIDGE_TEXT = {
   bridge: ["ok", "✅ This tab is the bridge to the DND panel"],
@@ -212,7 +226,21 @@ OBR.onReady(async () => {
     location.replace("./player.html" + location.search); // "Your spells & attacks"
     return;
   }
-  on(OBR, CH.LOCAL_STATE, (s) => { if (s?.host === HOST) render(s); }); // the other copy's answers aren't ours
+  on(OBR, CH.LOCAL_STATE, (s) => { // the other copy's answers aren't ours
+    if (s?.host !== HOST) return;
+    render(s);
+    try { lighting?.state(s); } catch (e) { console.warn("dnd-npc: 🔥 Lighting", e); }
+  });
+  // 🔥 Lighting: loaded on its own, so the rest of this box works whatever happens to it.
+  import("./lightpanel.js?v=585985a-dc1dbb6").then((m) => {
+    const css = document.createElement("style");
+    css.textContent = m.LIGHTING_CSS;
+    document.head.append(css);
+    lighting = m.startLighting(OBR, { scene: $("lt-scene"), pcs: $("lt-pcs"), lit: $("lt-lit"), screens: $("lt-screens"),
+                                      said: $("lt-said"), release: $("lt-release") });
+  }).catch((e) => {
+    $("lt-scene").innerHTML = `<p class="bad small">🔥 Lighting didn't load: ${esc(e?.message || e)}. Reload the room.</p>`;
+  });
   askBg("state");
   setInterval(() => askBg("state"), 2000);
   pcButtons().catch((e) => console.warn("dnd-npc go-to list failed", e));

@@ -18,31 +18,22 @@
 // Also "👥 Place townsfolk" (GM only, on the town map): each NPC listed in interiors.json's
 // town.townsfolk goes to its own square in its room, next to its piece of furniture.
 // check_interiors.mjs tests the pure parts offline.
-import OBR, { MathM } from "./obr-sdk.js?v=b6b85c2-d73ac97";
-import { contains, isRoom, outline } from "./areas.js?v=b6b85c2-d73ac97";
-import { ask, directBase } from "./bus.js?v=b6b85c2-d73ac97";
-import { bounds, listed, loadInteriors, mapToScene, matchImages, normName, toScene } from "./interiors.js?v=b6b85c2-d73ac97";
-import { BUBBLES_NAME_KEY, INTERIOR_KEY, MAP_INFO_KEY, PARTY_KEY, WHO_KEY } from "./keys.js?v=b6b85c2-d73ac97";
+import OBR, { MathM } from "./obr-sdk.js?v=585985a-dc1dbb6";
+import { contains, isRoom, outline } from "./areas.js?v=585985a-dc1dbb6";
+import { ask, directBase } from "./bus.js?v=585985a-dc1dbb6";
+import { bounds, listed, loadInteriors, mapToScene, matchImages, normName, toScene } from "./interiors.js?v=585985a-dc1dbb6";
+import { BUBBLES_NAME_KEY, INTERIOR_KEY, MAP_INFO_KEY, PARTY_KEY, PARTY_SENSES_KEY, WHO_KEY } from "./keys.js?v=585985a-dc1dbb6";
+import { nameKey, pcName, tokenLabel } from "./fx/pcs.js?v=585985a-dc1dbb6";
 
 const RADIUS = 12; // squares around the spot that are tried
 
 const firstWord = (s) => String(s || "").trim().split(/\s+/)[0].replace(/[^\p{L}\p{N}'-]/gu, "").toLowerCase();
 
-// The name a token shows: Stat Bubbles' name tag, then Owlbear's label, then the item's name.
-export function tokenLabel(i) {
-  return String(i.metadata?.[BUBBLES_NAME_KEY] || "").trim() || String(i.text?.plainText || "").trim() || i.name || "";
-}
-
-// The PC a token is, or null: "This is…" (pc:<name>) first, else its label's first word against
-// the party ("Ana Ring" is Ana). A token marked as an NPC is never a PC.
-export function pcName(i, party = []) {
-  if (i.layer !== "CHARACTER") return null;
-  const who = String(i.metadata?.[WHO_KEY] || "");
-  if (who.startsWith("pc:")) return who.slice(3);
-  if (who) return null;
-  const w = firstWord(tokenLabel(i));
-  return (w && party.find((n) => firstWord(n) === w)) || null;
-}
+// The name a token shows (Stat Bubbles' name tag, then Owlbear's label, then the item's name),
+// and the PC a token is, or null: the one rule for the whole extension and the panel
+// (fx/pcs.js): "This is…" (pc:<name>) first, a token marked as an NPC is never a PC, else its
+// name against the party, whole or its first word ("Ana Ring" is Ana).
+export { pcName, tokenLabel };
 
 // Every PC token that can be moved: only roots (an attached one follows its parent), by name.
 export function findPcs(items, party = []) {
@@ -461,15 +452,69 @@ export async function storedParty(O = OBR) {
   }
 }
 
+// ---- the party's senses (darkvision), remembered in the room ----
+// PARTY_SENSES_KEY: {<nameKey(name)>: {dark: feet}}, from personas/party.yaml `darkvision:` per
+// member (the catalog's `senses`, keyed the same way by the panel and tools/owlbear_only.py).
+// Numbers only: the room's metadata reaches every device. Every screen's lights read it for a
+// PC's darkvision band, and the 🔥 Lighting list shows it as the sheet's value.
+const MAX_FEET = 1000;
+
+// A senses map as stored: name keys (fx/pcs.js nameKey, as the PC rule compares names) to
+// {dark: whole feet 0..1000}; anything else is dropped. Not an object -> {}.
+export function cleanSenses(x) {
+  const out = {};
+  if (!x || typeof x !== "object" || Array.isArray(x)) return out;
+  for (const [k, v] of Object.entries(x)) {
+    const key = nameKey(k).slice(0, MAX_NAME);
+    const dark = Number(v && typeof v === "object" ? v.dark : NaN);
+    if (!key || !Number.isFinite(dark) || Object.keys(out).length >= MAX_NAMES) continue;
+    out[key] = { dark: Math.max(0, Math.min(MAX_FEET, Math.round(dark))) };
+  }
+  return out;
+}
+
+const sameSenses = (a, b) => {
+  const ka = Object.keys(a).sort(), kb = Object.keys(b).sort();
+  return ka.length === kb.length && ka.every((k, n) => k === kb[n] && a[k].dark === b[k].dark);
+};
+
+// What to write to the room, or null: the panel's senses when it sent some (an object, even an
+// empty one: nobody has darkvision) and they differ from the room's. A panel from before the
+// senses (no `senses` at all) changes nothing.
+export function sensesToStore(stored, fetched) {
+  if (!fetched || typeof fetched !== "object" || Array.isArray(fetched)) return null;
+  const f = cleanSenses(fetched);
+  return sameSenses(f, cleanSenses(stored)) ? null : f;
+}
+
+// The room's remembered senses (instant).
+export async function storedSenses(O = OBR) {
+  try {
+    return cleanSenses((await O.room.getMetadata())?.[PARTY_SENSES_KEY]);
+  } catch {
+    return {};
+  }
+}
+
+// A PC's darkvision from the sheet, in feet, or null when the room doesn't know it.
+export function senseOf(senses, name) {
+  const s = senses?.[nameKey(name)];
+  return s && Number.isFinite(s.dark) ? s.dark : null;
+}
+
 // Keep names just got from the panel in the room, when they differ (GM only: players can't
-// write room metadata). `stored`: the room's raw value when already read. True when written.
-export async function rememberParty(fetched, O = OBR, stored) {
+// write room metadata). `stored`: the room's raw value when already read. `senses`: the
+// catalog's `senses` (party.yaml darkvision), kept as PARTY_SENSES_KEY in the same write when
+// it differs. True when written.
+export async function rememberParty(fetched, O = OBR, stored, senses) {
   if (!cleanParty(fetched).length) return false;
   try {
-    if (stored === undefined) stored = (await O.room.getMetadata())?.[PARTY_KEY];
+    const meta = stored === undefined || senses !== undefined ? (await O.room.getMetadata()) || {} : null;
+    if (stored === undefined) stored = meta?.[PARTY_KEY];
     const names = partyToStore(stored, fetched);
-    if (!names || (await O.player.getRole()) !== "GM") return false;
-    await O.room.setMetadata({ [PARTY_KEY]: names });
+    const dark = senses === undefined ? null : sensesToStore(meta?.[PARTY_SENSES_KEY], senses);
+    if ((!names && !dark) || (await O.player.getRole()) !== "GM") return false;
+    await O.room.setMetadata({ ...(names ? { [PARTY_KEY]: names } : {}), ...(dark ? { [PARTY_SENSES_KEY]: dark } : {}) });
     return true;
   } catch (e) {
     console.warn("dnd-npc: couldn't keep the party in the room", e);
@@ -497,13 +542,15 @@ export async function partyNames() {
     raw = undefined;
   }
   const refresh = async () => {
-    let fetched = [];
+    let fetched = [], senses;
     try {
-      fetched = cleanParty((await ask(OBR, "/api/map/catalog"))?.party);
+      const c = await ask(OBR, "/api/map/catalog");
+      fetched = cleanParty(c?.party);
+      senses = c?.senses;
     } catch {
       fetched = [];
     }
-    if (fetched.length) await rememberParty(fetched, OBR, raw ?? null);
+    if (fetched.length) await rememberParty(fetched, OBR, raw ?? null, senses);
     return fetched;
   };
   // The room already knows the party: answer at once and refresh it from the panel meanwhile

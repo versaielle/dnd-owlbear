@@ -51,6 +51,23 @@ export const LIGHT_KEY = "dnd-npc/light";
 export const SPELL_LIGHT_KEY = "dnd-npc/spell-light";
 export const LIGHT_BASE_KEY = "dnd-npc/light-base";
 export const LIGHT_FX_KEY = "dnd-npc/fx-light";
+// Lights redo (docs/lights-redo-spec.md). LIGHT_KEY {kind: "none"} is the DM's tombstone: put out
+// (stops an auto or adopted light; a spell light still shows). VISION_KEY on a token:
+// {dm: {sight?, dark?, seer?}, out: {<Smoke key short name>: value}}: the DM's overrides, and the
+// Smoke keys we last wrote (to tell a DM's Smoke edit from ours, and what to remove).
+// CARRIER_KEY {of: <parent id>} on the invisible child item that carries a lit NPC's torchlight.
+// SCENE_LIGHTING_KEY on the scene: {darkness: "lit"|"dim"|"dark", auto: bool, managed: bool}
+// (missing = lit, auto, managed). managed false = "Release lights to Smoke": no Smoke key writes
+// in that scene (our own keys still); any 🔥 Lighting control that changes inputs sets it true.
+// PARTY_SENSES_KEY on the room: {<nameKey(name)>: {dark: feet}} (numbers only), from party.yaml.
+export const VISION_KEY = "dnd-npc/vision";
+export const CARRIER_KEY = "dnd-npc/carrier";
+export const SCENE_LIGHTING_KEY = "dnd-npc/lighting";
+export const PARTY_SENSES_KEY = "dnd-npc/party-senses";
+// On a MAP-layer image: "lit" | "dim" | "dark", that map's own light (a 🌑 cellar inside a ☀ town
+// scene). The topmost marked map under a point decides; else the scene's darkness; else lit
+// (fx/darkness.js, docs/lights-darkness-spec.md). Removed = "as the scene".
+export const MAP_DARKNESS_KEY = "dnd-npc/darkness";
 // Smoke & Spectre's metadata prefix: "<SMOKE>/visionRange" etc. on tokens, "<SMOKE>/isDarkVision"
 // on its own local darkvision rings.
 export const SMOKE = "com.battle-system.smoke";

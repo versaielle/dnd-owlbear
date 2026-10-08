@@ -25,12 +25,12 @@
 // bridge (LOCAL on the Dell's own tab, sealed for this device only elsewhere: bus.js rpc()).
 // Also "🧭 Bring PCs here" (kind=bring): All PCs, or one PC, in one tap; tick several for "Bring these".
 // And "🎯 Go to PC" (kind=goto): one tap pans the DM's view to that PC's token.
-import OBR from "./obr-sdk.js?v=b6b85c2-d73ac97";
-import { isRoom } from "./areas.js?v=b6b85c2-d73ac97";
-import { bringPcs, findPcs, noPcsText, partyNames, rememberParty } from "./gather.js?v=b6b85c2-d73ac97";
-import { goToPc, pcLabel, scenePcs } from "./goto.js?v=b6b85c2-d73ac97";
-import { PLACE_KEY, WHO_KEY } from "./keys.js?v=b6b85c2-d73ac97";
-import { ask } from "./bus.js?v=b6b85c2-d73ac97";
+import OBR from "./obr-sdk.js?v=585985a-dc1dbb6";
+import { isRoom } from "./areas.js?v=585985a-dc1dbb6";
+import { bringPcs, findPcs, noPcsText, partyNames, rememberParty } from "./gather.js?v=585985a-dc1dbb6";
+import { goToPc, pcLabel, scenePcs } from "./goto.js?v=585985a-dc1dbb6";
+import { PLACE_KEY, WHO_KEY } from "./keys.js?v=585985a-dc1dbb6";
+import { ask } from "./bus.js?v=585985a-dc1dbb6";
 
 const kind = new URLSearchParams(location.search).get("kind");
 const app = document.getElementById("app");
@@ -177,7 +177,7 @@ OBR.onReady(async () => {
       : "Can't reach the voice system: is it running, with the Dell's GM tab open in this room?";
     return;
   }
-  rememberParty(catalog.party); // kept in the room for the copies that can't reach the panel
+  rememberParty(catalog.party, OBR, undefined, catalog.senses); // kept in the room (names + darkvision) for the copies that can't reach the panel
   app.innerHTML = "";
   app.className = "";
   if (kind === "place") {

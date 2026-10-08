@@ -25,8 +25,8 @@
 // Every Owlbear call and fetch goes through `api` and `mods`, so check_bridge.mjs can run it
 // against a fake room and a fake clock.
 import { CH, DEFAULT_SETTINGS, LS, PANEL_PORTS, RPC_PATHS, canSeal, lsGet, lsSet, on, seal, send, setConnection,
-  setSceneWrite } from "./bus.js?v=b6b85c2-d73ac97";
-import { RING_KEY, TARGET_COLOR } from "./keys.js?v=b6b85c2-d73ac97";
+  setSceneWrite } from "./bus.js?v=585985a-dc1dbb6";
+import { RING_KEY, TARGET_COLOR } from "./keys.js?v=585985a-dc1dbb6";
 
 const HELLO_TIMEOUT_MS = 800; // per port, when looking for the panel
 const FIND_RETRY_MS = 30000; // no panel found: look again
@@ -126,6 +126,21 @@ export const CATALOG_IN_CLEAR =
 const inert = { isBridge: () => false, stop() {}, retry() {}, force() {}, relayOnly() {}, report: async () => {},
                 status: () => ({ state: "off" }) };
 
+// A screen's lights as its HELLO says them, as the screens lists keep them: numbers, flags, the
+// lights writer's state ("leader", "standby", "blocked"…) and a short error, whatever else
+// fx/lighting.js status() grows. A bare string is the writer's state alone. null for none.
+export function lightsBrief(l) {
+  if (typeof l === "string" && l) return { state: l.slice(0, 20) };
+  if (!l || typeof l !== "object") return null;
+  const n = (v) => (Number.isFinite(v) ? v : undefined);
+  const state = typeof l.state === "string" && l.state ? l.state.slice(0, 20) : undefined;
+  const out = { on: l.on === undefined ? undefined : !!l.on, flames: n(l.flames), rings: n(l.rings ?? l.seers ?? l.bands),
+                leader: l.leader === undefined ? (state ? state === "leader" : undefined) : !!l.leader, state,
+                error: l.error ? String(l.error).slice(0, 120) : undefined };
+  for (const k of Object.keys(out)) if (out[k] === undefined) delete out[k];
+  return out;
+}
+
 // ctx: {role, conn, playerId, name, host: "local"|"pages", origin, build, kind, isPublic(id, item?),
 //       pcTokens: Set, settings, fx_ok, log(text), onHeartbeat(hb), onStatus(),
 //       relayOnly: bool (the Pages copy draws on this tab), sameTab: {kind, build, fx_ok, host} | null
@@ -176,8 +191,15 @@ export function startBridge(api, ctx, mods = {}) {
   const out = (dest) => (relayOnly() && dest === "REMOTE" ? "ALL" : dest); // reach this tab's Pages copy too
   // The screen this tab is: in relay-only mode the Pages copy here does the drawing, so its
   // HELLO (build, effects ready or not) describes this tab's screen, not this copy.
+  // `writer` and `lights` (lights redo): the lights writer's build on a GM screen, and the
+  // screen's lights.status(), as its HELLO says them (background.js keeps the other copy's in
+  // ctx.sameTab, and its own as ctx.writer / ctx.lightsStatus()).
+  const ownLights = () => {
+    try { return typeof ctx.lightsStatus === "function" ? ctx.lightsStatus() : null; } catch { return null; }
+  };
   const drawer = () => (relayOnly() && ctx.sameTab ? ctx.sameTab
-    : { kind: ctx.kind || "gm", build: ctx.build || "dev", fx_ok: !!ctx.fx_ok, host: ctx.host });
+    : { kind: ctx.kind || "gm", build: ctx.build || "dev", fx_ok: !!ctx.fx_ok, host: ctx.host,
+        writer: ctx.writer ?? null, lights: ownLights() });
   const gmNote = (text) => send(api, CH.NOTE, { audience: "gm", text, variant: "WARNING" }, "ALL");
   const sleep = (ms) => new Promise((resolve) => T.setTimeout(resolve, ms));
   const changed = () => { try { ctx.onStatus?.(); } catch { /* the popover's problem */ } };
@@ -539,17 +561,24 @@ export function startBridge(api, ctx, mods = {}) {
     try { ctx.onHeartbeat?.(hb, { self: true }); } catch (e) { console.warn("dnd-npc heartbeat", e); }
   }
 
-  async function extras() {
+  // Every screen heard (this one first), as the panel's screens row and the GM box's 🔥 Lighting
+  // list show them.
+  function screenList() {
     const now = T.now();
     for (const [c, s] of screens) if (now - s.at > SCREEN_GONE_MS) screens.delete(c);
     const d = drawer();
     const self = { connection: conn, player_id: ctx.playerId, name: ctx.name || "", role: ctx.role, kind: d.kind || "gm",
-                   build: d.build || "dev", fx_ok: !!d.fx_ok, host: d.host || ctx.host, at: now };
+                   build: d.build || "dev", fx_ok: !!d.fx_ok, host: d.host || ctx.host, at: now,
+                   writer: d.writer ?? null, lights: lightsBrief(d.lights) };
+    return [self, ...[...screens.values()].filter((s) => s.connection !== conn)];
+  }
+
+  async function extras() {
     return {
       room: { id: roomId(), name: roomName() }, // which Owlbear room this map is (map_state.obr_room)
       me: { id: ctx.playerId, name: ctx.name || "", connection: conn },
       players: party.map((p) => ({ id: p.id, name: p.name, role: p.role, connection: p.connectionId })),
-      screens: [self, ...[...screens.values()].filter((s) => s.connection !== conn)],
+      screens: screenList(),
     };
   }
 
@@ -795,6 +824,9 @@ export function startBridge(api, ctx, mods = {}) {
         connection: c, player_id: who?.id ?? prev.player_id ?? null, name: who?.name ?? prev.name ?? "",
         role: who?.role ?? msg.role ?? prev.role ?? "", kind: msg.kind ?? prev.kind ?? "",
         build: msg.build ?? prev.build ?? "", fx_ok: msg.fx_ok ?? prev.fx_ok ?? false, host: msg.host ?? prev.host ?? "",
+        // A HELLO from before the lights redo has neither: left undefined ("older build" on the lists).
+        writer: "writer" in (msg || {}) ? msg.writer ?? null : prev.writer,
+        lights: "lights" in (msg || {}) ? lightsBrief(msg.lights) : prev.lights,
         at: T.now(),
       });
     }
@@ -871,6 +903,7 @@ export function startBridge(api, ctx, mods = {}) {
       state, base, holder, reason, relayOnly: relayOnly(), opted_in: optedIn(),
       panel: T.now() - lastPanelOk < PANEL_DOWN_MS ? "ok" : "down",
       screens: screens.size, roster: Object.keys(roster).length,
+      screen_list: screenList(), // every GM copy hears the HELLOs, bridge or not (the 🔥 Lighting list)
     }),
   };
 }

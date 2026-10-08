@@ -16,6 +16,11 @@
   button.some { opacity: .8; border-style: dashed; border-color: #d9a441; }
   .label { flex: 1; min-width: 0; text-align: left; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
   .ft { font-size: 10px; opacity: .7; white-space: nowrap; }
+  #said, #miss { margin: 4px 2px 0; font-size: 11px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  #said { color: #7fd99a; }
+  #said.dim { color: inherit; opacity: .75; }
+  #miss { color: #f0c36b; }
+  #miss:empty, #said:empty { display: none; }
   /* A narrow menu: the feet move to the note above (on hover) and the chip's tooltip. */
   @media (max-width: 259px) { .ft { display: none; } }
 </style>
@@ -23,69 +28,94 @@
 <body>
 <div id="head"><span id="word"></span><span id="note"></span></div>
 <div id="grid"></div>
+<div id="said" class="dim"></div>
+<div id="miss"></div>
 <script type="module">
-// The "🔥 Light" right-click menu on a token or an object (any GM screen): tap the light it
-// carries (a PC's torch) or gives off (a sconce, a brazier), or None. It's kept on the token
-// itself (LIGHT_KEY) with Smoke & Spectre's vision range set from the D&D numbers in the same
-// write (fx/lightmeta.js), so it works with no panel; every screen draws the flame
-// (fx/lighting.js). A light from a spell cast on the panel is kept apart: shown as a note here,
-// never changed. Each token is written as what it is: a PC carries the light (its own sight
-// grows), anything else becomes a Smoke torch, except while it's hidden (itself, or what it's
-// attached to): then it keeps the light but gets no Smoke torch (Smoke would light the fog where
-// it stands on every player's screen) until it's shown again (then fx/lighting.js's torch guard,
-// or a tap here, turns Smoke's torch on).
-import OBR from "./obr-sdk.js?v=b6b85c2-d73ac97";
-import { LIGHT_KEY, SPELL_LIGHT_KEY } from "./keys.js?v=b6b85c2-d73ac97";
-import { SOURCES } from "./fx/lights.js?v=b6b85c2-d73ac97";
-import { applyLight, isSecret, lightChanges, withParents } from "./fx/lightmeta.js?v=b6b85c2-d73ac97";
-import { pcName, storedParty } from "./gather.js?v=b6b85c2-d73ac97";
+// The "🔥 Light" right-click menu (any GM screen), on anything selected: a PC, an NPC, a sconce,
+// a brazier, an attached torch, any mix. Tap the light it carries or gives off, or None.
+// Lights redo (docs/lights-redo-spec.md): the tap changes the token's inputs only, through
+// fx/lightmeta.js's setLight (a kind, or the "none" tombstone: put out, so a sconce lit by its
+// name doesn't relight by itself), then fx/lightwriter.js writeNow plans Smoke & Spectre's keys
+// with the lights writer's own ctx (the party's darkvision, the PC rule and WHO marks, the scene's
+// lighting, Smoke's default range), all in ONE write: the writer's next pass plans nothing more.
+// Below the chips it says what it did ("Ana carries a torch (40 ft)") and what's missing
+// (no table screen heard, a screen on an older build), from the screens this GM copy has heard.
+// A light from a spell cast on the panel is kept apart: shown, never changed here.
+import OBR from "./obr-sdk.js?v=585985a-dc1dbb6";
+import { CH, isLocalOrigin, on, send } from "./bus.js?v=585985a-dc1dbb6";
+import { LIGHT_KEY, PARTY_KEY } from "./keys.js?v=585985a-dc1dbb6";
+import { SOURCES } from "./fx/lights.js?v=585985a-dc1dbb6";
+import * as LM from "./fx/lightmeta.js?v=585985a-dc1dbb6";
+import { readGrid } from "./fx/darkness.js?v=585985a-dc1dbb6";
+import { writeNow } from "./fx/lightwriter.js?v=585985a-dc1dbb6";
+import { cleanParty } from "./gather.js?v=585985a-dc1dbb6";
+import { autoKind, describe, editFor, effectiveLight, lightName, reachOf, screenWarnings, uiCtx } from "./lightui.js?v=585985a-dc1dbb6";
 
+const HOST = isLocalOrigin(location.origin) ? "local" : "pages";
 const grid = document.getElementById("grid");
 const word = document.getElementById("word");
 const note = document.getElementById("note");
+const said = document.getElementById("said");
+const miss = document.getElementById("miss");
 const buttons = new Map(); // kind ("" for None) -> chip
 let hint = ""; // what the note says while no chip is hovered
 let hovered = ""; // what it says while one is
+let warnings = []; // from the screens heard (the GM copy's bridge.js), newest answer
+let pcIds = null; // the bridge heartbeat's PC ids, from this GM copy's background (as its writer has them)
 
 const known = (k) => typeof k === "string" && Object.prototype.hasOwnProperty.call(SOURCES, k);
-const handOf = (i) => (known(i.metadata?.[LIGHT_KEY]?.kind) ? i.metadata[LIGHT_KEY].kind : "");
-const spellOf = (i) => (known(i.metadata?.[SPELL_LIGHT_KEY]?.kind) ? i.metadata[SPELL_LIGHT_KEY].kind : "");
 
 async function selected() {
   const ids = (await OBR.player.getSelection()) || [];
   return ids.length ? OBR.scene.items.getItems(ids) : [];
 }
 
-// Which of these are player characters, by id: the "This is…" mark, else the name against
-// the party the room remembers (gather.js; instant, no panel needed).
-async function pcsOf(items) {
-  const party = await storedParty(OBR);
-  return new Map(items.map((i) => [i.id, !!pcName(i, party)]));
+// The ctx lightmeta's visionOf/planItem take: the PC rule (WHO mark, else the name against the
+// party the room remembers), the party's darkvision (room), the scene's darkness, the parents
+// (for "hidden through what it's attached to").
+async function contextFor(items) {
+  const [byId, sceneMeta, roomMeta, sceneGrid] = await Promise.all([LM.withParents(OBR, items), OBR.scene.getMetadata(),
+                                                                    OBR.room.getMetadata(), readGrid(OBR)]);
+  return uiCtx({ byId, sceneMeta, roomMeta, party: cleanParty(roomMeta?.[PARTY_KEY]), pcIds, grid: sceneGrid });
+}
+
+// The light a chip shows as on: the DM's own, or one it has by its name / an adopted Smoke
+// torch ("" none; a spell's light alone is none here, shown in the note).
+function shownKind(i, ctx) {
+  const e = effectiveLight(i, ctx.lighting);
+  if (e && e.from !== "spell") return e.kind;
+  const hand = i.metadata?.[LIGHT_KEY]?.kind;
+  return known(hand) ? hand : "";
 }
 
 async function show() {
   const items = await selected();
-  const pc = await pcsOf(items);
-  word.textContent = items.length && items.every((i) => pc.get(i.id)) ? "Carrying" : "Gives off";
+  const ctx = await contextFor(items);
+  word.textContent = items.length && items.every((i) => ctx.isPc(i)) ? "Carrying" : "Gives off";
   for (const [kind, b] of buttons) {
-    const n = items.filter((i) => handOf(i) === kind).length;
+    const n = items.filter((i) => shownKind(i, ctx) === kind).length;
     b.className = n && n === items.length ? "on" : n ? "some" : "";
   }
-  // The note: a spell's light on it too (cast on the panel, it goes when the spell ends), else
-  // the feet of the light they all have.
-  const spells = items.map(spellOf).filter(Boolean);
-  const lit = items.length ? handOf(items[0]) : "";
+  const spells = items.map((i) => effectiveLight(i, ctx.lighting)).filter((e) => e?.from === "spell");
+  const lit = items.length ? shownKind(items[0], ctx) : "";
   hint = !items.length ? "Nothing selected"
-    : spells.length ? (items.length === 1 ? `✨ + ${SOURCES[spells[0]].label}` : `✨ spell on ${spells.length}`)
-    : lit && items.every((i) => handOf(i) === lit) ? `${SOURCES[lit].bright}/${SOURCES[lit].dim} ft`
-    : "";
+    : spells.length ? (items.length === 1 ? `✨ ${SOURCES[spells[0].kind]?.label || "spell"}` : `✨ spell on ${spells.length}`)
+    : lit && items.every((i) => shownKind(i, ctx) === lit) ? `${SOURCES[lit].bright}/${SOURCES[lit].dim} ft`
+    : items.length > 1 ? `${items.length} selected` : "";
   note.title = spells.length ? "Also lit by a spell cast on the panel: it goes out when the spell ends" : "";
   note.textContent = hovered || hint;
+  // Before any tap: what the one selected item has now.
+  if (!said.dataset.tapped) {
+    said.className = "dim";
+    said.textContent = items.length === 1 ? describe(items[0], ctx) : "";
+    said.title = said.textContent;
+  }
+  miss.textContent = warnings[0] ? `⚠ ${warnings[0]}${warnings.length > 1 ? ` (+${warnings.length - 1} in the 🗺 box)` : ""}` : "";
+  miss.title = warnings.join("\n");
 }
 
 // Fit each chip's label on its line: a long one ("Campfire / brazier") gets a smaller font
-// rather than being cut off, down to 9 px. Owlbear sets the menu's width, so it's measured
-// (the text's own width, to the fraction of a pixel: scrollWidth rounds a slight overflow away).
+// rather than being cut off, down to 9 px. Owlbear sets the menu's width, so it's measured.
 function fit() {
   for (const b of buttons.values()) {
     const label = b.children[0];
@@ -98,8 +128,7 @@ function fit() {
   }
 }
 
-// One redraw at a time (the scene changes often while tokens move); a change meanwhile
-// redraws once more after.
+// One redraw at a time (the scene changes often while tokens move); a change meanwhile redraws once more.
 let busy = false, again = false;
 async function refresh() {
   if (busy) {
@@ -112,38 +141,52 @@ async function refresh() {
       again = false;
       await show();
     } while (again);
+  } catch (e) {
+    console.warn("dnd-npc: 🔥 Light", e);
   } finally {
     busy = false;
   }
 }
 
-// Taps run one at a time, each on what the one before wrote: a double click writes once (every
-// write makes Smoke & Spectre redo its vision on every screen). Owlbear gives up on a call
-// after 5 s, so a stuck one can't hold the next tap for long. The redraw is outside the queue
-// (it keeps going while tokens move).
+// Taps run one at a time, each on what the one before wrote: a double click writes once.
 let picking = Promise.resolve();
 function pick(kind) {
-  picking = picking.then(() => write(kind)).catch((e) => console.warn("dnd-npc: 🔥 Light", e));
+  picking = picking.then(() => write(kind)).catch((e) => {
+    console.warn("dnd-npc: 🔥 Light", e);
+    said.dataset.tapped = "1";
+    said.className = "";
+    said.style.color = "#f08a7b";
+    said.textContent = `Couldn't change the light: ${e?.error?.message || e?.message || e}`;
+  });
   return picking.then(refresh);
 }
 
-// One write for the whole selection, and none when nothing would change. A token no player sees
-// (hidden, itself or through what it's attached to) that isn't a PC is secret: no Smoke torch.
-// The drafts carry `visible` as it is at the write.
+// One write for the whole selection (writeNow), none when nothing would change. None on something
+// with no light of its own (and none by its name) changes nothing; on anything lit it's the tombstone.
 async function write(kind) {
   const items = await selected();
   if (!items.length) return;
-  const scene = await withParents(OBR, items);
-  const pc = await pcsOf([...scene.values()]);
-  const change = { hand: kind || null };
-  const isPc = (id) => !!pc.get(id);
-  const opts = (i) => ({ pc: isPc(i.id), secret: !isPc(i.id) && isSecret(i, { parentOf: (id) => scene.get(id), isPc }) });
-  const ids = items.filter((i) => lightChanges(i.metadata, change, opts(i))).map((i) => i.id);
-  if (ids.length) {
-    await OBR.scene.items.updateItems(ids, (drafts) => {
-      for (const d of drafts) applyLight(d.metadata, change, opts(d));
-    });
+  const ctx = await contextFor(items);
+  const ids = kind ? items.map((i) => i.id) : items.filter((i) => {
+    const e = effectiveLight(i, ctx.lighting);
+    return (e && e.from !== "spell") || autoKind(i) || known(i.metadata?.[LIGHT_KEY]?.kind);
+  }).map((i) => i.id); // None: only what there's something to put out on
+  const r = await writeNow(OBR, ids, editFor({ light: kind || "none" }), { party: ctx.party, pcTokens: pcIds });
+  // What it did, from the items as they are now.
+  const fresh = await OBR.scene.items.getItems(items.map((i) => i.id));
+  const ctx2 = await contextFor(fresh);
+  said.dataset.tapped = "1";
+  said.className = "";
+  said.style.color = "";
+  if (fresh.length === 1) said.textContent = describe(fresh[0], ctx2);
+  else {
+    const names = fresh.map((i) => ctx2.pcName(i) || (i.text?.plainText || i.name || "?").replace(/\.\w+$/, ""));
+    const who = names.length > 3 ? `${names.slice(0, 3).join(", ")} +${names.length - 3}` : names.join(", ");
+    said.textContent = kind ? `${who}: ${lightName(kind)} (${reachOf(kind)} ft)` : `${who}: put out — won't relight by themselves`;
   }
+  if (!r.wrote.length) said.textContent += " (already so)";
+  else if (r.released) said.textContent += " (scene released to Smoke: our flame only; Smoke's own panel has the rest)";
+  said.title = fresh.map((i) => describe(i, ctx2)).join("\n");
 }
 
 for (const kind of ["", ...Object.keys(SOURCES)]) {
@@ -159,7 +202,7 @@ for (const kind of ["", ...Object.keys(SOURCES)]) {
     ft.textContent = `${s.bright}/${s.dim}`;
     b.append(ft);
   }
-  const about = s ? `${s.label} ${s.bright}/${s.dim} ft` : "No light";
+  const about = s ? `${s.label} ${s.bright}/${s.dim} ft` : "No light (put out: a sconce lit by its name stays out)";
   b.title = s ? `${s.label}: ${s.bright} ft bright, ${s.dim} ft dim` : about;
   b.onclick = () => pick(kind);
   b.onmouseenter = () => { note.textContent = hovered = about; };
@@ -171,6 +214,16 @@ fit();
 window.addEventListener("resize", fit);
 
 OBR.onReady(() => {
+  // The screens this GM copy has heard (bridge.js), for "no table screen heard" and older builds;
+  // and the heartbeat's PC ids (the same the lights writer plans with).
+  on(OBR, CH.LOCAL_STATE, (s) => {
+    if (s?.host !== HOST) return;
+    if (Array.isArray(s.pc_tokens)) pcIds = s.pc_tokens.map(String);
+    if (!Array.isArray(s?.bridge?.screen_list)) return;
+    warnings = screenWarnings(s.bridge.screen_list, { ref: s.build });
+    refresh();
+  });
+  send(OBR, CH.LOCAL_ASK, { need: "state", host: HOST }, "LOCAL");
   refresh();
   OBR.scene.items.onChange(refresh);
 });

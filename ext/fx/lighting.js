@@ -1,20 +1,26 @@
-// Lights on the map: a flickering flame for every token or item that carries a light, on every
-// screen that draws (the GM tabs, the laptop, the projector's Cast receiver, the phones), and on
-// the table screen only, a darkvision ring that leaves other light in colour in place of Smoke &
-// Spectre's grey one. The looks and the SkSL are in fx/lights.js; which light a token carries is
-// in its metadata (fx/lightmeta.js lightOf()), written by the 🔥 Light menu and the spell lights.
+// Lights on the map, on every screen that draws (the GM tabs, the laptop, the projector's Cast
+// receiver, the phones): a flickering flame for every token or item that carries a light, and
+// the darkvision band (grey AND dim) of every public seer, which leaves every lit area in
+// colour. The looks and the SkSL are in fx/lights.js; which light an item has and how a token
+// sees come from its metadata (fx/lightmeta.js effectiveLight() and visionOf(), the lights redo
+// contract in docs/lights-redo-spec.md). Smoke & Spectre only reveals the fog: the writer
+// (fx/lightwriter.js) gives every token we manage `visionDark: "0"`, so Smoke draws no grey
+// ring of its own, and this file draws ours.
 //
 //   const lights = createLights(api, ctx);   every copy, at boot (background.js)
 //   lights.setSettings(next)   the panel's settings + {kind, tier, quality_override} (may come
 //                              before start(); tier is "off" on a copy that only relays)
 //   lights.start()             this copy draws here: draw, and keep drawing as the scene changes
-//   lights.stop()              step aside: everything we drew comes off, Smoke's rings come back
-//   lights.pcTokensChanged()   ctx.pcTokens was refreshed (a hidden PC's light may show now)
-//   lights.status()            {on, tier, table, flames, rings, hidden, dropped, error, leader}
+//   lights.stop()              step aside: everything we drew comes off
+//   lights.pcTokensChanged()   ctx.pcTokens or ctx.party was refreshed (who's a PC may differ)
+//   lights.status()            {on, tier, table, flames, rings, darkvision, dropped, error}
+//
+// ctx (background.js): role, kind, host, isPc(idOrItem, item), isPublic(idOrItem, item),
+// pcTokens and party (only to notice a change), relayOnly, log; optionally senses(item) ->
+// {dark} (else the room's PARTY_SENSES_KEY by the PC's name).
 //
 // Everything drawn here is LOCAL (OBR.scene.local): nothing is saved in the room, and no write of
-// ours fires scene.items.onChange (which would start Smoke's full run on every client). The one
-// exception is the torch guard at the end (GM screens, one GM at a time).
+// ours fires scene.items.onChange (which would start Smoke's full run on every client).
 //
 // A flame is one STANDALONE effect, two reaches wide, centred on the item and attached to it, so
 // Owlbear moves it with the item and deletes it with the item; it's only updated to put it back
@@ -24,68 +30,68 @@
 // attached to) the only thing keeping a hidden monster's torch off a player's screen: anything of
 // ours that nothing tracks any more (a write that failed) is swept up, and a failed write is tried
 // again. It sits on the ATTACHMENT layer with a small fixed z-index: above the tokens, under the
-// fog, so the fog hides it wherever nobody sees.
+// fog, so the fog hides it wherever nobody sees. A flame is never drawn for the invisible child
+// item that carries a lit NPC's torchlight for Smoke (CARRIER_KEY): the NPC's own light is.
 //
 // A flame stops at walls: the Smoke & Spectre lines that block (walls, closed doors; not windows,
 // not open doors) within its reach go into its uniforms (WALL_SLOTS of them, the nearest), as
 // segments in the flame's own square, so its glow doesn't spill into the next room. They're
 // measured from where the light stands, so a carried torch gets them again (one uniforms update)
 // once it has moved a quarter of a square, or when a wall near it changes (a door opens).
-// Flames that overlap flicker less, each by 1/sqrt(how many reach it), so a crowd of torches
-// doesn't add up to a flicker past the projector's 10% budget.
+// Flames that overlap never add up (brighter, or a stacked flicker): each draws only where it's
+// the strongest light (its neighbours are in its uniforms), so five torches together light more
+// of the map, never more brightly, and each pixel flickers with one light only.
 //
-// The darkvision ring (table screen only): Smoke keeps a LOCAL grey ring (an effect with blend
-// SATURATION) on each token whose darkvision reaches past its sight, and greys the whole ring,
-// even where another token's sight or a torch lights it. We draw ours with the same size, place
-// and layer, attached to the same token, with up to 8 lit circles left in colour, and hide
-// Smoke's (visible = false sticks: Smoke never writes `visible` on its rings, it only re-creates
-// them with new ids, so every local change is checked). Only ever a ring we draw a replacement
-// for: one whose token this screen can't show yet (a hidden PC before the heartbeat names it)
-// keeps Smoke's grey ring, and one we hid earlier that loses its replacement is shown again.
-// Smoke's rings are never deleted (it would just make them again) and its LIGHT items are never
-// touched (it rewrites their visible). Only the table listens to local changes (each one hands
-// this page every local item, shaders and all), and only while it draws.
-import { LIGHT_FX_KEY, SMOKE } from "../keys.js?v=b6b85c2-d73ac97";
-import { FLAME_BLEND, WALL_SLOTS, darkvisionShader, darkvisionUniforms, flameShader, flameUniforms } from "./lights.js?v=b6b85c2-d73ac97";
-import { applyLight, lightChanges, lightOf } from "./lightmeta.js?v=b6b85c2-d73ac97";
-import { finite, gridOf, rotate } from "./place.js?v=b6b85c2-d73ac97";
-import { customUniforms, fillUniforms } from "./shaders.js?v=b6b85c2-d73ac97";
+// Darkness comes from light (docs/lights-darkness-spec.md): two LOCAL effects per screen, not
+// attached to anything, over the box around every dim and dark area (fx/darkness.js: a marked
+// map, else the scene's darkness; unmarked = lit): one grey pass (blend SATURATION), one dim pass
+// (blend MULTIPLY). Per point (fx/lights.js darknessPlan): lit as painted; dim a little darker
+// outside every light; dark in colour within a light's reach, grey and dim within a public seer's
+// darkvision, else black (0.35 on a GM's screen, so the DM can still read the map); never on a
+// PC's own mini (the overlay sits above the tokens: the players always see their own minis, a
+// monster in the dark stays in the black; selfDisc below). The lights
+// that count: every light this screen shows (R1) and the DM's own ambient lights (a hidden Smoke
+// torch we never wrote, fx/darkness.js isAmbientLight: no flame on a player's screen). Both passes
+// read the same mask, so nothing is greyed or dimmed twice where things overlap. They're drawn on EVERY
+// kind of screen whatever the flame tier, the 🔥 Lights switch, ✨ Effects or DND_FX=0: once
+// Smoke draws no ring, a screen without ours would show every band in full colour. They sit on
+// ATTACHMENT at z-index DV_Z, under the flames and every attachment (Colored Rings, condition
+// badges: auto z-indexes are timestamps), so the tokens grey and the target rings keep their
+// colour; and under the FOG layer: on a player's screen the fog covers them wherever nobody
+// sees, and on a GM's screen the translucent fog tints over them the same way it tints the map.
+// Their uniforms are worked out again on EVERY item change, at once (cheap arithmetic, one
+// local update): a carried torch's colour moves with the drag; the flames and walls wait for the
+// scene to settle.
+import { CARRIER_KEY, LIGHT_FX_KEY, PARTY_SENSES_KEY, SCENE_LIGHTING_KEY, SMOKE } from "../keys.js?v=585985a-dc1dbb6";
+import { DV_DARK_BLEND, DV_GREY, DV_SOFT_FT, FLAME_BLEND, WALL_SLOTS, darknessPlan, darkvisionShader, dimFor,
+  flameShader, flameUniforms } from "./lights.js?v=585985a-dc1dbb6";
+import { ambientReach, darkRegions, isAmbientLight, mapsExtent, sceneDarkness } from "./darkness.js?v=585985a-dc1dbb6";
+import { DEFAULT_LIGHTING, effectiveLight, lightingOf, rangeDefaultOf, visionOf } from "./lightmeta.js?v=585985a-dc1dbb6";
+import { nameKey, pcName, tokenLabel } from "./pcs.js?v=585985a-dc1dbb6";
+import { finite, footprint, gridOf } from "./place.js?v=585985a-dc1dbb6";
+import { customUniforms, fillUniforms } from "./shaders.js?v=585985a-dc1dbb6";
 
 export const MAX_FLAMES = 12; // flames per screen: each full one makes Owlbear redraw every frame
 export const LIGHT_Z = 1; // on ATTACHMENT: above the tokens, under rings and badges (auto z-indexes are timestamps)
-const SETTLE_MS = 150; // scene changes: reconcile once they've settled (a drag fires many)
+export const DV_Z = 0; // the darkvision passes: on ATTACHMENT under the flames (a lit pixel is never grey anyway)
+const SETTLE_MS = 150; // scene changes: the flames are reconciled once they've settled (a drag fires many)
 const RETRY_MS = 2000; // a local write that failed is tried again after this (then longer)
 const MAX_PX = 40000;
 const WALL_MOVE = 0.05; // squares a carried light moves before its walls are measured again (shadows stay within 3 in.)
 const TIERS = ["full", "lite", "off"];
-const RING_KEY = `${SMOKE}/isDarkVision`; // on Smoke's local darkvision ring
-const VISION_LIGHT_KEY = `${SMOKE}/isVisionLight`; // on Smoke's local light for a vision token
 const SK = (name) => `${SMOKE}/${name}`;
 const LINE_KEY = SK("isVisionLine"); // on a Smoke & Spectre line (wall, door, window) in the scene
-// Our ring follows the token; nothing of the token's own visibility, size or turn carries over.
+// A flame follows its item; nothing of the item's own visibility, size or turn carries over.
 const DETACHED = ["VISIBLE", "SCALE", "ROTATION", "COPY"];
 
-const isSmokeRing = (i) => i?.metadata?.[RING_KEY] === true;
-const isSmokeLight = (i) => i?.metadata?.[VISION_LIGHT_KEY] === true;
-const toInt = (v) => {
-  const n = parseInt(String(v ?? ""), 10);
-  return Number.isFinite(n) ? n : null;
-};
-// One uniform's value on an effect item ([{name, value}]), or null.
-function uniformOf(item, name) {
-  for (const u of item?.uniforms || []) if (u?.name === name) return typeof u.value === "number" ? u.value : null;
-  return null;
-}
-// The middle of Smoke's ring on the map. Owlbear turns (and scales) an effect about its
-// `position`, its top-left corner, so a ring that turned with its token has its position swung
-// round while its middle stays on the token.
-function ringCentre(r) {
-  const sx = finite(r.scale?.x) ? r.scale.x : 1, sy = finite(r.scale?.y) ? r.scale.y : 1;
-  const c = rotate({ x: (r.width / 2) * sx, y: (r.height / 2) * sy }, finite(r.rotation) ? r.rotation : 0);
-  return { x: r.position.x + c.x, y: r.position.y + c.y };
-}
 // A uniform list as a string, to tell whether it changed (numbers to 4 places).
 const uniformSig = (u) => JSON.stringify(u, (k, v) => (typeof v === "number" ? Math.round(v * 1e4) / 1e4 : v));
+const isCarrier = (i) => !!i?.metadata?.[CARRIER_KEY];
+
+// The contract's pure functions (fx/lightmeta.js): which light an item gives, how a token sees,
+// the scene's lighting (SCENE_LIGHTING_KEY, defaults filled in) and Smoke's default sight.
+export { effectiveLight, visionOf };
+const sceneLighting = (sceneMeta) => lightingOf(sceneMeta?.[SCENE_LIGHTING_KEY]);
 
 // ---- walls ----
 
@@ -183,6 +189,101 @@ export function seedOf(id) {
   return 1 + ((h >>> 0) % 6400) / 100;
 }
 
+// ---- who's public, and what darkvision a screen draws ----
+
+// R1, as every screen asks it: would a player's screen show this item? Hidden itself, or through
+// what it's attached to (unless it doesn't take its parent's visibility); a PC is always public,
+// whatever it's attached to. `byId`: the scene's items (its parents); attached deeper than 8, or
+// in a loop: not public (fail closed).
+export function publicChain(item, byId, { isPc, isPublic } = {}) {
+  let i = item;
+  for (let n = 0; n < 8; n++) {
+    if (!i) return false;
+    if (isPc?.(i)) return true;
+    let pub;
+    try {
+      pub = typeof isPublic === "function" ? !!isPublic(i.id, i) : i.visible !== false;
+    } catch (e) {
+      return false;
+    }
+    if (!pub) return false;
+    const up = i.attachedTo;
+    const own = Array.isArray(i.disableAttachmentBehavior) && i.disableAttachmentBehavior.includes("VISIBLE");
+    if (up == null || own || !byId) return true;
+    i = byId.get(up);
+    if (!i) return true; // the parent is gone (Owlbear deletes its attachments with it)
+  }
+  return false;
+}
+
+// Where a dim or dark SCENE's overlay goes: every map, else 120 ft around every token.
+export function extentOf(items, grid) {
+  const maps = mapsExtent(items, grid);
+  if (maps) return maps;
+  let e = null;
+  const pad = 120 * (grid?.pxPerFt || 30); // (no map: 120 ft around every token)
+  for (const i of items || []) {
+    const p = i?.position && { x: Math.round(i.position.x), y: Math.round(i.position.y) }; // (a nudge under a pixel moves nothing)
+    if (!p || !finite(p.x, p.y)) continue;
+    e = e ? { x0: Math.min(e.x0, p.x - pad), y0: Math.min(e.y0, p.y - pad), x1: Math.max(e.x1, p.x + pad), y1: Math.max(e.y1, p.y + pad) }
+      : { x0: p.x - pad, y0: p.y - pad, x1: p.x + pad, y1: p.y + pad };
+  }
+  return e;
+}
+
+// The overlay's inputs on one screen (scene pixels, feet), for fx/lights.js darknessPlan():
+//   regions (fx/darkness.js darkRegions), extent, lights: every light this screen shows (`show`:
+//   its R1; a GM's shows all) and every ambient light of the DM's (its Smoke range), never a
+//   carrier child (its NPC's own light counts); seers: every PUBLIC seer with darkvision (the same
+//   on every screen); selves: every PC's own mini (selfDisc), which the darkness never covers.
+//   opts: {sceneMeta, lighting, grid {dpi, ftPerCell}, vctx (visionOf's ctx), pub (publicChain's),
+//   show(item, byId)}.
+// A scene released to Smoke (SCENE_LIGHTING_KEY managed false): null (Smoke draws its own there).
+export function darkInputs(items, { sceneMeta = {}, lighting, grid, vctx, pub, show } = {}) {
+  if (lightingOf(lighting ?? sceneMeta?.[SCENE_LIGHTING_KEY]).managed === false) return null;
+  const byId = new Map();
+  for (const i of items || []) if (i?.id != null) byId.set(i.id, i);
+  const list = [...byId.values()];
+  const seers = [], lights = [], selves = [];
+  const dpi = gridOf(grid?.dpi, grid?.ftPerCell).dpi;
+  const pcOf = (i) => { try { return !!pub?.isPc?.(i); } catch { return false; } };
+  for (const item of list) {
+    if (isCarrier(item) || !finite(item.position?.x, item.position?.y)) continue;
+    const at = { id: item.id, x: item.position.x, y: item.position.y };
+    // a PC's own mini (not a ring or a badge hanging from it): the players always see it
+    if (pcOf(item) && !(item.attachedTo != null && pcOf(byId.get(item.attachedTo)))) {
+      const d = selfDisc(item, dpi);
+      if (d) selves.push({ id: item.id, ...d });
+    }
+    if (isAmbientLight(item, { lighting, byId, isPc: pub?.isPc, isSecret: (i) => !publicChain(i, byId, pub) })) {
+      const reach = ambientReach(item, lighting);
+      if (reach) lights.push({ ...at, reach });
+      continue;
+    }
+    const l = effectiveLight(item, lighting);
+    if (l && l.reach > 0 && (show ? show(item, byId) : publicChain(item, byId, pub))) lights.push({ ...at, reach: l.reach });
+    if (!publicChain(item, byId, pub)) continue;
+    const v = visionOf(item, vctx);
+    if (v?.seer && +v.dark > 0) seers.push({ ...at, dark: +v.dark, pc: !!v.pc });
+  }
+  return { regions: darkRegions(list, sceneMeta, grid), extent: extentOf(list, grid), seers, lights, selves };
+}
+
+// A token's mini as drawn, in scene px: {x, y, r}, its image's centre and half its smaller side
+// (its image over its own grid dpi times the scene's, times its scale: place.js footprint, as
+// background.js sizes its condition badges); a token with no image: half a square times its scale.
+export function selfDisc(item, dpi = 150) {
+  const p = item?.position;
+  if (!p || !finite(p.x, p.y)) return null;
+  const sx = Math.abs(item.scale?.x ?? 1), sy = Math.abs(item.scale?.y ?? 1);
+  const fp = footprint(item, dpi);
+  const img = item.image, k = item.grid?.dpi > 0 ? dpi / item.grid.dpi : 0;
+  const r = fp && img?.width > 0 && img?.height > 0 && k > 0 ? Math.min(img.width * sx, img.height * sy) * k / 2
+    : (dpi / 2) * Math.min(finite(sx) ? sx : 1, finite(sy) ? sy : 1);
+  const c = fp || p;
+  return finite(c.x, c.y, r) && r > 0 ? { x: c.x, y: c.y, r } : null;
+}
+
 function defaultClock() {
   const perf = globalThis.performance;
   return {
@@ -213,7 +314,7 @@ export function createLights(api = {}, ctx = {}) {
   let full = null;
   const loading = (async () => {
     if (api.OBR && typeof api.buildEffect === "function") return api;
-    const sdk = await import("../obr-sdk.js?v=b6b85c2-d73ac97");
+    const sdk = await import("../obr-sdk.js?v=585985a-dc1dbb6");
     return { OBR: sdk.default, buildEffect: sdk.buildEffect, MathM: sdk.MathM, ...api };
   })().then((a) => {
     full = a;
@@ -221,7 +322,7 @@ export function createLights(api = {}, ctx = {}) {
   });
   const getApi = () => loading;
 
-  // ---- settings: the same precedence as the FX engine's tier() ----
+  // ---- settings: the same precedence as the FX engine's tier() (flames only) ----
   let settings = { ...(ctx.settings || {}) };
   const role = () => ctx.role || "PLAYER";
   const kind = () => settings.kind || ctx.kind || (role() === "GM" ? "gm" : "other");
@@ -233,44 +334,59 @@ export function createLights(api = {}, ctx = {}) {
     const q = settings.quality?.[kind()];
     return TIERS.includes(q) ? q : "full";
   }
-  const mode = () => `${tier()}|${kind() === "table"}`;
+  const mode = () => `${tier()}|${kind()}`;
 
-  // R1: on a screen that isn't a GM's, a hidden item that isn't a PC is never drawn and never
-  // gives away where it is. The item itself is passed, so its own `visible` decides. An item
-  // attached to a hidden one (a torch prop on a hidden monster) is hidden with it on a player's
-  // screen unless it doesn't take its parent's visibility, so with the scene's items (`byId`)
-  // its parents decide too; a PC is always public, whatever it's attached to.
-  function isPublicItem(item) {
-    if (ctx.pcTokens?.has?.(item.id)) return true;
+  // Is this item a PC? The one rule (ctx.isPc, fx/pcs.js); a ctx without it knows the heartbeat's list.
+  const isPc = (item) => {
     try {
-      if (typeof ctx.isPublic === "function") return !!ctx.isPublic(item.id, item);
+      if (typeof ctx.isPc === "function") return !!ctx.isPc(item?.id, item);
     } catch (e) { return false; }
-    return item.visible !== false;
-  }
+    return !!ctx.pcTokens?.has?.(item?.id);
+  };
+  const pub = { isPc, isPublic: typeof ctx.isPublic === "function" ? (...a) => ctx.isPublic(...a) : null };
+  // R1: on a screen that isn't a GM's, a hidden item that isn't a PC is never drawn and never
+  // gives away where it is.
+  const isPublicChain = (item, byId) => publicChain(item, byId, pub);
   const shows = (item, byId = null) => role() === "GM" || isPublicChain(item, byId);
-  // Would a player's screen show this item? (Whoever's screen this is: the torch guard asks it
-  // on a GM's.)
-  function isPublicChain(item, byId) {
-    let i = item;
-    for (let n = 0; n < 8; n++) {
-      if (!i || !isPublicItem(i)) return false;
-      if (ctx.pcTokens?.has?.(i.id)) return true;
-      const up = i.attachedTo;
-      const own = Array.isArray(i.disableAttachmentBehavior) && i.disableAttachmentBehavior.includes("VISIBLE");
-      if (up == null || own || !byId) return true;
-      i = byId.get(up);
-      if (!i) return true; // the parent is gone (Owlbear deletes its attachments with it)
+  const pcSignature = () => `${[...(ctx.pcTokens || [])].map(String).sort().join(",")}|${(ctx.party || []).join(",")}`;
+
+  // ---- the scene's lighting and the party's senses ----
+  let lighting = { ...DEFAULT_LIGHTING };
+  let sceneMeta = {};
+  let rangeDefault = 30;
+  let roomSenses = {};
+  const sensesOf = (item) => {
+    if (typeof ctx.senses === "function") {
+      try { return ctx.senses(item) || null; } catch (e) { return null; }
     }
-    return false; // attached that deep (or in a loop): fail closed
+    if (!isPc(item)) return null;
+    const s = roomSenses[nameKey(pcName(item, ctx.party || []) || tokenLabel(item))];
+    return s && typeof s === "object" ? s : null;
+  };
+  const vctx = { isPc, senses: sensesOf, get lighting() { return lighting; }, get rangeDefault() { return rangeDefault; } };
+  const metaSig = () => JSON.stringify([lighting, sceneDarkness(sceneMeta), rangeDefault, roomSenses]);
+  function takeScene(meta) {
+    const before = metaSig();
+    sceneMeta = meta && typeof meta === "object" ? meta : {};
+    lighting = sceneLighting(meta);
+    rangeDefault = rangeDefaultOf(meta);
+    return metaSig() !== before;
   }
-  const pcSignature = () => [...(ctx.pcTokens || [])].map(String).sort().join(",");
+  function takeRoom(meta) {
+    const before = metaSig();
+    const s = meta?.[PARTY_SENSES_KEY];
+    roomSenses = s && typeof s === "object" ? s : {};
+    return metaSig() !== before;
+  }
 
   // ---- what's drawn ----
   // source item id -> {id, sig, at (where the light stood when its walls were measured), wkey
-  // (which walls), amp, usig (its uniforms as last written)}
+  // (which walls), nkey (which neighbours, where), usig (its uniforms as last written)}
   const flames = new Map();
-  const rings = new Map(); // Smoke ring id -> {id, src (its token), key, geo, usig}
-  const hid = new Set(); // Smoke rings hidden while this screen is the table (ours to show again)
+  // the darkvision passes: part ("grey" | "dim") -> {id, geo, usig}
+  const dv = new Map();
+  let dvInfo = { seers: 0, circles: 0, regions: 0, selves: 0, dropped: { regions: 0, seers: 0, circles: 0, selves: 0 } };
+  let dvSaid = "";
   const wallsSaid = new Set(); // flames whose walls past WALL_SLOTS were logged already
   // The items this screen showed at the last scene change it looked at (null: none yet, or a
   // GM's screen): one that was shown and isn't now has its light taken off at once.
@@ -287,10 +403,8 @@ export function createLights(api = {}, ctx = {}) {
   let G = null; // the grid: {dpi, ftPerCell, pxPerFt}
   let gridStale = true;
   let latest = null; // the newest scene items scene.items.onChange gave us
-  let smokeSeen = ""; // Smoke's local items as last seen (the table's short-circuit)
   let pcSig = pcSignature();
   let unsubs = [];
-  let offLocal = null; // the table's scene.local.onChange subscription, while it draws
   let debounce = null;
 
   async function gridNow(OBR) {
@@ -317,7 +431,7 @@ export function createLights(api = {}, ctx = {}) {
     const sksl = flameShader(t);
     if (!flameDecl[t]) flameDecl[t] = customUniforms(sksl);
     return fillUniforms(flameDecl[t], flameUniforms(w.light.kind,
-      { seed: seedOf(w.item.id), ftPerCell: G.ftPerCell, ampScale: w.amp, walls: w.walls }), warn);
+      { seed: seedOf(w.item.id), ftPerCell: G.ftPerCell, walls: w.walls, neighbours: w.neighbours }), warn);
   }
 
   function flameItem(a, w, t) {
@@ -340,42 +454,61 @@ export function createLights(api = {}, ctx = {}) {
       .build();
   }
 
-  const DARK = darkvisionShader();
-  const DARK_DECL = customUniforms(DARK);
+  const DV = darkvisionShader();
+  const DV_DECL = customUniforms(DV);
+  const DV_PARTS = { grey: { blend: DV_GREY.blend, pass: 0 }, dim: { blend: DV_DARK_BLEND, pass: 1 } };
 
-  function ringItem(a, w) {
-    const r = w.r;
+  function dvItem(a, part, plan, uniforms) {
+    const b = plan.box;
     return a.buildEffect()
       .effectType("STANDALONE")
-      .sksl(DARK)
-      .uniforms(w.uniforms)
-      .blendMode("SATURATION")
-      .width(w.w).height(w.h)
-      .position({ ...w.at }) // unturned, around the middle of Smoke's ring
-      .attachedTo(r.attachedTo)
-      .disableAttachmentBehavior(DETACHED)
-      .layer(r.layer || "POPOVER").zIndex(finite(r.zIndex) ? r.zIndex : clock.wall()).disableAutoZIndex(true)
+      .sksl(DV)
+      .uniforms(uniforms)
+      .blendMode(DV_PARTS[part].blend)
+      .width(b.w).height(b.h)
+      .position({ x: b.x, y: b.y })
+      .layer("ATTACHMENT").zIndex(DV_Z).disableAutoZIndex(true)
       .locked(true).disableHit(true)
-      .name("dnd-npc darkvision")
-      .metadata({ [LIGHT_FX_KEY]: { source: r.attachedTo, host, part: "ring", ring: r.id } })
+      .name(`dnd-npc darkvision ${part}`)
+      .metadata({ [LIGHT_FX_KEY]: { source: "darkvision", host, part } })
       .build();
   }
 
-  // Make what's on this screen match the scene: the flames, and on the table the rings. Writes
-  // only what differs (at most one local update, one delete and one add), so a change that comes
-  // back to us through scene.local.onChange finds nothing to do.
-  async function doReconcile() {
+  // What darkness this screen draws now (docs/lights-darkness-spec.md): null, or {plan, uniforms:
+  // {grey, dim}}. Released to Smoke: nothing of ours (Smoke's own ring; the flames stay).
+  const noDv = () => ({ seers: 0, circles: 0, regions: 0, selves: 0, dropped: { regions: 0, seers: 0, circles: 0, selves: 0 } });
+  function dvWant(all) {
+    const inp = darkInputs(all, { sceneMeta, lighting, grid: G, vctx, pub, show: shows });
+    const plan = inp && darknessPlan(inp, { pxPerFt: G.pxPerFt, softFt: DV_SOFT_FT, quant: 1, kind: kind() });
+    dvInfo = plan ? { seers: plan.seers.length, circles: plan.circles, regions: plan.regions, selves: plan.selves.length, dropped: plan.dropped } : noDv();
+    const d = dvInfo.dropped;
+    const said = `${d.regions}|${d.seers}|${d.circles}|${d.selves}`;
+    if (said !== dvSaid) {
+      dvSaid = said;
+      if (d.regions || d.seers || d.circles || d.selves) {
+        log(`lights: the darkness has room for 12 marked maps, 8 darkvisions, 32 lights and 8 PC minis; left out here: ${d.regions} maps, ${d.seers} darkvisions, ${d.circles} lights, ${d.selves} PC minis`);
+      }
+    }
+    if (!plan) return null;
+    const uniforms = {};
+    for (const part of Object.keys(DV_PARTS)) uniforms[part] = fillUniforms(DV_DECL, { ...plan.values, pass: DV_PARTS[part].pass }, warn);
+    return { plan, uniforms };
+  }
+
+  // Make what's on this screen match the scene: the flames (unless `dark` only) and the
+  // darkvision. Writes only what differs (at most one local delete, one add and one update).
+  async function doReconcile({ darkOnly = false } = {}) {
     const t = tier();
-    const draw = active && sceneReady && t !== "off";
-    const table = draw && kind() === "table";
-    if (!draw && !flames.size && !rings.size && !hid.size && !orphans) {
+    const live = active && sceneReady && !ctx.relayOnly;
+    const draw = live && t !== "off"; // the flames
+    if (!live && !flames.size && !dv.size && !orphans) {
       noteDropped([]);
       return { added: 0, removed: 0, updated: 0 };
     }
     const a = await getApi();
     const OBR = a.OBR;
     let all = [];
-    if (draw) {
+    if (live) {
       if (!latest) {
         latest = await OBR.scene.items.getItems();
         if (role() !== "GM" && !seen) seen = shownNow(latest).ids;
@@ -386,228 +519,169 @@ export function createLights(api = {}, ctx = {}) {
         gridStale = false;
       }
     }
-    // Smoke's rings and lights on this client, and what of ours is still there (a flame goes
-    // with its item when the item is deleted)
-    const local = await OBR.scene.local.getItems((i) => isSmokeRing(i) || isSmokeLight(i)
-      || i?.metadata?.[LIGHT_FX_KEY]?.host === host);
+    // what of ours is still there (a flame goes with its item when the item is deleted)
+    const local = await OBR.scene.local.getItems((i) => i?.metadata?.[LIGHT_FX_KEY]?.host === host);
     const here = new Set(local.map((i) => i.id));
+    const localById = new Map(local.map((i) => [i.id, i]));
     const byId = new Map(all.map((i) => [i.id, i]));
-    const pcs = ctx.pcTokens || new Set();
 
-    // ---- flames: every light this screen may see, the PCs' first, at most MAX_FLAMES ----
-    const shown = [];
-    const want = new Map(); // source id -> {item, light, S, sig, amp, walls, wkey}
-    if (draw) {
-      all.forEach((item, n) => {
-        const light = lightOf(item?.metadata);
-        if (!light || !(light.reach > 0) || !finite(item.position?.x, item.position?.y)) return;
-        if (!shows(item, byId)) return;
-        shown.push({ item, light, pc: pcs.has(item.id), n });
-      });
-      const order = [...shown].sort((x, y) => (x.pc === y.pc ? x.n - y.n : x.pc ? -1 : 1));
-      for (const c of order.slice(0, MAX_FLAMES)) {
-        const S = Math.min(c.light.reach * 2 * G.pxPerFt, MAX_PX);
-        if (!finite(S) || S <= 0) continue;
-        want.set(c.item.id, { ...c, S, sig: `${c.light.kind}|${t}|${Math.round(S)}|${G.ftPerCell}` });
-      }
-      noteDropped(order.slice(MAX_FLAMES));
-      // Overlapping flames add their flicker up: each flickers by 1/sqrt(n), n = itself and every
-      // other flame here whose centre is within its reach
-      const drawn = [...want.values()];
-      for (const w of drawn) {
-        let n = 1;
-        for (const o of drawn) {
-          if (o !== w && Math.hypot(o.item.position.x - w.item.position.x, o.item.position.y - w.item.position.y) <= w.S / 2) n++;
-        }
-        w.amp = 1 / Math.sqrt(n);
-      }
-      // ...and each stops at the walls within its reach
-      if (drawn.length && !a.MathM) warn("lights: no MathM here, so flames ignore walls");
-      const segs = drawn.length ? lightWalls(all, a.MathM) : [];
-      for (const w of drawn) {
-        const fw = flameWalls(w.item.position, w.S / 2, segs);
-        w.walls = fw.walls;
-        w.wkey = fw.key;
-        if (fw.over > 0 && !wallsSaid.has(w.item.id)) {
-          wallsSaid.add(w.item.id);
-          log(`lights: ${w.item.name || w.item.id} has ${fw.over + WALL_SLOTS} walls within reach; only the nearest ${WALL_SLOTS} stop its light`);
-        }
-      }
-    } else {
-      noteDropped([]);
-    }
-    const del = [], add = [], addedFlames = [], addedRings = [];
-    // item id -> [(draft) => void]: every change to one of ours (or to Smoke's ring) in one update
+    const del = [], add = [], addedFlames = [], addedDv = [];
+    // item id -> [(draft) => void]: every change to one of ours in one update
     const upd = new Map();
     const change = (id, f) => {
       const l = upd.get(id);
       if (l) l.push(f);
       else upd.set(id, [f]);
     };
-    const localById = new Map(local.map((i) => [i.id, i]));
-    for (const [sid, f] of flames) {
-      const w = want.get(sid);
-      if (w && w.sig === f.sig && here.has(f.id)) {
-        // Owlbear moves a flame with its item, but one added just as the item moved (built from
-        // where it was) would stay off it for good: put it back on its item
-        const cur = localById.get(f.id)?.position;
-        const at = { x: w.item.position.x - w.S / 2, y: w.item.position.y - w.S / 2 };
-        if (cur && finite(cur.x, cur.y) && Math.hypot(cur.x - at.x, cur.y - at.y) > 1) change(f.id, (d) => { d.position = at; });
-        // Its walls are measured again once it has moved a quarter of a square (a carried torch)
-        // or a wall near it changed (a door opened), and its flicker when a flame came or went
-        // near it; written only when that changes its uniforms (a torch carried down an empty
-        // hall writes nothing).
-        const pos = { ...w.item.position };
-        const moved = !f.at || Math.hypot(pos.x - f.at.x, pos.y - f.at.y) > WALL_MOVE * G.dpi;
-        if (moved || w.wkey !== f.wkey || w.amp !== f.amp) {
-          const uniforms = flameValues(w, t);
-          const usig = uniformSig(uniforms);
-          f.at = pos;
-          f.wkey = w.wkey;
-          f.amp = w.amp;
-          if (usig !== f.usig) {
-            f.usig = usig;
-            change(f.id, (d) => { d.uniforms = uniforms; });
+
+    // ---- flames: every light this screen may see, the PCs' first, at most MAX_FLAMES ----
+    if (!darkOnly) {
+      const shown = [];
+      const want = new Map(); // source id -> {item, light, S, sig, walls, wkey, neighbours, nkey}
+      if (draw) {
+        all.forEach((item, n) => {
+          if (isCarrier(item) || !finite(item?.position?.x, item?.position?.y)) return;
+          const light = effectiveLight(item, lighting);
+          if (!light || !(light.reach > 0)) return;
+          if (!shows(item, byId)) return;
+          shown.push({ item, light, pc: isPc(item), n });
+        });
+        const order = [...shown].sort((x, y) => (x.pc === y.pc ? x.n - y.n : x.pc ? -1 : 1));
+        for (const c of order.slice(0, MAX_FLAMES)) {
+          const S = Math.min(c.light.reach * 2 * G.pxPerFt, MAX_PX);
+          if (!finite(S) || S <= 0) continue;
+          want.set(c.item.id, { ...c, S, sig: `${c.light.kind}|${t}|${Math.round(S)}|${G.ftPerCell}` });
+        }
+        noteDropped(order.slice(MAX_FLAMES));
+        // Overlapping lights never add up: each flame knows the others drawn here whose reach
+        // overlaps its own, and draws only where it's the strongest (fx/lights.js), so every pixel
+        // has one light and one flicker. Their places in steps of WALL_MOVE squares (a carried
+        // torch rewrites its neighbours' uniforms as it goes, like its walls).
+        const drawn = [...want.values()];
+        const step = Math.max(WALL_MOVE * G.dpi, 1);
+        for (const w of drawn) {
+          const nb = [];
+          for (const o of drawn) {
+            if (o === w) continue;
+            const dx = Math.round((o.item.position.x - w.item.position.x) / step) * step;
+            const dy = Math.round((o.item.position.y - w.item.position.y) / step) * step;
+            if (Math.hypot(dx, dy) >= (w.S + o.S) / 2) continue;
+            nb.push({ dx: dx / G.pxPerFt, dy: dy / G.pxPerFt, kind: o.light.kind, id: o.item.id });
+          }
+          w.neighbours = nb;
+          w.nkey = nb.map((n) => `${n.id}:${n.kind}:${Math.round(n.dx * 10)},${Math.round(n.dy * 10)}`).sort().join(";");
+        }
+        // ...and each stops at the walls within its reach
+        if (drawn.length && !a.MathM) warn("lights: no MathM here, so flames ignore walls");
+        const segs = drawn.length ? lightWalls(all, a.MathM) : [];
+        for (const w of drawn) {
+          const fw = flameWalls(w.item.position, w.S / 2, segs);
+          w.walls = fw.walls;
+          w.wkey = fw.key;
+          if (fw.over > 0 && !wallsSaid.has(w.item.id)) {
+            wallsSaid.add(w.item.id);
+            log(`lights: ${w.item.name || w.item.id} has ${fw.over + WALL_SLOTS} walls within reach; only the nearest ${WALL_SLOTS} stop its light`);
           }
         }
-        continue;
+      } else {
+        noteDropped([]);
       }
-      if (here.has(f.id)) del.push(f.id);
-      flames.delete(sid);
-    }
-    for (const [sid, w] of want) {
-      if (flames.has(sid)) continue;
-      try {
-        w.uniforms = flameValues(w, t);
-        const item = flameItem(a, w, t);
-        flames.set(sid, { id: item.id, sig: w.sig, at: { ...w.item.position }, wkey: w.wkey, amp: w.amp, usig: uniformSig(w.uniforms) });
-        add.push(item);
-        addedFlames.push(sid);
-      } catch (e) {
-        warn("lights: a flame could not be built", e);
+      for (const [sid, f] of flames) {
+        const w = want.get(sid);
+        if (w && w.sig === f.sig && here.has(f.id)) {
+          // Owlbear moves a flame with its item, but one added just as the item moved (built from
+          // where it was) would stay off it for good: put it back on its item
+          const cur = localById.get(f.id)?.position;
+          const at = { x: w.item.position.x - w.S / 2, y: w.item.position.y - w.S / 2 };
+          if (cur && finite(cur.x, cur.y) && Math.hypot(cur.x - at.x, cur.y - at.y) > 1) change(f.id, (d) => { d.position = at; });
+          // Its walls are measured again once it has moved a quarter of a square (a carried torch)
+          // or a wall near it changed (a door opened), and its flicker when a flame came or went
+          // near it; written only when that changes its uniforms (a torch carried down an empty
+          // hall writes nothing).
+          const pos = { ...w.item.position };
+          const moved = !f.at || Math.hypot(pos.x - f.at.x, pos.y - f.at.y) > WALL_MOVE * G.dpi;
+          if (moved || w.wkey !== f.wkey || w.nkey !== f.nkey) {
+            const uniforms = flameValues(w, t);
+            const usig = uniformSig(uniforms);
+            f.at = pos;
+            f.wkey = w.wkey;
+            f.nkey = w.nkey;
+            if (usig !== f.usig) {
+              f.usig = usig;
+              change(f.id, (d) => { d.uniforms = uniforms; });
+            }
+          }
+          continue;
+        }
+        if (here.has(f.id)) del.push(f.id);
+        flames.delete(sid);
+      }
+      for (const [sid, w] of want) {
+        if (flames.has(sid)) continue;
+        try {
+          w.uniforms = flameValues(w, t);
+          const item = flameItem(a, w, t);
+          flames.set(sid, { id: item.id, sig: w.sig, at: { ...w.item.position }, wkey: w.wkey, nkey: w.nkey, usig: uniformSig(w.uniforms) });
+          add.push(item);
+          addedFlames.push(sid);
+        } catch (e) {
+          warn("lights: a flame could not be built", e);
+        }
       }
     }
 
-    // ---- the table's darkvision rings ----
-    const smokeRings = local.filter(isSmokeRing);
-    if (table) {
-      // hidden already (by us, before a reload): ours to show again unless ours replaces it
-      for (const r of smokeRings) if (r.visible === false) hid.add(r.id);
-    }
-    const wantRings = new Map(); // Smoke ring id -> {r, w, h, key, geo, uniforms, usig}
-    if (table) {
-      for (const r of smokeRings) {
-        const tok = byId.get(r.attachedTo);
-        if (!tok || !shows(tok, byId)) continue;
-        const w = Number(r.width), h = Number(r.height);
-        if (!finite(w, h, r.position?.x, r.position?.y) || w <= 0 || h <= 0) continue;
-        const c = ringCentre(r);
-        if (!finite(c.x, c.y)) continue;
-        wantRings.set(r.id, { r, tok, w, h, c, at: { x: c.x - w / 2, y: c.y - h / 2 },
-          key: `${r.layer}|${r.zIndex}|${r.attachedTo}`, geo: `${w}x${h}` });
-      }
-    }
-    if (wantRings.size) {
-      // The lit circles: every Smoke light on another public token (its sight), and every public
-      // light's whole reach; one per token, the bigger. Positions in steps of half a foot, so a
-      // token nudged by a pixel writes nothing.
-      const q = Math.max(0.5 * G.pxPerFt, 1);
-      const Q = (v) => Math.round(v / q) * q;
-      const circles = new Map(); // token id -> {x, y, r}
-      const put = (tok, r) => {
-        if (!(r > 0) || !finite(tok.position?.x, tok.position?.y)) return;
-        const had = circles.get(tok.id);
-        if (!had || had.r < r) circles.set(tok.id, { x: Q(tok.position.x), y: Q(tok.position.y), r });
-      };
-      for (const l of local) {
-        if (!isSmokeLight(l) || l.attachedTo == null) continue;
-        const tok = byId.get(l.attachedTo);
-        if (!tok || !shows(tok, byId)) continue;
-        const m = l.metadata;
-        const ft = m[SK("visionBlind")] === true ? 0 : toInt(m[SK("visionRange")]);
-        put(tok, (ft || 0) * G.pxPerFt);
-      }
-      for (const c of shown) put(c.item, c.light.reach * G.pxPerFt);
-      for (const [, w] of wantRings) {
-        // the lit circles are measured from the ring's own middle (what the shader draws about),
-        // wherever Smoke put it on the token
-        const cx = Q(w.c.x);
-        const cy = Q(w.c.y);
-        const darkPx = w.w / 2;
-        const clear = uniformOf(w.r, "clear");
-        const sightPx = clear != null ? clear * w.w : (toInt(w.tok.metadata?.[SK("visionRange")]) || 0) * G.pxPerFt;
-        const lits = [];
-        for (const [id, c] of circles) {
-          // inside its own sight anyway (give or take Smoke's rounding: clear * width comes back
-          // a hair under the range, and the token's own sight would take the first lit slot)
-          if (id === w.tok.id && c.r <= sightPx + 1) continue;
-          lits.push({ dx: c.x - cx, dy: c.y - cy, r: c.r });
-        }
-        w.uniforms = fillUniforms(DARK_DECL, darkvisionUniforms(sightPx, darkPx, lits, { softFt: 1.5 * G.pxPerFt }), warn);
-        w.usig = uniformSig(w.uniforms);
-      }
-    }
-    for (const [sid, rec] of rings) {
-      const w = wantRings.get(sid);
-      if (w && w.key === rec.key && here.has(rec.id)) continue;
-      if (here.has(rec.id)) del.push(rec.id);
-      rings.delete(sid);
-    }
-    for (const [sid, w] of wantRings) {
-      const rec = rings.get(sid);
-      if (!rec) {
-        try {
-          const item = ringItem(a, w);
-          rings.set(sid, { id: item.id, src: w.tok.id, key: w.key, geo: w.geo, usig: w.usig });
-          add.push(item);
-          addedRings.push(sid);
-        } catch (e) {
-          warn("lights: a darkvision ring could not be built", e);
+    // ---- darkvision: whatever the flame tier ----
+    const dw = live ? dvWant(all) : null;
+    for (const part of Object.keys(DV_PARTS)) {
+      const rec = dv.get(part);
+      if (!dw) {
+        if (rec) {
+          if (here.has(rec.id)) del.push(rec.id);
+          dv.delete(part);
         }
         continue;
       }
-      // Smoke resized its ring (the darkvision changed), or ours isn't on it (added just as the
-      // token moved: both follow the token, so they're compared in the same look at the map)
-      const mine = localById.get(rec.id)?.position;
-      const off = !mine || !finite(mine.x, mine.y) || Math.hypot(mine.x - w.at.x, mine.y - w.at.y) > 1;
-      if (rec.geo !== w.geo || off) {
-        const pos = { ...w.at };
-        change(rec.id, (d) => { d.width = w.w; d.height = w.h; d.position = pos; d.uniforms = w.uniforms; });
-      } else if (rec.usig !== w.usig) {
-        change(rec.id, (d) => { d.uniforms = w.uniforms; });
+      const uniforms = dw.uniforms[part];
+      const usig = uniformSig(uniforms);
+      const b = dw.plan.box;
+      const geo = `${b.x},${b.y},${b.w},${b.h}`;
+      if (!rec || !here.has(rec.id)) {
+        if (rec) dv.delete(part);
+        try {
+          const item = dvItem(a, part, dw.plan, uniforms);
+          dv.set(part, { id: item.id, geo, usig });
+          add.push(item);
+          addedDv.push(part);
+        } catch (e) {
+          warn("lights: darkvision could not be built", e);
+        }
+        continue;
+      }
+      const cur = localById.get(rec.id);
+      const off = !cur || cur.position?.x !== b.x || cur.position?.y !== b.y || cur.width !== b.w || cur.height !== b.h;
+      if (rec.geo !== geo || off) {
+        change(rec.id, (d) => { d.width = b.w; d.height = b.h; d.position = { x: b.x, y: b.y }; d.uniforms = uniforms; });
+      } else if (rec.usig !== usig) {
+        change(rec.id, (d) => { d.uniforms = uniforms; });
       } else continue;
-      rec.geo = w.geo;
-      rec.usig = w.usig;
+      rec.geo = geo;
+      rec.usig = usig;
     }
-    // Smoke's grey ring is hidden only where ours replaces it (drawn already, or added in this
-    // same pass); one we hid that has no replacement any more (its token can't be shown here, or
-    // this screen stopped being the table) is shown again. One that's gone, or that something
-    // else showed already, is simply forgotten.
-    let hide = [];
-    const unhide = [];
-    for (const r of smokeRings) if (rings.has(r.id) && r.visible !== false) hide.push(r.id);
-    for (const id of [...hid]) {
-      if (localById.get(id)?.visible !== false) hid.delete(id);
-      else if (!rings.has(id)) unhide.push(id);
-    }
-    for (const id of hide) change(id, (d) => { d.visible = false; });
-    for (const id of unhide) change(id, (d) => { d.visible = true; });
 
     // Anything of ours (this host's) on the map that nothing here tracks any more: a delete or
     // an add that failed, a scene that kept its local items. It comes off too, so no flame is
     // ever left on a token nobody keeps an eye on (a monster hidden since, for one).
     const kept = new Set();
     for (const f of flames.values()) kept.add(f.id);
-    for (const rec of rings.values()) kept.add(rec.id);
+    for (const rec of dv.values()) kept.add(rec.id);
     const going = new Set(del);
     for (const i of local) {
-      if (i?.metadata?.[LIGHT_FX_KEY]?.host !== host || kept.has(i.id) || going.has(i.id)) continue;
+      if (kept.has(i.id) || going.has(i.id)) continue;
       del.push(i.id);
       going.add(i.id);
     }
 
-    // ---- the writes: what goes first, then what's new, then one update (so Smoke's grey ring
-    // is only hidden once ours is on the map) ----
+    // ---- the writes: what goes first, then what's new, then one update ----
     let failed = false;
     const fail = (what, e) => {
       failed = true;
@@ -626,17 +700,7 @@ export function createLights(api = {}, ctx = {}) {
         await OBR.scene.local.addItems(add);
       } catch (e) {
         for (const sid of addedFlames) flames.delete(sid);
-        for (const sid of addedRings) {
-          rings.delete(sid);
-          upd.delete(sid); // no ring of ours for it: Smoke's isn't hidden...
-          // ...and one we hid before (ours was being made again: Smoke moved its ring to another
-          // z-index, say) is shown again until ours is back, never left hidden with nothing on it
-          if (hid.has(sid) && localById.get(sid)?.visible === false) {
-            change(sid, (d) => { d.visible = true; });
-            unhide.push(sid);
-          }
-        }
-        hide = hide.filter((id) => upd.has(id));
+        for (const part of addedDv) dv.delete(part);
         fail("add", e);
       }
     }
@@ -645,10 +709,8 @@ export function createLights(api = {}, ctx = {}) {
         await OBR.scene.local.updateItems([...upd.keys()], (drafts) => {
           for (const d of drafts) for (const f of upd.get(d.id) || []) f(d);
         });
-        for (const id of hide) hid.add(id);
-        for (const id of unhide) hid.delete(id);
       } catch (e) {
-        for (const rec of rings.values()) if (upd.has(rec.id)) { rec.usig = ""; rec.geo = ""; }
+        for (const rec of dv.values()) if (upd.has(rec.id)) { rec.usig = ""; rec.geo = ""; }
         for (const f of flames.values()) if (upd.has(f.id)) { f.usig = ""; f.at = null; }
         fail("update", e);
       }
@@ -673,9 +735,10 @@ export function createLights(api = {}, ctx = {}) {
   }
 
   // Reconciles run one at a time (a stop can't slip in while an add is on its way), and a
-  // request while one is already waiting is the same request.
+  // request while one is already waiting is the same request (a full one covers a dark one).
   let chain = Promise.resolve();
   let waiting = null;
+  let waitingDark = null;
   function queue(job) {
     const run = chain.then(job);
     chain = run.catch((e) => {
@@ -695,6 +758,18 @@ export function createLights(api = {}, ctx = {}) {
     });
     return waiting;
   }
+  function reconcileDark() {
+    if (waiting) return waiting;
+    if (waitingDark) return waitingDark;
+    waitingDark = queue(() => {
+      waitingDark = null;
+      return doReconcile({ darkOnly: true }).catch((e) => {
+        tryAgain();
+        throw e;
+      });
+    });
+    return waitingDark;
+  }
 
   // The items this screen may show, out of the scene's items.
   function shownNow(items) {
@@ -706,9 +781,9 @@ export function createLights(api = {}, ctx = {}) {
   }
 
   // Something this screen showed just turned secret (the DM hid it, or what it's attached to):
-  // its light, its ring and its lit circle come off now, not after the settle, even while a
-  // reconcile that still saw it shown is on its way (this one queues behind it). Compared with
-  // the last scene change seen, so it costs one pass and only a hide sets it off.
+  // its light comes off now, not after the settle, even while a reconcile that still saw it
+  // shown is on its way (this one queues behind it). Compared with the last scene change seen,
+  // so it costs one pass and only a hide sets it off.
   function turnedSecret(items) {
     if (role() === "GM") return false;
     const before = seen;
@@ -721,7 +796,6 @@ export function createLights(api = {}, ctx = {}) {
     }
     // nothing seen yet: what's drawn here
     for (const id of flames.keys()) if (gone(id)) return true;
-    for (const rec of rings.values()) if (gone(rec.src)) return true;
     return false;
   }
 
@@ -733,54 +807,12 @@ export function createLights(api = {}, ctx = {}) {
       reconcile();
       return;
     }
+    // darkvision at once (a carried torch's colour moves with it), the flames once it settles
+    reconcileDark();
     debounce = clock.setTimeout(() => {
       debounce = null;
       reconcile();
-      guardTorches();
     }, SETTLE_MS);
-  }
-
-  // Smoke's rings and lights as a string, without positions (they follow the tokens). Called on
-  // every local change, ~30 times a second while an effect plays: one pass, and a no-op unless
-  // something of Smoke's came, went or changed.
-  function smokeSig(items) {
-    let s = "";
-    for (const i of items || []) {
-      const m = i?.metadata;
-      if (!m) continue;
-      if (m[RING_KEY] === true) {
-        s += `R${i.id}:${i.visible === false ? 0 : 1}:${i.width}x${i.height}:${i.layer}:${i.zIndex}:${i.attachedTo}:${uniformOf(i, "clear")};`;
-      } else if (m[VISION_LIGHT_KEY] === true) {
-        s += `L${i.id}:${i.attachedTo}:${m[SK("visionRange")]}:${m[SK("visionBlind")] === true ? 1 : 0};`;
-      }
-    }
-    return s;
-  }
-
-  function onLocal(items) {
-    if (!active || !sceneReady || kind() !== "table" || tier() === "off") return;
-    const sig = smokeSig(items);
-    if (sig === smokeSeen) return;
-    smokeSeen = sig;
-    reconcile();
-  }
-
-  // Only the table listens to local changes (Smoke's rings are made, re-made and resized there),
-  // and only while it draws: every local change hands each listener the whole local list,
-  // shaders and all, ~30 times a second while an effect plays.
-  function watchLocal() {
-    const on = active && !!full && kind() === "table" && tier() !== "off";
-    if (on && !offLocal) {
-      smokeSeen = "";
-      try {
-        offLocal = full.OBR.scene.local.onChange(onLocal);
-      } catch (e) {
-        warn("lights: can't follow Smoke's rings", e);
-      }
-    } else if (!on && offLocal) {
-      try { offLocal(); } catch (e) { /* already gone */ }
-      offLocal = null;
-    }
   }
 
   function onReady(ready) {
@@ -788,147 +820,27 @@ export function createLights(api = {}, ctx = {}) {
     latest = null;
     seen = null;
     gridStale = true;
-    smokeSeen = "";
     if (!ready) {
       // the scene's local items go with it (and any that stay are swept up when it's back)
       flames.clear();
-      rings.clear();
-      hid.clear();
+      dv.clear();
       return;
     }
-    reconcile();
-    guardTorches();
+    readMeta().then(() => reconcile());
   }
 
-  // ---- the torch guard (GM screens, one GM at a time) ----
-  // Smoke & Spectre lights the fog around every torch a GM made on every player's screen, hidden
-  // or not, so a hidden goblin with a torch (or a sconce the DM hid) would show where it stands.
-  // lightmeta.js gives a SECRET token (hidden, and not a PC) no Smoke torch keys, but only when
-  // something writes its light, and hiding a token writes nothing of ours. So one GM screen
-  // watches: when the scene's items settle, every lit token whose keys aren't what applyLight()
-  // would write now (hidden since, or shown again) is put right, all of them in one write. The
-  // one that watches leads: the GM connection with the lowest id (on the Dell both copies share
-  // one connection, and only the one that draws runs this), so two GM tabs never write the same
-  // change twice. It watches whatever the lights tier is: it keeps a secret, it draws nothing.
-  let myConn = null;
-  let otherGms = new Set(); // the other GM connections in the room
-  let leader = false;
-  let guardWaiting = null;
-  let guardRetry = null;
-  let guardAt = 0; // when the guard last wrote (clock.now())
-  let guardIds = new Set(); // ...which tokens
-  let guardGap = 0; // how long after that they may be written again: 0 once a look found everything in line
-
-  function leads() {
-    if (!active || role() !== "GM" || !myConn) return false;
-    for (const c of otherGms) if (c < myConn) return false;
-    return true;
-  }
-
-  function onParty(players) {
-    otherGms = new Set();
-    for (const p of players || []) {
-      const c = p?.connectionId == null ? "" : String(p.connectionId);
-      if (p?.role === "GM" && c && c !== myConn) otherGms.add(c);
-    }
-    const was = leader;
-    leader = leads();
-    if (leader === was) return;
-    log(leader ? "lights: this GM screen keeps hidden torches dark" : "lights: another GM screen keeps hidden torches dark");
-    if (leader) guardTorches();
-  }
-
-  // A token's light options as applyLight() takes them: a PC carries its light whatever; any
-  // other token is secret while a player's screen wouldn't show it (hidden itself, or through
-  // what it's attached to).
-  function guardOpts(item, byId) {
-    const pc = !!ctx.pcTokens?.has?.(item.id);
-    return { pc, secret: !pc && !isPublicChain(item, byId) };
-  }
-
-  // Look again after `ms`.
-  function guardLater(ms) {
-    if (guardRetry || !sceneReady) return;
-    guardRetry = clock.setTimeout(() => {
-      guardRetry = null;
-      guardTorches();
-    }, ms);
-  }
-
-  async function doGuard() {
-    if (!active || !leader || !sceneReady) return { wrote: 0 };
-    try {
-      const { OBR } = await getApi();
-      // the items the last change handed us (a write of ours comes back as one, so it's seen)
-      const items = latest || await OBR.scene.items.getItems();
-      const byId = new Map(items.map((i) => [i.id, i]));
-      const due = new Map(); // token id -> options
-      for (const i of items) {
-        if (!lightOf(i?.metadata)) continue;
-        const o = guardOpts(i, byId);
-        if (lightChanges(i.metadata, {}, o)) due.set(i.id, o);
-      }
-      if (!due.size) {
-        guardGap = 0;
-        return { wrote: 0 };
-      }
-      // A token written a moment ago that no look since found in line (our write isn't back yet,
-      // or something keeps putting it back): it waits, and is looked at again once the wait is
-      // over, a wait that doubles each time, so it's never a write -> change -> write loop. A
-      // token that wasn't in that write (a second goblin hidden just after the first) doesn't
-      // wait behind it, even while something fights over the first: it goes now, and waits with
-      // the others from then on.
-      const wait = guardAt + guardGap - clock.now();
-      const held = guardGap > 0 && wait > 0 ? [...due.keys()].filter((id) => guardIds.has(id)) : [];
-      if (held.length) {
-        guardLater(wait);
-        for (const id of held) due.delete(id);
-        if (!due.size) return { wrote: 0 };
-      }
-      const again = !held.length && guardGap > 0 && [...due.keys()].some((id) => guardIds.has(id));
-      if (!active || !leader) return { wrote: 0 };
-      await OBR.scene.items.updateItems([...due.keys()], (drafts) => {
-        for (const d of drafts) if (due.has(d.id)) applyLight(d.metadata, {}, guardOpts(d, byId));
-      });
-      if (held.length) {
-        for (const id of due.keys()) guardIds.add(id);
-      } else {
-        guardAt = clock.now();
-        guardGap = again ? Math.min(guardGap * 2, 30000) : RETRY_MS / 2;
-        guardIds = new Set(due.keys());
-      }
-      const names = [...due.keys()].map((id) => byId.get(id)?.name || id);
-      log(`lights: Smoke's light brought in line (hidden or shown since): ${names.join(", ")}`);
-      return { wrote: due.size };
-    } catch (e) {
-      lastError = String(e?.message || e);
-      warn("lights: hidden torches couldn't be put right", e);
-      guardLater(RETRY_MS);
-      return { wrote: 0, error: true };
-    }
-  }
-
-  function guardTorches() {
-    if (!active || !leader || !sceneReady) return Promise.resolve({ wrote: 0 });
-    if (guardWaiting) return guardWaiting;
-    guardWaiting = queue(() => {
-      guardWaiting = null;
-      return doGuard();
-    });
-    return guardWaiting;
+  // The scene's lighting and the room's party senses, read now (and on every change, below).
+  async function readMeta() {
+    const { OBR } = await getApi();
+    try { if (typeof OBR.scene?.getMetadata === "function") takeScene(await OBR.scene.getMetadata()); } catch (e) { /* not ready */ }
+    try { if (typeof OBR.room?.getMetadata === "function") takeRoom(await OBR.room.getMetadata()); } catch (e) { /* an older Owlbear */ }
   }
 
   function unsubscribe() {
     for (const u of unsubs) { try { u(); } catch (e) { /* already gone */ } }
     unsubs = [];
-    if (offLocal) {
-      try { offLocal(); } catch (e) { /* already gone */ }
-      offLocal = null;
-    }
     if (debounce) clock.clearTimeout(debounce);
     debounce = null;
-    if (guardRetry) clock.clearTimeout(guardRetry);
-    guardRetry = null;
   }
 
   let starts = 0; // a stop() during a start() that's still loading wins
@@ -941,17 +853,15 @@ export function createLights(api = {}, ctx = {}) {
       const OBR = a.OBR;
       unsubscribe();
       active = true;
-      leader = false;
       latest = null;
       seen = null;
       gridStale = true;
-      smokeSeen = "";
       // Everything is drawn afresh: forget what an earlier start drew, and delete it and anything
       // an earlier copy of this page left, of this host only (on the Dell the other copy's are
       // its own business).
       await queue(async () => {
         flames.clear();
-        rings.clear();
+        dv.clear();
         try {
           const old = await OBR.scene.local.getItems((i) => i?.metadata?.[LIGHT_FX_KEY]?.host === host);
           if (old.length) await OBR.scene.local.deleteItems(old.map((i) => i.id));
@@ -959,34 +869,26 @@ export function createLights(api = {}, ctx = {}) {
       });
       if (run !== starts) return;
       unsubs.push(OBR.scene.items.onChange(onItems));
-      watchLocal();
       if (typeof OBR.scene.grid?.onChange === "function") {
         unsubs.push(OBR.scene.grid.onChange(() => {
           gridStale = true;
           reconcile();
         }));
       }
+      // 🌑/☀ and auto-lights live on the scene, the party's darkvision on the room
+      if (typeof OBR.scene.onMetadataChange === "function") {
+        unsubs.push(OBR.scene.onMetadataChange((m) => { if (takeScene(m)) reconcile(); }));
+      }
+      if (typeof OBR.room?.onMetadataChange === "function") {
+        unsubs.push(OBR.room.onMetadataChange((m) => { if (takeRoom(m)) reconcile(); }));
+      }
       unsubs.push(OBR.scene.onReadyChange(onReady));
       try { sceneReady = !!(await OBR.scene.isReady()); } catch (e) { sceneReady = false; }
       if (run !== starts) return;
-      if (role() === "GM") {
-        // which GM screen keeps hidden torches dark (the lowest connection id)
-        try {
-          myConn = String((await OBR.player.getConnectionId()) || ctx.conn || "") || null;
-        } catch (e) {
-          myConn = ctx.conn ? String(ctx.conn) : null;
-        }
-        let players = [];
-        try {
-          if (typeof OBR.party?.onChange === "function") unsubs.push(OBR.party.onChange(onParty));
-          players = (await OBR.party?.getPlayers?.()) || [];
-        } catch (e) { /* no party list: this screen is the only GM it knows of */ }
-        if (run !== starts) return;
-        onParty(players);
-      }
       if (sceneReady) {
+        await readMeta();
+        if (run !== starts) return;
         await reconcile();
-        await guardTorches();
       }
     } catch (e) {
       lastError = String(e?.message || e);
@@ -994,12 +896,11 @@ export function createLights(api = {}, ctx = {}) {
     }
   }
 
-  // Step aside: no more subscriptions, everything we drew comes off and Smoke's rings come back.
-  // Nothing comes back (a change, new settings) until start() runs again.
+  // Step aside: no more subscriptions, everything we drew comes off. Nothing comes back (a
+  // change, new settings) until start() runs again.
   function stop() {
     starts++;
     active = false;
-    leader = false;
     unsubscribe();
     return reconcile();
   }
@@ -1010,11 +911,7 @@ export function createLights(api = {}, ctx = {}) {
     // tier and quality_override are worked out afresh for each call, never kept from an older one
     settings = { ...settings, ...next, quality: { ...(settings.quality || {}), ...(next.quality || {}) },
       tier: next.tier, quality_override: next.quality_override };
-    if (mode() !== before) {
-      smokeSeen = "";
-      watchLocal();
-      if (active || flames.size || rings.size || hid.size || orphans) reconcile();
-    }
+    if (mode() !== before && (active || flames.size || dv.size || orphans)) reconcile();
   }
 
   function pcTokensChanged() {
@@ -1022,17 +919,14 @@ export function createLights(api = {}, ctx = {}) {
     if (s === pcSig) return;
     pcSig = s;
     if (role() !== "GM" && latest) seen = shownNow(latest).ids; // a PC let go of isn't a hide
-    if (active) {
-      reconcile();
-      guardTorches();
-    }
+    if (active) reconcile();
   }
 
   function status() {
     const t = tier();
     const on = active && t !== "off";
-    return { on, tier: t, table: on && kind() === "table", flames: flames.size, rings: rings.size,
-      hidden: hid.size, dropped, error: lastError, leader };
+    return { on, tier: t, table: active && kind() === "table", flames: flames.size, rings: dv.size ? dvInfo.seers : 0,
+      darkvision: { ...dvInfo, drawn: dv.size === 2, dim: dimFor(kind()) }, dropped, error: lastError };
   }
 
   return { start, stop, setSettings, pcTokensChanged, status, reconcile, idle: () => chain };

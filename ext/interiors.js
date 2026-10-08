@@ -20,9 +20,9 @@
 // imports gather.js, which imports this) but never fetches anything there. What 🧭 Bring PCs here
 // needs of it (each map's entry, stairs and furniture: numbers, no names) is written on the map
 // images themselves (MAP_INFO_KEY, mapInfo()), so 🧭 works on every copy.
-import OBR, { buildCurve, buildShape } from "./obr-sdk.js?v=b6b85c2-d73ac97";
-import { directBase } from "./bus.js?v=b6b85c2-d73ac97";
-import { INTERIOR_KEY, MAP_INFO_KEY, PLACE_KEY } from "./keys.js?v=b6b85c2-d73ac97";
+import OBR, { buildCurve, buildShape } from "./obr-sdk.js?v=585985a-dc1dbb6";
+import { directBase } from "./bus.js?v=585985a-dc1dbb6";
+import { INTERIOR_KEY, MAP_INFO_KEY, PLACE_KEY } from "./keys.js?v=585985a-dc1dbb6";
 
 const GAP_FLOORS = 2, GAP_ROWS = 3, GAP_TOWN = 6, GAP_COLUMNS = 6; // in squares
 // Owlbear rate-limits requests ("RateLimitHit: Too many requests" with 20-item batches, live

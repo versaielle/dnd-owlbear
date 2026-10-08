@@ -18,12 +18,12 @@
 // panel's own split); ONE 30 Hz timer moves every live effect's progress in ONE batched update;
 // every item is deleted at its deadline whatever happened to its add or updates, and a sweep
 // catches anything left behind; a screen never has more than 12 live effects (6 in lite).
-import { ALIASES, ARCHETYPES, PALETTE, SPEC, TIMING, colors, defaultDur, defaultHit, hostFor, maxDur, uniformValues } from "./archetypes.js?v=b6b85c2-d73ac97";
-import { fallbackItem } from "./fallback.js?v=b6b85c2-d73ac97";
-import { numberItem } from "./numbers.js?v=b6b85c2-d73ac97";
-import { finite, footprint, fromBounds, gridOf, rotate } from "./place.js?v=b6b85c2-d73ac97";
-import { customUniforms, fillUniforms, shaderFor } from "./shaders.js?v=b6b85c2-d73ac97";
-import { createZones, setZoneBuilder } from "./zones.js?v=b6b85c2-d73ac97";
+import { ALIASES, ARCHETYPES, PALETTE, SPEC, TIMING, colors, defaultDur, defaultHit, hostFor, maxDur, uniformValues } from "./archetypes.js?v=585985a-dc1dbb6";
+import { fallbackItem } from "./fallback.js?v=585985a-dc1dbb6";
+import { numberItem } from "./numbers.js?v=585985a-dc1dbb6";
+import { finite, footprint, fromBounds, gridOf, rotate } from "./place.js?v=585985a-dc1dbb6";
+import { customUniforms, fillUniforms, shaderFor } from "./shaders.js?v=585985a-dc1dbb6";
+import { createZones, setZoneBuilder } from "./zones.js?v=585985a-dc1dbb6";
 
 export const FX_KEY = "dnd-npc/fx"; // on every one-shot item: {until} (wall-clock ms), for the sweep
 export const CAP = { full: 12, lite: 6 };
@@ -100,7 +100,7 @@ export function createFx(api = {}, ctx = {}) {
   const ready = (async () => {
     const need = ["buildEffect", "buildShape", "buildText"];
     if (api.OBR && need.every((k) => typeof api[k] === "function")) return api;
-    const sdk = await import("../obr-sdk.js?v=b6b85c2-d73ac97");
+    const sdk = await import("../obr-sdk.js?v=585985a-dc1dbb6");
     return { OBR: sdk.default, buildEffect: sdk.buildEffect, buildShape: sdk.buildShape, buildText: sdk.buildText,
       buildLabel: sdk.buildLabel, buildImage: sdk.buildImage, Math2: sdk.Math2, MathM: sdk.MathM, ...api };
   })().then((a) => {
@@ -117,8 +117,8 @@ export function createFx(api = {}, ctx = {}) {
     return r.ok ? r.json() : null;
   });
   (async () => {
-    try { const p = await loadJson(new URL("./palette.json?v=b6b85c2-d73ac97", import.meta.url).href); if (p && typeof p === "object") palette = { ...PALETTE, ...p }; } catch (e) { /* built-in copy */ }
-    try { const t = await loadJson(new URL("./timing.json?v=b6b85c2-d73ac97", import.meta.url).href); if (t && typeof t === "object") timing = { ...TIMING, ...t }; } catch (e) { /* built-in copy */ }
+    try { const p = await loadJson(new URL("./palette.json?v=585985a-dc1dbb6", import.meta.url).href); if (p && typeof p === "object") palette = { ...PALETTE, ...p }; } catch (e) { /* built-in copy */ }
+    try { const t = await loadJson(new URL("./timing.json?v=585985a-dc1dbb6", import.meta.url).href); if (t && typeof t === "object") timing = { ...TIMING, ...t }; } catch (e) { /* built-in copy */ }
   })();
 
   const val = (v) => (typeof v === "function" ? v() : v);
