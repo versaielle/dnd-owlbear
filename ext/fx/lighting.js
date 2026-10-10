@@ -62,14 +62,14 @@
 // Their uniforms are worked out again on EVERY item change, at once (cheap arithmetic, one
 // local update): a carried torch's colour moves with the drag; the flames and walls wait for the
 // scene to settle.
-import { CARRIER_KEY, LIGHT_FX_KEY, PARTY_SENSES_KEY, SCENE_LIGHTING_KEY, SMOKE } from "../keys.js?v=812385b";
+import { CARRIER_KEY, LIGHT_FX_KEY, PARTY_SENSES_KEY, SCENE_LIGHTING_KEY, SMOKE } from "../keys.js?v=2219182";
 import { DV_DARK_BLEND, DV_GREY, DV_SOFT_FT, FLAME_BLEND, WALL_SLOTS, darknessPlan, darkvisionShader, dimFor,
-  flameShader, flameUniforms } from "./lights.js?v=812385b";
-import { ambientReach, darkRegions, isAmbientLight, mapsExtent, sceneDarkness } from "./darkness.js?v=812385b";
-import { DEFAULT_LIGHTING, effectiveLight, lightingOf, rangeDefaultOf, visionOf } from "./lightmeta.js?v=812385b";
-import { nameKey, pcName, tokenLabel } from "./pcs.js?v=812385b";
-import { finite, footprint, gridOf } from "./place.js?v=812385b";
-import { customUniforms, fillUniforms } from "./shaders.js?v=812385b";
+  flameShader, flameUniforms } from "./lights.js?v=2219182";
+import { ambientReach, darkRegions, isAmbientLight, mapsExtent, sceneDarkness } from "./darkness.js?v=2219182";
+import { DEFAULT_LIGHTING, effectiveLight, lightingOf, rangeDefaultOf, visionOf } from "./lightmeta.js?v=2219182";
+import { nameKey, pcName, tokenLabel } from "./pcs.js?v=2219182";
+import { finite, footprint, gridOf } from "./place.js?v=2219182";
+import { customUniforms, fillUniforms } from "./shaders.js?v=2219182";
 
 export const MAX_FLAMES = 12; // flames per screen: each full one makes Owlbear redraw every frame
 export const LIGHT_Z = 1; // on ATTACHMENT: above the tokens, under rings and badges (auto z-indexes are timestamps)
@@ -314,7 +314,7 @@ export function createLights(api = {}, ctx = {}) {
   let full = null;
   const loading = (async () => {
     if (api.OBR && typeof api.buildEffect === "function") return api;
-    const sdk = await import("../obr-sdk.js?v=812385b");
+    const sdk = await import("../obr-sdk.js?v=2219182");
     return { OBR: sdk.default, buildEffect: sdk.buildEffect, MathM: sdk.MathM, ...api };
   })().then((a) => {
     full = a;

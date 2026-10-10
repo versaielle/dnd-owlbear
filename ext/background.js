@@ -18,14 +18,14 @@
 // and a player's view follows their PC after a portal trip. Those load with import() and may fail
 // on their own: the map jobs, rings and HP keep working without them.
 import OBR, { buildCurve, buildEffect, buildImage, buildLabel, buildPath, buildShape, buildText, Math2, MathM }
-  from "./obr-sdk.js?v=812385b";
-import { contains, isRoom, size } from "./areas.js?v=812385b";
-import { checkPortals, describe, panelLog, setUpInteriors } from "./interiors.js?v=812385b";
-import { cleanParty, placeTownsfolk, rememberParty } from "./gather.js?v=812385b";
-import { isPcToken, nameKey, pcName, tokenLabel } from "./fx/pcs.js?v=812385b";
-import { BADGE_KEY, BADGE_URL, BUBBLES_KEY, BUBBLES_NAME_KEY, COND_KEY, CONDITIONS, DOWN_COLOR, GRIMOIRE_KEY, MARK_PREFIX, PARTY_KEY, PARTY_SENSES_KEY, PLACE_KEY, RING_KEY, TARGET_COLOR, WHO_KEY } from "./keys.js?v=812385b";
+  from "./obr-sdk.js?v=2219182";
+import { contains, isRoom, size } from "./areas.js?v=2219182";
+import { checkPortals, describe, panelLog, setUpInteriors } from "./interiors.js?v=2219182";
+import { cleanParty, placeTownsfolk, rememberParty } from "./gather.js?v=2219182";
+import { isPcToken, nameKey, pcName, tokenLabel } from "./fx/pcs.js?v=2219182";
+import { BADGE_KEY, BADGE_URL, BUBBLES_KEY, BUBBLES_NAME_KEY, COND_KEY, CONDITIONS, DOWN_COLOR, GRIMOIRE_KEY, MARK_PREFIX, PARTY_KEY, PARTY_SENSES_KEY, PLACE_KEY, RING_KEY, TARGET_COLOR, WHO_KEY } from "./keys.js?v=2219182";
 import { CH, DEFAULT_SETTINGS, LS, buildOf, forMe, here, isLocalOrigin, kindOf, lsGet, on as busOn, send as busSend,
-  setConnection, setSceneWrite, startSceneReader, tierOf } from "./bus.js?v=812385b";
+  setConnection, setSceneWrite, startSceneReader, tierOf } from "./bus.js?v=2219182";
 
 const HEARTBEAT_MS = 10000;
 const DEBOUNCE_MS = 250;
@@ -629,17 +629,17 @@ const JOBS = {
 // The parts that load on their own (R4): a broken one is left out and the rest carry on.
 // Literal paths, so the publisher can stamp each with the build.
 const MODULES = {
-  bridge: () => import("./bridge.js?v=812385b"),
-  fx: () => import("./fx/engine.js?v=812385b"),
-  samples: () => import("./fx/samples.js?v=812385b"),
-  aim: () => import("./aim/tool.js?v=812385b"),
-  geometry: () => import("./aim/geometry.js?v=812385b"),
-  rings: () => import("./aim/rings.js?v=812385b"),
-  player: () => import("./player/state.js?v=812385b"),
-  lights: () => import("./fx/lighting.js?v=812385b"),
-  lightjobs: () => import("./fx/lightjobs.js?v=812385b"),
-  lightwriter: () => import("./fx/lightwriter.js?v=812385b"),
-  views: () => import("./views.js?v=812385b"),
+  bridge: () => import("./bridge.js?v=2219182"),
+  fx: () => import("./fx/engine.js?v=2219182"),
+  samples: () => import("./fx/samples.js?v=2219182"),
+  aim: () => import("./aim/tool.js?v=2219182"),
+  geometry: () => import("./aim/geometry.js?v=2219182"),
+  rings: () => import("./aim/rings.js?v=2219182"),
+  player: () => import("./player/state.js?v=2219182"),
+  lights: () => import("./fx/lighting.js?v=2219182"),
+  lightjobs: () => import("./fx/lightjobs.js?v=2219182"),
+  lightwriter: () => import("./fx/lightwriter.js?v=2219182"),
+  views: () => import("./views.js?v=2219182"),
 };
 
 const HELLO_MS = 30000; // each screen says hello this often, so the panel's screens list stays fresh

@@ -6,8 +6,8 @@
 //        back to it whenever anything else moves it. Owlbear can't stop a Sync View, and the SDK has
 //        no "view changed" event, so it looks 4 times a second and undoes the move.
 //   📺 aiming it                       From a GM screen: "Show my view" (the DM's own view, zoom and
-//        all), "Projector here" on a map (all of it, as large as it fits), a room or a token
-//        (centred there, the projector's zoom kept), and "Unlock" (Sync View moves it again).
+//        all), "Projector here" on a map or a room on it (all of that map, as large as it fits) or
+//        on a token (centred there, the projector's zoom kept), and "Unlock" (Sync View moves it again).
 //   📍 find me                         On a player's screen: when their PC lands on another map and
 //        someone else moved it (the DM's portal trip, 🧭 Bring PCs), their view follows it. Portals
 //        already re-centres whoever moved it. "📍 Find my PC" in their box does it on a tap.
@@ -15,8 +15,8 @@
 // No SDK import: every Owlbear call goes through `api`, so check_views.mjs runs it against a fake
 // room and a fake clock. background.js starts the parts each screen needs; the GM box
 // (popover.html), the right-click menu and the toolbar button aim.
-import { PROJECTOR_KEY } from "./keys.js?v=812385b";
-import { footprint } from "./fx/place.js?v=812385b";
+import { PROJECTOR_KEY } from "./keys.js?v=2219182";
+import { footprint } from "./fx/place.js?v=2219182";
 
 export const POLL_MS = 250; // the table screen looks at its view this often
 const SETTLE_MS = 200; // after setting the view: looked at again once it has settled
@@ -165,6 +165,26 @@ export function mapAt(p, rects) {
   if (!p || !finite(p.x, p.y)) return null;
   const hit = (rects || []).find((r) => p.x >= r.x0 && p.x < r.x1 && p.y >= r.y0 && p.y < r.y1);
   return hit ? hit.id : null;
+}
+
+const isMapImage = (i) => i?.layer === "MAP" && (i.type === undefined || i.type === "IMAGE");
+
+// The map image 📺 Projector here shows for the item right-clicked, or null (centre on it instead):
+// a map image itself; a room drawing, the map it's attached to (🏘 Set up interiors hangs every
+// room on its building's map, and a right-click on a building lands on one of them, often its
+// "· Outside" area: live 2026-10-10), else the topmost map under its middle (`at`, a room the DM
+// drew). Never for a token.
+export function mapFor(item, items, dpi, at = null) {
+  if (!item) return null;
+  if (isMapImage(item)) return item;
+  if (item.layer !== "DRAWING") return null;
+  const byId = new Map((Array.isArray(items) ? items : []).map((i) => [i.id, i]));
+  for (let i = item, n = 0; i?.attachedTo && n < 10; n++) {
+    i = byId.get(i.attachedTo);
+    if (isMapImage(i)) return i;
+  }
+  const id = mapAt(at || centreOf(item, dpi), mapRects(items, dpi));
+  return id ? byId.get(id) || null : null;
 }
 
 // ---- live: reading and setting this screen's view ----
@@ -510,8 +530,9 @@ export function createFindMe(api, ctx = {}, deps = {}) {
 
 // ---- 📺 from a GM screen: aim the projector ----
 
-// how: {view: true} (this screen's view), {item: id, label?} (a map image: all of it, as large as it
-// fits; a room or a token: centred there, the projector's zoom kept) or {off: true} (unlock). The
+// how: {view: true} (this screen's view), {item: id, label?} (a map image, or a room on one: all of
+// that map, as large as it fits (mapFor); a token, or a room on no map: centred there, the
+// projector's zoom kept) or {off: true} (unlock). The
 // lock goes in the scene's metadata, and the table screen does the rest. -> {ok, text: for the DM's
 // notification, lock}.
 export async function aimProjector(api, how = {}, { now = Date.now() } = {}) {
@@ -525,14 +546,19 @@ export async function aimProjector(api, how = {}, { now = Date.now() } = {}) {
     const t = await readView(OBR);
     if (!t) return { ok: false, text: "📺 Couldn't read this screen's view" };
     if (how.item) {
-      let b = null, item = null;
+      let b = null, items = [], dpi = 150;
       try { b = await OBR.scene.items.getItemBounds([how.item]); } catch { b = null; }
-      try { [item] = await OBR.scene.items.getItems([how.item]); } catch { item = null; }
+      try { items = await OBR.scene.items.getItems(); } catch { items = []; }
+      try { dpi = (await OBR.scene.grid.getDpi()) || dpi; } catch { /* Owlbear's default */ }
       const name = how.label ? String(how.label) : "that";
-      if (item?.layer === "MAP") {
-        // A map: all of it, as large as it fits.
-        lock = lockOnMap(b, now);
-        text = `📺 The projector shows all of ${name}`;
+      const map = mapFor(items.find((i) => i.id === how.item), items, dpi, b?.center);
+      if (map) {
+        // A map, or a room on one: all of that map, as large as it fits.
+        let mb = null;
+        try { mb = map.id === how.item ? b : await OBR.scene.items.getItemBounds([map.id]); } catch { mb = null; }
+        lock = lockOnMap(mb, now);
+        const mapName = String(map.text?.plainText || map.name || "").replace(/\.(png|jpe?g|webp|gif|avif)$/i, "").trim();
+        text = `📺 The projector shows all of ${mapName || name}`;
       } else {
         // A room or a token: centred there, the projector's zoom kept.
         const cur = lockOf((await OBR.scene.getMetadata())?.[PROJECTOR_KEY]);
