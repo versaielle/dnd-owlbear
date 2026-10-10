@@ -6,8 +6,8 @@
 //        back to it whenever anything else moves it. Owlbear can't stop a Sync View, and the SDK has
 //        no "view changed" event, so it looks 4 times a second and undoes the move.
 //   📺 aiming it                       From a GM screen: "Show my view" (the DM's own view, zoom and
-//        all), "Projector here" on a map, a room or a token (centred there with the projector's zoom
-//        kept, so the squares stay the size of the minis), and "Unlock" (Sync View moves it again).
+//        all), "Projector here" on a map (all of it, as large as it fits), a room or a token
+//        (centred there, the projector's zoom kept), and "Unlock" (Sync View moves it again).
 //   📍 find me                         On a player's screen: when their PC lands on another map and
 //        someone else moved it (the DM's portal trip, 🧭 Bring PCs), their view follows it. Portals
 //        already re-centres whoever moved it. "📍 Find my PC" in their box does it on a tap.
@@ -15,8 +15,8 @@
 // No SDK import: every Owlbear call goes through `api`, so check_views.mjs runs it against a fake
 // room and a fake clock. background.js starts the parts each screen needs; the GM box
 // (popover.html), the right-click menu and the toolbar button aim.
-import { PROJECTOR_KEY } from "./keys.js?v=da53a06";
-import { footprint } from "./fx/place.js?v=da53a06";
+import { PROJECTOR_KEY } from "./keys.js?v=812385b";
+import { footprint } from "./fx/place.js?v=812385b";
 
 export const POLL_MS = 250; // the table screen looks at its view this often
 const SETTLE_MS = 200; // after setting the view: looked at again once it has settled
@@ -31,6 +31,7 @@ const STATUS_MIN_MS = 2000; // ...and on a change, but no more often than this
 const FOLLOW_WAIT_MS = 300; // find me: a move that comes in steps (🧭 Bring PCs) settles first
 const EDGE = 0.08; // find me: a PC this close to the screen's edge counts as off it
 const SQUARES = 12; // 🎯 Go to PC and 📍 Find my PC: zoomed in so about this many squares fit across
+const MAP_MARGIN = 0.02; // 📺 Projector here on a map: this share of the map's size kept clear round it
 
 const defaultTimers = {
   setTimeout: (f, ms) => setTimeout(f, ms),
@@ -115,11 +116,21 @@ export function lockOfView(t, at) {
   return r && { v: 1, on: true, x: r2(r.x), y: r2(r.y), w: r2(r.w), h: r2(r.h), at };
 }
 
-// What 📺 Projector here writes: a rectangle of `size` ({w, h}: the projector's lock now, so its
-// zoom stays, else the DM's own view) centred on scene point c.
+// What 📺 Projector here writes on a room or a token: a rectangle of `size` ({w, h}: the projector's
+// lock now, so its zoom stays, else the DM's own view) centred on scene point c.
 export function lockAround(c, size, at) {
   if (!c || !size || !finite(c.x, c.y, size.w, size.h) || !(size.w > 0) || !(size.h > 0)) return null;
   return { v: 1, on: true, x: r2(c.x - size.w / 2), y: r2(c.y - size.h / 2), w: r2(size.w), h: r2(size.h), at };
+}
+
+// ...and on a map image: the whole map, as large as fits, with a small margin round it (the DM,
+// 2026-10-10: at the town's zoom a building map came out tiny). `b`: Owlbear's item bounds.
+export function lockOnMap(b, at, margin = MAP_MARGIN) {
+  const w = b?.width ?? (b?.max?.x - b?.min?.x), h = b?.height ?? (b?.max?.y - b?.min?.y);
+  const x = b?.min?.x ?? (b?.center?.x - w / 2), y = b?.min?.y ?? (b?.center?.y - h / 2);
+  if (!finite(x, y, w, h) || !(w > 0) || !(h > 0)) return null;
+  const mx = w * margin, my = h * margin;
+  return { v: 1, on: true, x: r2(x - mx), y: r2(y - my), w: r2(w + 2 * mx), h: r2(h + 2 * my), at };
 }
 
 export const unlocked = (at) => ({ v: 1, on: false, at });
@@ -499,9 +510,10 @@ export function createFindMe(api, ctx = {}, deps = {}) {
 
 // ---- 📺 from a GM screen: aim the projector ----
 
-// how: {view: true} (this screen's view), {item: id, label?} (centred on that map, room or token,
-// the projector's zoom kept) or {off: true} (unlock). The lock goes in the scene's metadata, and the
-// table screen does the rest. -> {ok, text: for the DM's notification, lock}.
+// how: {view: true} (this screen's view), {item: id, label?} (a map image: all of it, as large as it
+// fits; a room or a token: centred there, the projector's zoom kept) or {off: true} (unlock). The
+// lock goes in the scene's metadata, and the table screen does the rest. -> {ok, text: for the DM's
+// notification, lock}.
 export async function aimProjector(api, how = {}, { now = Date.now() } = {}) {
   const OBR = api?.OBR ?? api;
   if (!(await OBR.scene.isReady())) return { ok: false, text: "📺 Open a scene first" };
@@ -513,12 +525,21 @@ export async function aimProjector(api, how = {}, { now = Date.now() } = {}) {
     const t = await readView(OBR);
     if (!t) return { ok: false, text: "📺 Couldn't read this screen's view" };
     if (how.item) {
-      let b = null;
+      let b = null, item = null;
       try { b = await OBR.scene.items.getItemBounds([how.item]); } catch { b = null; }
-      const cur = lockOf((await OBR.scene.getMetadata())?.[PROJECTOR_KEY]);
-      lock = lockAround(b?.center, cur?.on ? cur : viewRect(t), now);
+      try { [item] = await OBR.scene.items.getItems([how.item]); } catch { item = null; }
+      const name = how.label ? String(how.label) : "that";
+      if (item?.layer === "MAP") {
+        // A map: all of it, as large as it fits.
+        lock = lockOnMap(b, now);
+        text = `📺 The projector shows all of ${name}`;
+      } else {
+        // A room or a token: centred there, the projector's zoom kept.
+        const cur = lockOf((await OBR.scene.getMetadata())?.[PROJECTOR_KEY]);
+        lock = lockAround(b?.center, cur?.on ? cur : viewRect(t), now);
+        text = `📺 Projector centred on ${name}${cur?.on ? ", same zoom" : ", at your zoom"}`;
+      }
       if (!lock) return { ok: false, text: "📺 Couldn't find that on the map" };
-      text = `📺 Projector centred on ${how.label ? String(how.label) : "that"}${cur?.on ? ", same zoom" : ", at your zoom"}`;
     } else {
       lock = lockOfView(t, now);
       text = "📺 The projector shows your view and stays there";

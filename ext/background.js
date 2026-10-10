@@ -18,14 +18,14 @@
 // and a player's view follows their PC after a portal trip. Those load with import() and may fail
 // on their own: the map jobs, rings and HP keep working without them.
 import OBR, { buildCurve, buildEffect, buildImage, buildLabel, buildPath, buildShape, buildText, Math2, MathM }
-  from "./obr-sdk.js?v=da53a06";
-import { contains, isRoom, size } from "./areas.js?v=da53a06";
-import { checkPortals, describe, panelLog, setUpInteriors } from "./interiors.js?v=da53a06";
-import { cleanParty, placeTownsfolk, rememberParty } from "./gather.js?v=da53a06";
-import { isPcToken, nameKey, pcName, tokenLabel } from "./fx/pcs.js?v=da53a06";
-import { BADGE_KEY, BADGE_URL, BUBBLES_KEY, BUBBLES_NAME_KEY, COND_KEY, CONDITIONS, DOWN_COLOR, GRIMOIRE_KEY, MARK_PREFIX, PARTY_KEY, PARTY_SENSES_KEY, PLACE_KEY, RING_KEY, TARGET_COLOR, WHO_KEY } from "./keys.js?v=da53a06";
+  from "./obr-sdk.js?v=812385b";
+import { contains, isRoom, size } from "./areas.js?v=812385b";
+import { checkPortals, describe, panelLog, setUpInteriors } from "./interiors.js?v=812385b";
+import { cleanParty, placeTownsfolk, rememberParty } from "./gather.js?v=812385b";
+import { isPcToken, nameKey, pcName, tokenLabel } from "./fx/pcs.js?v=812385b";
+import { BADGE_KEY, BADGE_URL, BUBBLES_KEY, BUBBLES_NAME_KEY, COND_KEY, CONDITIONS, DOWN_COLOR, GRIMOIRE_KEY, MARK_PREFIX, PARTY_KEY, PARTY_SENSES_KEY, PLACE_KEY, RING_KEY, TARGET_COLOR, WHO_KEY } from "./keys.js?v=812385b";
 import { CH, DEFAULT_SETTINGS, LS, buildOf, forMe, here, isLocalOrigin, kindOf, lsGet, on as busOn, send as busSend,
-  setConnection, setSceneWrite, startSceneReader, tierOf } from "./bus.js?v=da53a06";
+  setConnection, setSceneWrite, startSceneReader, tierOf } from "./bus.js?v=812385b";
 
 const HEARTBEAT_MS = 10000;
 const DEBOUNCE_MS = 250;
@@ -510,8 +510,8 @@ function menus(ids = MENU_IDS, gotoKeyId = GOTO_KEY_ID, projectorActionId = PROJ
     ].map((every) => ({ icon: ICON, label: "🧭 Bring PCs here", filter: { roles: ["GM"], max: 1, every } })),
     onClick: (context) => openMenu("bring", context),
   });
-  // On a map image, a room drawing or a token: the projector centres there and holds it, its zoom
-  // kept (views.js). The same three filters as 🧭 Bring PCs here.
+  // On a map image (all of it, as large as it fits), a room drawing or a token (centred there, its
+  // zoom kept): the projector shows it and holds it (views.js). The same three filters as 🧭 Bring PCs here.
   OBR.contextMenu.create({
     id: ids.projector,
     icons: [
@@ -629,17 +629,17 @@ const JOBS = {
 // The parts that load on their own (R4): a broken one is left out and the rest carry on.
 // Literal paths, so the publisher can stamp each with the build.
 const MODULES = {
-  bridge: () => import("./bridge.js?v=da53a06"),
-  fx: () => import("./fx/engine.js?v=da53a06"),
-  samples: () => import("./fx/samples.js?v=da53a06"),
-  aim: () => import("./aim/tool.js?v=da53a06"),
-  geometry: () => import("./aim/geometry.js?v=da53a06"),
-  rings: () => import("./aim/rings.js?v=da53a06"),
-  player: () => import("./player/state.js?v=da53a06"),
-  lights: () => import("./fx/lighting.js?v=da53a06"),
-  lightjobs: () => import("./fx/lightjobs.js?v=da53a06"),
-  lightwriter: () => import("./fx/lightwriter.js?v=da53a06"),
-  views: () => import("./views.js?v=da53a06"),
+  bridge: () => import("./bridge.js?v=812385b"),
+  fx: () => import("./fx/engine.js?v=812385b"),
+  samples: () => import("./fx/samples.js?v=812385b"),
+  aim: () => import("./aim/tool.js?v=812385b"),
+  geometry: () => import("./aim/geometry.js?v=812385b"),
+  rings: () => import("./aim/rings.js?v=812385b"),
+  player: () => import("./player/state.js?v=812385b"),
+  lights: () => import("./fx/lighting.js?v=812385b"),
+  lightjobs: () => import("./fx/lightjobs.js?v=812385b"),
+  lightwriter: () => import("./fx/lightwriter.js?v=812385b"),
+  views: () => import("./views.js?v=812385b"),
 };
 
 const HELLO_MS = 30000; // each screen says hello this often, so the panel's screens list stays fresh
