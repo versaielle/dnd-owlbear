@@ -87,11 +87,11 @@
 // screens report it), and 📺 Show my view / 🔓 Unlock. Right-click → 📺 Projector here aims it too.
 // Then "🔥 Lighting" (lightpanel.js): the scene's darkness, each PC's sight, darkvision and light,
 // the lit objects, the screens heard, and "Release lights to Smoke". It needs no panel.
-import OBR from "./obr-sdk.js?v=2219182";
-import { CH, LS, QUALITIES, ask, isLocalOrigin, lsGet, lsSet, on, send } from "./bus.js?v=2219182";
-import { goToPc, pcLabel, scenePcs } from "./goto.js?v=2219182";
-import { noPcsText } from "./gather.js?v=2219182";
-import { PROJECTOR_KEY } from "./keys.js?v=2219182";
+import OBR from "./obr-sdk.js?v=a466a74";
+import { CH, LS, QUALITIES, ask, isLocalOrigin, lsGet, lsSet, on, send } from "./bus.js?v=a466a74";
+import { goToPc, pcLabel, scenePcs } from "./goto.js?v=a466a74";
+import { noPcsText } from "./gather.js?v=a466a74";
+import { PROJECTOR_KEY } from "./keys.js?v=a466a74";
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
@@ -274,7 +274,7 @@ OBR.onReady(async () => {
     projectorBox(s).catch((e) => console.warn("dnd-npc: 📺 Projector", e));
   });
   // 📺 Projector: loaded on its own too.
-  import("./views.js?v=2219182").then((m) => {
+  import("./views.js?v=a466a74").then((m) => {
     views = m;
     projectorBox();
   }).catch((e) => {
@@ -282,7 +282,7 @@ OBR.onReady(async () => {
     $("pj-view").hidden = true;
   });
   // 🔥 Lighting: loaded on its own, so the rest of this box works whatever happens to it.
-  import("./lightpanel.js?v=2219182").then((m) => {
+  import("./lightpanel.js?v=a466a74").then((m) => {
     const css = document.createElement("style");
     css.textContent = m.LIGHTING_CSS;
     document.head.append(css);

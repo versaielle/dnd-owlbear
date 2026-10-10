@@ -15,8 +15,8 @@
 // No SDK import: every Owlbear call goes through `api`, so check_views.mjs runs it against a fake
 // room and a fake clock. background.js starts the parts each screen needs; the GM box
 // (popover.html), the right-click menu and the toolbar button aim.
-import { PROJECTOR_KEY } from "./keys.js?v=2219182";
-import { footprint } from "./fx/place.js?v=2219182";
+import { PROJECTOR_KEY } from "./keys.js?v=a466a74";
+import { footprint } from "./fx/place.js?v=a466a74";
 
 export const POLL_MS = 250; // the table screen looks at its view this often
 const SETTLE_MS = 200; // after setting the view: looked at again once it has settled
@@ -31,7 +31,7 @@ const STATUS_MIN_MS = 2000; // ...and on a change, but no more often than this
 const FOLLOW_WAIT_MS = 300; // find me: a move that comes in steps (🧭 Bring PCs) settles first
 const EDGE = 0.08; // find me: a PC this close to the screen's edge counts as off it
 const SQUARES = 12; // 🎯 Go to PC and 📍 Find my PC: zoomed in so about this many squares fit across
-const MAP_MARGIN = 0.02; // 📺 Projector here on a map: this share of the map's size kept clear round it
+const MAP_MARGIN = 0.1; // 📺 Projector here on a map: this share of the map's size kept clear on each side (the DM: more room)
 
 const defaultTimers = {
   setTimeout: (f, ms) => setTimeout(f, ms),
@@ -123,7 +123,7 @@ export function lockAround(c, size, at) {
   return { v: 1, on: true, x: r2(c.x - size.w / 2), y: r2(c.y - size.h / 2), w: r2(size.w), h: r2(size.h), at };
 }
 
-// ...and on a map image: the whole map, as large as fits, with a small margin round it (the DM,
+// ...and on a map image: the whole map, as large as fits, with a margin round it (the DM,
 // 2026-10-10: at the town's zoom a building map came out tiny). `b`: Owlbear's item bounds.
 export function lockOnMap(b, at, margin = MAP_MARGIN) {
   const w = b?.width ?? (b?.max?.x - b?.min?.x), h = b?.height ?? (b?.max?.y - b?.min?.y);
