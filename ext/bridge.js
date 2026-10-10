@@ -15,6 +15,8 @@
 //   up               what the other screens send it (an aim locked, a player's cast request, the
 //                    laptop's 🗺 menus), checked against who Owlbear says sent it, then POSTed on.
 //   heartbeat        every 5 s to every screen: the panel's settings and which tokens are PCs.
+//   📺 projector     a table screen's view lock status (views.js): in the screens list, and its
+//                    changes (moved back, Sync View on) in the game's log via /api/map/log.
 //
 // On game night the Dell's GM tab runs TWO copies of the extension (the dual install, spec
 // 14.5 and A12): the one served by the panel on this PC is the bridge, and the one from the
@@ -25,8 +27,8 @@
 // Every Owlbear call and fetch goes through `api` and `mods`, so check_bridge.mjs can run it
 // against a fake room and a fake clock.
 import { CH, DEFAULT_SETTINGS, LS, PANEL_PORTS, RPC_PATHS, canSeal, lsGet, lsSet, on, seal, send, setConnection,
-  setSceneWrite } from "./bus.js?v=585985a-dc1dbb6";
-import { RING_KEY, TARGET_COLOR } from "./keys.js?v=585985a-dc1dbb6";
+  setSceneWrite } from "./bus.js?v=da53a06";
+import { RING_KEY, TARGET_COLOR } from "./keys.js?v=da53a06";
 
 const HELLO_TIMEOUT_MS = 800; // per port, when looking for the panel
 const FIND_RETRY_MS = 30000; // no panel found: look again
@@ -123,6 +125,25 @@ export function roomLabel(id, name) {
 export const CATALOG_IN_CLEAR =
   "This device can't receive the adventure's place and NPC names privately. Use the 🗺 menus on the Dell's tab.";
 
+// 📺 What a table screen's new status (views.js, over CH.VIEW) adds to the game's log, against the
+// one before it (undefined: the first heard): the lock taken or let go, moves undone (`moved` counts
+// every one since that screen started), and who switched Sync View on or off. [] for nothing new.
+export function viewLogLines(prev, v, name = "") {
+  if (!v || typeof v !== "object") return [];
+  const who = name ? `📺 ${name}` : "📺 The projector";
+  const sync = (s) => (Array.isArray(s?.sync_on) ? s.sync_on.map(String) : []);
+  const out = [];
+  if (v.locked && (!prev || !prev.locked || prev.at !== v.at)) out.push(`${who} holds a view the DM locked`);
+  else if (!v.locked && prev?.locked) out.push(`${who} is unlocked (Sync View moves it again)`);
+  const n = (Number(v.moved) || 0) - (Number(prev?.moved) || 0);
+  if (prev && n > 0) out.push(`${who} was moved by something else (Sync View?) and went back${n > 1 ? ` (${n}×)` : ""}`);
+  const now = sync(v), before = sync(prev);
+  if (now.join("\n") !== before.join("\n") && (prev || now.length)) {
+    out.push(now.length ? `📺 Sync View is switched on for: ${now.join(", ")}` : "📺 Sync View is switched off everywhere");
+  }
+  return out;
+}
+
 const inert = { isBridge: () => false, stop() {}, retry() {}, force() {}, relayOnly() {}, report: async () => {},
                 status: () => ({ state: "off" }) };
 
@@ -169,6 +190,7 @@ export function startBridge(api, ctx, mods = {}) {
   let roster = {}; // player id -> entry
   let rosterRev = null;
   const screens = new Map(); // connection -> what its HELLO said
+  const views = new Map(); // connection -> a table screen's last 📺 status (views.js, CH.VIEW)
   const handled = new Set(); // aim ids already locked (or cancelled) through here
   const aims = new Map(); // aim id -> the AimSpec the panel sent (range, caster), newest last
   const AIMS_KEPT = 20;
@@ -570,7 +592,8 @@ export function startBridge(api, ctx, mods = {}) {
     const self = { connection: conn, player_id: ctx.playerId, name: ctx.name || "", role: ctx.role, kind: d.kind || "gm",
                    build: d.build || "dev", fx_ok: !!d.fx_ok, host: d.host || ctx.host, at: now,
                    writer: d.writer ?? null, lights: lightsBrief(d.lights) };
-    return [self, ...[...screens.values()].filter((s) => s.connection !== conn)];
+    const withView = (s) => (views.has(s.connection) ? { ...s, view: views.get(s.connection) } : s); // the projector's lock
+    return [self, ...[...screens.values()].filter((s) => s.connection !== conn).map(withView)];
   }
 
   async function extras() {
@@ -836,6 +859,20 @@ export function startBridge(api, ctx, mods = {}) {
     if (need.includes("bridge")) heartbeat();
   }
 
+  function onView(msg, ev) {
+    // A table screen's 📺 status (views.js): kept for the screens list, and what changed goes in
+    // the game's log (the panel's /api/map/log), so a night's projector moves can be read after.
+    const c = ev?.connectionId;
+    if (!trusted(ev) || ev.local || !msg?.view || typeof msg.view !== "object") return;
+    const prev = views.get(c);
+    views.set(c, msg.view);
+    if (!isBridge()) return;
+    for (const text of viewLogLines(prev, msg.view, String(msg.name || ""))) {
+      log(`bridge: ${text}`);
+      post("/api/map/log", { what: "projector", error: text });
+    }
+  }
+
   function goRelayOnly() {
     // The Pages copy of the extension runs on this same tab (the dual install): it draws the
     // effects and opens the aim tool, and this copy only relays for it. Say so at once, so the
@@ -854,6 +891,7 @@ export function startBridge(api, ctx, mods = {}) {
     on(api, CH.CAST_REQUEST, onCastRequest),
     on(api, CH.CAST_WITHDRAW, onCastWithdraw),
     on(api, CH.RPC, onRpc),
+    on(api, CH.VIEW, onView),
   ];
   try {
     OBR.party.getPlayers().then((p) => { party = p || []; }, () => {});
@@ -861,6 +899,7 @@ export function startBridge(api, ctx, mods = {}) {
       party = p || [];
       const live = new Set(party.map((x) => x.connectionId));
       for (const c of screens.keys()) if (c !== conn && !live.has(c)) screens.delete(c);
+      for (const c of views.keys()) if (!live.has(c)) views.delete(c);
     });
     if (typeof off === "function") offs.push(off);
   } catch (e) {

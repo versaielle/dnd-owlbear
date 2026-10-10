@@ -17,11 +17,11 @@
 // with the writer's ctx, in ONE write (fx/lightwriter.js writeNow): the same pure function on the
 // same inputs as the leader's writer, so a tap writes once and the writer's next pass plans
 // nothing for that token.
-import * as LM from "./fx/lightmeta.js?v=585985a-dc1dbb6";
-import { planCtx } from "./fx/lightwriter.js?v=585985a-dc1dbb6";
-import { SOURCES } from "./fx/lights.js?v=585985a-dc1dbb6";
-import { CARRIER_KEY, LIGHT_KEY, SCENE_LIGHTING_KEY, SMOKE, SPELL_LIGHT_KEY, VISION_KEY } from "./keys.js?v=585985a-dc1dbb6";
-import { pcName, tokenLabel } from "./fx/pcs.js?v=585985a-dc1dbb6";
+import * as LM from "./fx/lightmeta.js?v=da53a06";
+import { planCtx } from "./fx/lightwriter.js?v=da53a06";
+import { SOURCES } from "./fx/lights.js?v=da53a06";
+import { CARRIER_KEY, LIGHT_KEY, SCENE_LIGHTING_KEY, SMOKE, SPELL_LIGHT_KEY, VISION_KEY } from "./keys.js?v=da53a06";
+import { pcName, tokenLabel } from "./fx/pcs.js?v=da53a06";
 
 // The scene's (and each map's) darkness, as docs/lights-darkness-spec.md says it: darkness comes
 // from light, per point. The 🔥 Lighting list's chips (lightpanel.js) say these.

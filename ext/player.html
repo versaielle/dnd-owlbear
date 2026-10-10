@@ -33,6 +33,8 @@
   .item small { display: block; opacity: .75; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .item .tag { flex: none; font-size: 10px; padding: 2px 6px; border-radius: 6px; background: rgba(255, 255, 255, .14); opacity: .85; }
   .item .go { flex: none; opacity: .5; font-size: 18px; }
+  .find { display: block; width: 100%; min-height: 40px; margin: 0 0 6px; border-radius: 10px; background: rgba(127, 178, 255, .18); }
+  .find:hover, .find:focus-visible { background: rgba(127, 178, 255, .3); outline: none; }
 </style>
 </head>
 <body>
@@ -41,9 +43,10 @@
 // The player's popover: "Your spells & attacks". It shows the snapshot from the player's
 // state in the background (player/state.js) and asks it to aim or withdraw; the background
 // does the rest, so closing this popover never loses a request. ?demo shows canned data
-// without Owlbear (for checking the layout in a plain browser).
-import { view } from "./player/view.js?v=585985a-dc1dbb6";
-import { CH } from "./aim/consts.js?v=585985a-dc1dbb6";
+// without Owlbear (for checking the layout in a plain browser). At the top, "📍 Find my PC":
+// the background puts this screen's view on their PC (views.js).
+import { view } from "./player/view.js?v=da53a06";
+import { CH } from "./aim/consts.js?v=da53a06";
 
 const app = document.getElementById("app");
 const params = new URLSearchParams(location.search);
@@ -57,6 +60,7 @@ function render() {
   const v = view(snap);
   let html = `<h1>${esc(v.title)}</h1>`;
   html += v.who ? `<div class="who">as <b>${esc(v.who)}</b></div>` : `<div class="who">&nbsp;</div>`;
+  html += `<button class="find" data-find title="Your screen goes to your PC on the map">📍 Find my PC</button>`;
   if (v.status) {
     const s = v.status;
     html += `<div class="card ${esc(s.tone)}"><div class="txt">${esc(s.text)}<small>${esc(s.name)}${s.note ? ` · ${esc(s.note)}` : ""}</small></div>`
@@ -76,6 +80,11 @@ function render() {
 }
 
 app.addEventListener("click", (ev) => {
+  if (ev.target.closest("[data-find]")) {
+    ask({ need: "find-me" }); // the background moves this screen's view (views.js)
+    close();
+    return;
+  }
   const item = ev.target.closest("[data-key]");
   if (item) {
     ask({ need: "aim", key: item.dataset.key });
@@ -115,7 +124,7 @@ if (params.has("demo")) {
 } else {
   render();
   try {
-    const { default: OBR } = await import("./obr-sdk.js?v=585985a-dc1dbb6");
+    const { default: OBR } = await import("./obr-sdk.js?v=da53a06");
     // audience "all": a local message, but it passes the bus's audience check if the background filters.
     ask = (m) => OBR.broadcast.sendMessage(CH.LOCAL_ASK, { v: 1, audience: "all", ...m }, { destination: "LOCAL" }).catch(() => {});
     close = () => OBR.action.close().catch(() => {});

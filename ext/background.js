@@ -13,17 +13,19 @@
 // the targets the DM marked for a spell, on the laptop or here.
 //
 // Every screen also listens to the bridge (bottom of this file): effects (fx/), the aim tool
-// and the locked templates (aim/), and on a player's device their spells (player/). Those load
-// with import() and may fail on their own: the map jobs, rings and HP keep working without them.
+// and the locked templates (aim/), and on a player's device their spells (player/). Where each
+// screen looks (views.js): the projector holds the view the DM aims it at (📺 from the GM's menus),
+// and a player's view follows their PC after a portal trip. Those load with import() and may fail
+// on their own: the map jobs, rings and HP keep working without them.
 import OBR, { buildCurve, buildEffect, buildImage, buildLabel, buildPath, buildShape, buildText, Math2, MathM }
-  from "./obr-sdk.js?v=585985a-dc1dbb6";
-import { contains, isRoom, size } from "./areas.js?v=585985a-dc1dbb6";
-import { checkPortals, describe, panelLog, setUpInteriors } from "./interiors.js?v=585985a-dc1dbb6";
-import { cleanParty, placeTownsfolk, rememberParty } from "./gather.js?v=585985a-dc1dbb6";
-import { isPcToken, nameKey, pcName } from "./fx/pcs.js?v=585985a-dc1dbb6";
-import { BADGE_KEY, BADGE_URL, BUBBLES_KEY, BUBBLES_NAME_KEY, COND_KEY, CONDITIONS, DOWN_COLOR, GRIMOIRE_KEY, MARK_PREFIX, PARTY_KEY, PARTY_SENSES_KEY, PLACE_KEY, RING_KEY, TARGET_COLOR, WHO_KEY } from "./keys.js?v=585985a-dc1dbb6";
+  from "./obr-sdk.js?v=da53a06";
+import { contains, isRoom, size } from "./areas.js?v=da53a06";
+import { checkPortals, describe, panelLog, setUpInteriors } from "./interiors.js?v=da53a06";
+import { cleanParty, placeTownsfolk, rememberParty } from "./gather.js?v=da53a06";
+import { isPcToken, nameKey, pcName, tokenLabel } from "./fx/pcs.js?v=da53a06";
+import { BADGE_KEY, BADGE_URL, BUBBLES_KEY, BUBBLES_NAME_KEY, COND_KEY, CONDITIONS, DOWN_COLOR, GRIMOIRE_KEY, MARK_PREFIX, PARTY_KEY, PARTY_SENSES_KEY, PLACE_KEY, RING_KEY, TARGET_COLOR, WHO_KEY } from "./keys.js?v=da53a06";
 import { CH, DEFAULT_SETTINGS, LS, buildOf, forMe, here, isLocalOrigin, kindOf, lsGet, on as busOn, send as busSend,
-  setConnection, setSceneWrite, startSceneReader, tierOf } from "./bus.js?v=585985a-dc1dbb6";
+  setConnection, setSceneWrite, startSceneReader, tierOf } from "./bus.js?v=da53a06";
 
 const HEARTBEAT_MS = 10000;
 const DEBOUNCE_MS = 250;
@@ -418,12 +420,16 @@ async function todo() {
 // by the panel on this PC uses its own: when it steps aside for the Pages copy on the same tab
 // (the dual install) it can only ever remove its own menus, never the Pages copy's.
 const MENU_IDS = { place: "dnd-npc/mark-place", who: "dnd-npc/this-is", cond: "dnd-npc/conditions", light: "dnd-npc/light",
-                   goto: "dnd-npc/go-to-pc", bring: "dnd-npc/bring-pcs" };
+                   goto: "dnd-npc/go-to-pc", bring: "dnd-npc/bring-pcs", projector: "dnd-npc/projector-here" };
 const LOCAL_MENU_IDS = { place: "dnd-npc/local/mark-place", who: "dnd-npc/local/this-is", cond: "dnd-npc/local/conditions",
-                         light: "dnd-npc/local/light", goto: "dnd-npc/local/go-to-pc", bring: "dnd-npc/local/bring-pcs" };
+                         light: "dnd-npc/local/light", goto: "dnd-npc/local/go-to-pc", bring: "dnd-npc/local/bring-pcs",
+                         projector: "dnd-npc/local/projector-here" };
 // 🎯 Go to PC's toolbar button and key (a tool action, removed with tool.removeAction).
 const GOTO_KEY_ID = "dnd-npc/go-to-pc-key";
 const LOCAL_GOTO_KEY_ID = "dnd-npc/local/go-to-pc-key";
+// 📺 Show my view on the projector: a toolbar button beside it (views.js).
+const PROJECTOR_ACTION_ID = "dnd-npc/projector-view";
+const LOCAL_PROJECTOR_ACTION_ID = "dnd-npc/local/projector-view";
 // 🏘 and 👥 need interiors.json, which only the panel on this PC can hand over (far too big for
 // the bridge's broadcasts): only the copy the panel serves makes these, even when it only relays
 // on the Dell's tab (the Pages copy there can't reach the panel), and never removes them.
@@ -431,9 +437,20 @@ const LOCAL_GOTO_KEY_ID = "dnd-npc/local/go-to-pc-key";
 const THIS_PC_MENU_IDS = { interiors: "dnd-npc/local/interiors", portals: "dnd-npc/local/check-portals",
                            townsfolk: "dnd-npc/local/townsfolk" };
 const ICON = here("./icon.svg", import.meta.url);
+const PROJECTOR_ICON = here("./icons/projector.svg", import.meta.url);
 const LIGHT_MENU_HEIGHT = 182; // chips + the "what it did" and "what's missing" lines
 
-function menus(ids = MENU_IDS, gotoKeyId = GOTO_KEY_ID) {
+// 📺 Aim the projector from this GM screen (views.js aimProjector), and say what happened.
+async function aimProjector(how) {
+  try {
+    const r = await (await MODULES.views()).aimProjector(OBR, how);
+    OBR.notification.show(r.text, r.ok ? "SUCCESS" : "WARNING");
+  } catch (e) {
+    OBR.notification.show(`📺 Aiming the projector failed: ${e?.error?.message || e?.message || e}`, "ERROR");
+  }
+}
+
+function menus(ids = MENU_IDS, gotoKeyId = GOTO_KEY_ID, projectorActionId = PROJECTOR_ACTION_ID) {
   OBR.contextMenu.create({
     id: ids.place,
     icons: [{
@@ -493,6 +510,20 @@ function menus(ids = MENU_IDS, gotoKeyId = GOTO_KEY_ID) {
     ].map((every) => ({ icon: ICON, label: "🧭 Bring PCs here", filter: { roles: ["GM"], max: 1, every } })),
     onClick: (context) => openMenu("bring", context),
   });
+  // On a map image, a room drawing or a token: the projector centres there and holds it, its zoom
+  // kept (views.js). The same three filters as 🧭 Bring PCs here.
+  OBR.contextMenu.create({
+    id: ids.projector,
+    icons: [
+      [{ key: "layer", value: "MAP" }, { key: "type", value: "IMAGE" }],
+      [{ key: "layer", value: "DRAWING" }],
+      [{ key: "layer", value: "CHARACTER" }],
+    ].map((every) => ({ icon: PROJECTOR_ICON, label: "📺 Projector here", filter: { roles: ["GM"], max: 1, every } })),
+    onClick: (context) => {
+      const item = context.items[0];
+      return aimProjector({ item: item?.id, label: tokenLabel(item).replace(/\.(png|jpe?g|webp|gif|avif)$/i, "") });
+    },
+  });
   // ...and the same list from a key, with nothing selected: a button on every tool's bar.
   try {
     Promise.resolve(OBR.tool.createAction({
@@ -503,6 +534,16 @@ function menus(ids = MENU_IDS, gotoKeyId = GOTO_KEY_ID) {
     })).catch((e) => console.warn("dnd-npc: the Go to PC key", e));
   } catch (e) {
     console.warn("dnd-npc: the Go to PC key", e);
+  }
+  // 📺 The projector shows what this screen shows, and holds it: one tap on every tool's bar.
+  try {
+    Promise.resolve(OBR.tool.createAction({
+      id: projectorActionId,
+      icons: [{ icon: PROJECTOR_ICON, label: "📺 Show my view on the projector", filter: { roles: ["GM"] } }],
+      onClick: () => aimProjector({ view: true }),
+    })).catch((e) => console.warn("dnd-npc: the projector button", e));
+  } catch (e) {
+    console.warn("dnd-npc: the projector button", e);
   }
 }
 
@@ -588,16 +629,17 @@ const JOBS = {
 // The parts that load on their own (R4): a broken one is left out and the rest carry on.
 // Literal paths, so the publisher can stamp each with the build.
 const MODULES = {
-  bridge: () => import("./bridge.js?v=585985a-dc1dbb6"),
-  fx: () => import("./fx/engine.js?v=585985a-dc1dbb6"),
-  samples: () => import("./fx/samples.js?v=585985a-dc1dbb6"),
-  aim: () => import("./aim/tool.js?v=585985a-dc1dbb6"),
-  geometry: () => import("./aim/geometry.js?v=585985a-dc1dbb6"),
-  rings: () => import("./aim/rings.js?v=585985a-dc1dbb6"),
-  player: () => import("./player/state.js?v=585985a-dc1dbb6"),
-  lights: () => import("./fx/lighting.js?v=585985a-dc1dbb6"),
-  lightjobs: () => import("./fx/lightjobs.js?v=585985a-dc1dbb6"),
-  lightwriter: () => import("./fx/lightwriter.js?v=585985a-dc1dbb6"),
+  bridge: () => import("./bridge.js?v=da53a06"),
+  fx: () => import("./fx/engine.js?v=da53a06"),
+  samples: () => import("./fx/samples.js?v=da53a06"),
+  aim: () => import("./aim/tool.js?v=da53a06"),
+  geometry: () => import("./aim/geometry.js?v=da53a06"),
+  rings: () => import("./aim/rings.js?v=da53a06"),
+  player: () => import("./player/state.js?v=da53a06"),
+  lights: () => import("./fx/lighting.js?v=da53a06"),
+  lightjobs: () => import("./fx/lightjobs.js?v=da53a06"),
+  lightwriter: () => import("./fx/lightwriter.js?v=da53a06"),
+  views: () => import("./views.js?v=da53a06"),
 };
 
 const HELLO_MS = 30000; // each screen says hello this often, so the panel's screens list stays fresh
@@ -609,6 +651,7 @@ const NO_BRIDGE_MS = 15000; // a GM aimer that heard no bridge this long rings t
 // Pages copy after a push. Meanwhile jobs simply wait in the panel's queue.
 const DUAL_WAIT_MS = 5000;
 const NOTE_VARIANTS = ["DEFAULT", "ERROR", "INFO", "SUCCESS", "WARNING"];
+const PROJECTOR_GONE_MS = 60000; // a table screen unheard this long leaves the GM box's 📺 lines (it reports every 15 s)
 
 let bridge = null; // bridge.js on a GM tab (it decides whether this tab is THE bridge)
 let isPcNow = null; // this copy's ctx.isPc, for the jobs (JOBS.lights)
@@ -706,9 +749,10 @@ export async function boot(api = sdk, opts = {}) {
       return null;
     }
   };
-  const [bridgeMod, fxMod, aimMod, geometry, rings, playerMod, lightsMod, writerMod] = await Promise.all([
+  const [bridgeMod, fxMod, aimMod, geometry, rings, playerMod, lightsMod, writerMod, viewsMod] = await Promise.all([
     role === "GM" ? tryLoad("bridge") : null, tryLoad("fx"), tryLoad("aim"), tryLoad("geometry"), tryLoad("rings"),
     role === "GM" ? null : tryLoad("player"), tryLoad("lights"), role === "GM" ? tryLoad("lightwriter") : null,
+    role === "GM" ? null : tryLoad("views"), // a GM screen aims the projector from its menus (MODULES.views)
   ]);
 
   let fx = null;
@@ -813,6 +857,9 @@ export async function boot(api = sdk, opts = {}) {
   }
 
   let player = null;
+  // Where this screen looks (views.js): the table screen's lock, a player's find me (screenViews).
+  let viewLock = null, findMe = null;
+  const projectors = new Map(); // on a GM screen: each table screen's last 📺 status (CH.VIEW), by connection
   const hooks = {
     onLocked: (result, info) => (role === "GM" ? gmLocked(result, info) : player?.onLocked?.(result, info)),
     onCancelled: (id) => {
@@ -850,8 +897,42 @@ export async function boot(api = sdk, opts = {}) {
         console.warn("dnd-npc: lights settings", e);
       }
     }
+    if (moved) screenViews(); // the table screen holds its view; a player's follows their PC
     if (moved && !quiet) hello();
     return moved;
+  }
+
+  function screenViews() {
+    // Start or stop what this screen does with its view, for what it is now: the table screen holds
+    // the view the DM aims it at; a player's own screen follows their PC after a portal trip
+    // (views.js). Neither on a copy that only relays here, nor on a GM screen: it aims the projector.
+    const table = drawsHere() && ctx.kind === "table";
+    const finder = drawsHere() && role !== "GM" && ctx.kind !== "table";
+    try {
+      if (!table && viewLock) {
+        viewLock.stop();
+        viewLock = null;
+      }
+      if (!finder && findMe) {
+        findMe.stop();
+        findMe = null;
+      }
+      if (table && !viewLock && viewsMod?.createProjectorLock) {
+        viewLock = viewsMod.createProjectorLock(api, ctx, {
+          timers: T,
+          note: (text) => busSend(api, CH.NOTE, { audience: "gm", text, variant: "WARNING" }, "REMOTE"),
+          report: (view) => busSend(api, CH.VIEW, { audience: "gm", name: ctx.name, view }, "REMOTE"),
+        });
+        viewLock.start();
+      }
+      if (finder && !findMe && viewsMod?.createFindMe) {
+        findMe = viewsMod.createFindMe(api, ctx, { timers: T, ownToken: () => player?.snapshot?.()?.entry?.token || null });
+        findMe.start();
+      }
+    } catch (e) {
+      errors.views = String(e?.message || e);
+      console.warn("dnd-npc: where this screen looks", e);
+    }
   }
 
   let askedWriters = false;
@@ -929,6 +1010,9 @@ export async function boot(api = sdk, opts = {}) {
       lights_ok: ctx.lights_ok, lights: lights?.status?.() ?? null,
       pc_tokens: [...ctx.pcTokens], // the heartbeat's PC ids: the 🔥 menu and list plan with them, as the writer does
       writer: (() => { try { return writer?.status?.() ?? null; } catch { return null; } })(),
+      // 📺 the table screens heard lately: how each holds the view the DM locked (views.js status)
+      projector: [...projectors.values()].filter((p) => T.now() - p.at < PROJECTOR_GONE_MS)
+        .map((p) => ({ ...p.view, name: p.name, age_s: Math.round((T.now() - p.at) / 1000) })),
     };
   }
   const pushState = () => { if (role === "GM") busSend(api, CH.LOCAL_STATE, snapshot(), "LOCAL"); };
@@ -968,9 +1052,12 @@ export async function boot(api = sdk, opts = {}) {
     shows.clear();
     try { player?.stop?.(); } catch (e) { console.warn("dnd-npc: player", e); }
     player = null;
+    screenViews(); // the Pages copy holds or follows the view here now
     if (role === "GM") {
       for (const id of Object.values(LOCAL_MENU_IDS)) Promise.resolve().then(() => O.contextMenu.remove(id)).catch(() => {});
-      Promise.resolve().then(() => O.tool.removeAction(LOCAL_GOTO_KEY_ID)).catch(() => {});
+      for (const id of [LOCAL_GOTO_KEY_ID, LOCAL_PROJECTOR_ACTION_ID]) {
+        Promise.resolve().then(() => O.tool.removeAction(id)).catch(() => {});
+      }
     }
     bridge?.relayOnly?.();
     pushState();
@@ -1033,6 +1120,12 @@ export async function boot(api = sdk, opts = {}) {
     if (!drawsHere() || !forMe(msg, me) || !msg.text) return;
     O.notification.show(String(msg.text), NOTE_VARIANTS.includes(msg.variant) ? msg.variant : "DEFAULT");
   });
+  // 📺 How each table screen holds its view (views.js status), for the GM box's projector lines.
+  busOn(api, CH.VIEW, (msg, ev) => {
+    if (role !== "GM" || !msg?.view || typeof msg.view !== "object" || ev?.viaScene || !ev?.connectionId) return;
+    projectors.set(ev.connectionId, { name: String(msg.name || ""), view: msg.view, at: T.now() });
+    pushState();
+  });
   busOn(api, CH.ROSTER, (msg) => {
     if (!drawsHere() || role === "GM" || msg.to !== ctx.playerId) return;
     player?.onRoster?.(msg.entry ?? null, msg);
@@ -1068,8 +1161,19 @@ export async function boot(api = sdk, opts = {}) {
   } else {
     // player/state.js answers its popover itself; this only says why when it didn't load.
     busOn(api, CH.LOCAL_ASK, (msg) => {
-      if (!drawsHere() || player || !mine(msg)) return;
+      if (!drawsHere() || player || !mine(msg) || msg.need === "find-me") return;
       busSend(api, CH.LOCAL_STATE, { role, host: ctx.host, error: errors.player || "not loaded" }, "LOCAL");
+    });
+    // 📍 Find my PC, from the player's box: the view on their PC (views.js).
+    busOn(api, CH.LOCAL_ASK, async (msg) => {
+      if (msg?.need !== "find-me" || !drawsHere() || !mine(msg)) return;
+      let found = false;
+      try {
+        found = !!(await findMe?.findNow?.());
+      } catch (e) {
+        console.warn("dnd-npc: find me", e);
+      }
+      if (!found) O.notification.show("📍 Your PC isn't on this map, or the DM hasn't linked you to one yet", "WARNING");
     });
   }
 
@@ -1141,9 +1245,14 @@ export async function boot(api = sdk, opts = {}) {
     }
     applySettings(ctx.settings, { quiet: true });
 
+    screenViews(); // the table screen holds its view; a player's follows their PC
+
     // ---- the GM: menus, and the bridge (or the old loops) ----
     if (role === "GM") {
-      if (!ctx.relayOnly) menus(local ? LOCAL_MENU_IDS : MENU_IDS, local ? LOCAL_GOTO_KEY_ID : GOTO_KEY_ID);
+      if (!ctx.relayOnly) {
+        menus(local ? LOCAL_MENU_IDS : MENU_IDS, local ? LOCAL_GOTO_KEY_ID : GOTO_KEY_ID,
+              local ? LOCAL_PROJECTOR_ACTION_ID : PROJECTOR_ACTION_ID);
+      }
       if (local) thisPcMenus(); // 🏘 and 👥: on this copy even when it only relays (THIS_PC_MENU_IDS)
       if (local) keepParty();
       O.scene.items.onChange(soon);
@@ -1189,6 +1298,7 @@ export async function boot(api = sdk, opts = {}) {
     ctx, snapshot, errors, stepAside,
     get started() { return started; }, get fx() { return fx; }, get aim() { return aim; }, get player() { return player; },
     get lights() { return lights; }, get writer() { return writer; },
+    get viewLock() { return viewLock; }, get findMe() { return findMe; },
   };
 }
 

@@ -75,3 +75,7 @@ export const SMOKE = "com.battle-system.smoke";
 // the extension (the laptop's Pages copy too) can match PC tokens by name without the panel.
 // A GM copy writes it whenever it gets the party from the panel and it differs (gather.js).
 export const PARTY_KEY = "dnd-npc/party";
+// 📺 The view the projector holds, on the SCENE (views.js): {v: 1, on: true, x, y, w, h, at}, the
+// scene rectangle it shows (scene pixels; the projector fits it to its own screen), or {v: 1, on:
+// false, at} once unlocked. Numbers only: every screen can read a scene's metadata.
+export const PROJECTOR_KEY = "dnd-npc/projector";

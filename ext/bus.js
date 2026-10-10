@@ -19,7 +19,8 @@ export const CH = {
   ROSTER: "dnd-npc/roster",             // bridge → player: {to, entry: RosterEntry}
   HELLO: "dnd-npc/hello",               // any → bridge: {role, kind, build, fx_ok, need:["roster","bridge"]}
   BRIDGE: "dnd-npc/bridge",             // bridge → all, every 5 s (below)
-  NOTE: "dnd-npc/note",                 // bridge → audience: {audience, text, variant}
+  NOTE: "dnd-npc/note",                 // bridge (or the table screen) → audience: {audience, text, variant}
+  VIEW: "dnd-npc/view",                 // table screen → GM screens: {audience:"gm", name, view} (views.js status)
   RPC: "dnd-npc/rpc",                   // laptop GM → bridge: {id, path} (allowlist: /api/map/catalog, /api/map/check)
   RPC_REPLY: "dnd-npc/rpc/reply",       // bridge → GM: {id, status, body}
   LOCAL_AIM: "dnd-npc/local/aim",       // popover → background (LOCAL): {spec}

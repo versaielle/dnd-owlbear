@@ -21,6 +21,10 @@
   #goto h4 { margin-top: 0; }
   #goto button { margin: 0 4px 4px 0; padding: 4px 10px; }
   #goto button:hover { background: rgba(255,255,255,.25); }
+  #projector { margin: 4px 0 8px; }
+  #projector h4 { margin-top: 0; }
+  #projector button { margin: 4px 4px 0 0; padding: 4px 10px; }
+  #pj-lines p { margin: 2px 0; }
   [hidden] { display: none !important; }
   #lighting h5 { margin: 8px 0 2px; font-size: 10px; letter-spacing: .06em; text-transform: uppercase; opacity: .55; }
   #lt-release { font-size: 11px; padding: 4px 10px; }
@@ -29,6 +33,11 @@
 <body>
 <h1 id="title">🗺 DND NPC</h1>
 <div id="goto" hidden><h4>🎯 Go to PC</h4><div id="pcs"></div></div>
+<div id="projector"><h4>📺 Projector</h4>
+<div id="pj-lines" class="small"><p class="dim">Loading…</p></div>
+<button id="pj-view" title="The projector shows what this screen shows, zoom too, and holds it there whatever Sync View does">📺 Show my view</button>
+<button id="pj-off" title="Let go of the projector: Sync View moves it again" hidden>🔓 Unlock</button>
+</div>
 <div id="status" class="dim">Asking the extension…</div>
 <div id="buttons"></div>
 
@@ -74,12 +83,15 @@
 // copy's host and only shows the answers from its own copy.
 //
 // At the top, "🎯 Go to PC": one button per PC token, which pans the view there (goto.js).
+// Then "📺 Projector" (views.js): whether the projector holds the view you locked (the table
+// screens report it), and 📺 Show my view / 🔓 Unlock. Right-click → 📺 Projector here aims it too.
 // Then "🔥 Lighting" (lightpanel.js): the scene's darkness, each PC's sight, darkvision and light,
 // the lit objects, the screens heard, and "Release lights to Smoke". It needs no panel.
-import OBR from "./obr-sdk.js?v=585985a-dc1dbb6";
-import { CH, LS, QUALITIES, ask, isLocalOrigin, lsGet, lsSet, on, send } from "./bus.js?v=585985a-dc1dbb6";
-import { goToPc, pcLabel, scenePcs } from "./goto.js?v=585985a-dc1dbb6";
-import { noPcsText } from "./gather.js?v=585985a-dc1dbb6";
+import OBR from "./obr-sdk.js?v=da53a06";
+import { CH, LS, QUALITIES, ask, isLocalOrigin, lsGet, lsSet, on, send } from "./bus.js?v=da53a06";
+import { goToPc, pcLabel, scenePcs } from "./goto.js?v=da53a06";
+import { noPcsText } from "./gather.js?v=da53a06";
+import { PROJECTOR_KEY } from "./keys.js?v=da53a06";
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
@@ -88,6 +100,8 @@ const local = isLocalOrigin(location.origin);
 const HOST = local ? "local" : "pages";
 let heard = false;
 let lighting = null; // lightpanel.js once loaded
+let views = null; // views.js once loaded (📺 Projector)
+let lastState = null;
 
 const BRIDGE_TEXT = {
   bridge: ["ok", "✅ This tab is the bridge to the DND panel"],
@@ -176,6 +190,31 @@ async function pcButtons() {
   document.getElementById("goto").hidden = false;
 }
 
+// 📺 Projector: the scene's lock, what the table screens say about it, and this tab's own Sync View.
+async function projectorBox(s = lastState) {
+  lastState = s;
+  if (!views) return;
+  let lock = null, ownSync = false;
+  try {
+    if (await OBR.scene.isReady()) lock = views.lockOf((await OBR.scene.getMetadata())?.[PROJECTOR_KEY]);
+  } catch { /* no scene: not locked */ }
+  try { ownSync = !!(await OBR.player.getSyncView()); } catch { /* an older Owlbear */ }
+  const lines = views.projectorLines({ lock, screens: s?.projector || [], ownSync, now: Date.now() });
+  $("pj-lines").innerHTML = lines.map((l) => `<p class="${esc(l.cls)}">${esc(l.text)}</p>`).join("");
+  $("pj-off").hidden = !lock?.on;
+}
+
+async function aimProjector(how) {
+  if (!views) return;
+  try {
+    const r = await views.aimProjector(OBR, how);
+    OBR.notification.show(r.text, r.ok ? "SUCCESS" : "WARNING");
+  } catch (e) {
+    OBR.notification.show(`📺 Aiming the projector failed: ${e?.error?.message || e?.message || e}`, "ERROR");
+  }
+  projectorBox();
+}
+
 async function check() {
   const app = $("app");
   let c;
@@ -216,6 +255,8 @@ $("scene").onchange = (e) => { lsSet(LS.SCENE_BUS, e.target.checked ? "1" : null
 $("quality").onchange =(e) => { lsSet(LS.QUALITY, e.target.value === "auto" ? null : e.target.value); askBg("refresh"); };
 $("test").onclick = () => { $("test-note").textContent = "…"; askBg("test"); };
 $("again").onclick = check;
+$("pj-view").onclick = () => aimProjector({ view: true });
+$("pj-off").onclick = () => aimProjector({ off: true });
 if (local) {
   $("probe").style.display = "";
   $("probe").onclick = () => { location.href = "./probe.html" + location.search; };
@@ -230,9 +271,18 @@ OBR.onReady(async () => {
     if (s?.host !== HOST) return;
     render(s);
     try { lighting?.state(s); } catch (e) { console.warn("dnd-npc: 🔥 Lighting", e); }
+    projectorBox(s).catch((e) => console.warn("dnd-npc: 📺 Projector", e));
+  });
+  // 📺 Projector: loaded on its own too.
+  import("./views.js?v=da53a06").then((m) => {
+    views = m;
+    projectorBox();
+  }).catch((e) => {
+    $("pj-lines").innerHTML = `<p class="bad">📺 Didn't load: ${esc(e?.message || e)}. Reload the room.</p>`;
+    $("pj-view").hidden = true;
   });
   // 🔥 Lighting: loaded on its own, so the rest of this box works whatever happens to it.
-  import("./lightpanel.js?v=585985a-dc1dbb6").then((m) => {
+  import("./lightpanel.js?v=da53a06").then((m) => {
     const css = document.createElement("style");
     css.textContent = m.LIGHTING_CSS;
     document.head.append(css);
