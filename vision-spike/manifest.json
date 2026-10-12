@@ -1,0 +1,16 @@
+{
+  "name": "DND vision spike",
+  "version": "0.513.0",
+  "manifest_version": 1,
+  "author": "dnd-npc",
+  "description": "THROWAWAY test build for the vision layer (spec S1-S7): frame meter, fog, party lights, walls, fog-layer memory, door handles. Test rooms only.",
+  "icon": "https://versaielle.github.io/dnd-owlbear/vision-spike/icon.svg",
+  "background_url": "https://versaielle.github.io/dnd-owlbear/vision-spike/background.html?v=cfced8d",
+  "action": {
+    "title": "Vision spike",
+    "icon": "https://versaielle.github.io/dnd-owlbear/vision-spike/icon.svg",
+    "popover": "https://versaielle.github.io/dnd-owlbear/vision-spike/popover.html?v=cfced8d",
+    "width": 460,
+    "height": 640
+  }
+}
