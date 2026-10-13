@@ -8,10 +8,15 @@
 //   toWorld(item, p) / worldPoints(item)   a CURVE's points on the scene (its position, turn and
 //                        scale; a closed one ends where it starts), as the SDK's MathM gives them
 //   ourState(v) / smokeState(meta)   a line's state in each format, or null
-//   readLine(item)       one line: {id, mapId: null, kind, open, locked, disabled, blocking,
-//                        doubleSided, src: "ours" | "smoke", points}, or null when it isn't one
+//   knownOf(meta)        has the party found this door's lock (WALL_KEY.knownLocked, in either
+//                        format: on a Smoke-only line our key holds only that)
+//   readLine(item)       one line: {id, mapId: null, kind, open, locked, knownLocked, disabled,
+//                        blocking, doubleSided, src: "ours" | "smoke", points}, or null when it isn't one
+//
+// Every state is read by truthiness or `=== true`, so a key written as an explicit false (our door
+// writes never delete one, fog/lines.js doorEdit) reads as missing: shut, unlocked, not known.
 
-import { SMOKE, WALL_KEY } from "../keys.js?v=27b182c";
+import { SMOKE, WALL_KEY } from "../keys.js?v=a84ca95";
 
 export const KINDS = ["wall", "door", "window"];
 const SK = (k) => `${SMOKE}/${k}`;
@@ -52,13 +57,18 @@ export function worldPoints(item) {
 
 // ---- what a line is ----
 
-// Our key's value as {kind, open, locked}, or null when it isn't one.
+// Our key's value as {kind, open, locked, knownLocked}, or null when it isn't one (no kind we know:
+// on a Smoke-only line it may hold only {knownLocked}).
 export function ourState(v) {
   if (!isObj(v) || !KINDS.includes(v.kind)) return null;
   const door = v.kind === "door";
   const open = door && v.open === true;
-  return { kind: v.kind, open, locked: door && !open && v.locked === true };
+  const locked = door && !open && v.locked === true;
+  return { kind: v.kind, open, locked, knownLocked: locked && v.knownLocked === true };
 }
+
+// Has the party found this door's lock? Our key's knownLocked, whichever format holds the door's state.
+export const knownOf = (meta) => isObj(meta) && isObj(meta[WALL_KEY]) && meta[WALL_KEY].knownLocked === true;
 
 // Smoke & Spectre's keys on a line as {kind, open, locked, disabled, blocking, doubleSided}, or
 // null when it isn't one of Smoke's lines.
@@ -85,6 +95,7 @@ export function readLine(item) {
   const s = ours || smoke;
   return {
     id: item.id, mapId: null, kind: s.kind, open: s.open, locked: s.locked,
+    knownLocked: s.locked && knownOf(meta), // the party found the lock (players see it only then)
     disabled: !ours && smoke.disabled, // a line the DM switched off in Smoke (never a door: that's open)
     blocking: ours ? true : smoke.blocking, // drags stop at it (ours always; Smoke's as the DM set it)
     doubleSided: ours ? true : smoke.doubleSided,

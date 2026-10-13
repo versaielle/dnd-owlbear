@@ -13,22 +13,28 @@
 //   Release      gives every token we manage back to plain Smoke & Spectre (two taps)
 //   🌫 Our fog    (at the top) the scene switch for our own vision layer (fog/fog.js: FOG_KEY.on; two
 //                taps to switch on, one off), with a warning while Smoke & Spectre's vision is on in
-//                the same scene, and what this GM screen draws for it (the background's fog status)
+//                the same scene, and what this GM screen draws for it (the background's fog status).
+//                A tap asks this device's background to write the whole switch (fog.js setOn: the
+//                fill, prev, Smoke's door state) at once; with no answer in SWITCH_WAIT_MS this box
+//                writes it itself (fog.js writeSwitch)
+//   🪵 Live log   (right under it, startLiveLog) every screen's fog and door log lines, newest first,
+//                each with the screen it came from, and a Copy button (fog/livelog.js)
 //
 // Every change goes through lightmeta.js's setLight / setVision, then planItem for Smoke's keys
 // with the lights writer's own ctx, in one write (fx/lightwriter.js writeNow): the writer's next
 // pass plans nothing more. Any control here that changes an input takes a scene released to
 // Smoke back (SCENE_LIGHTING_KEY.managed true); "Release lights to Smoke" sets it false.
-import { FOG_KEY, MAP_DARKNESS_KEY, PARTY_KEY, SCENE_LIGHTING_KEY } from "./keys.js?v=27b182c";
-import { SOURCES } from "./fx/lights.js?v=27b182c";
-import { isMap, mapDarkness, readGrid, sceneDarkness } from "./fx/darkness.js?v=27b182c";
-import { writeNow } from "./fx/lightwriter.js?v=27b182c";
-import { cleanParty } from "./gather.js?v=27b182c";
+import { FOG_KEY, MAP_DARKNESS_KEY, PARTY_KEY, SCENE_LIGHTING_KEY } from "./keys.js?v=a84ca95";
+import { SOURCES } from "./fx/lights.js?v=a84ca95";
+import { isMap, mapDarkness, readGrid, sceneDarkness } from "./fx/darkness.js?v=a84ca95";
+import { writeNow } from "./fx/lightwriter.js?v=a84ca95";
+import { cleanParty } from "./gather.js?v=a84ca95";
 import { DARKNESS, applyMeta, autoKind, carriers, describe, editFor, lightingOf, lightingRows, managed, releaseItem,
-         screenLine, screenWarnings, uiCtx } from "./lightui.js?v=27b182c";
+         screenLine, screenWarnings, uiCtx } from "./lightui.js?v=a84ca95";
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 const COMMON = ["candle", "torch", "lamp", "hooded_lantern", "brazier"].filter((k) => SOURCES[k]);
+export const SWITCH_WAIT_MS = 3000; // the background didn't answer the 🌫 tap by then: this box writes it
 // Darkness comes from light (docs/lights-darkness-spec.md): the scene's, and each map's own
 // (lightui.js DARKNESS: the same words as the 🔥 menu).
 const DARK_CHIPS = DARKNESS;
@@ -50,15 +56,72 @@ export const LIGHTING_CSS = `
   #lighting .fields label { display: inline-flex; gap: 4px; align-items: center; margin: 0; }
   #lighting select { font-size: 11px; padding: 1px 4px; }
   #lt-said { min-height: 15px; margin: 4px 0; }
+  #livelog .ll-line { font: 10px/1.35 ui-monospace, Consolas, monospace; margin: 1px 0; word-break: break-word; opacity: .9; }
+  #livelog .ll-line.error { color: #f08a7b; opacity: 1; }
+  #livelog .ll-line.switch, #livelog .ll-line.answerer { color: #9cd3ff; }
+  #livelog #ll-lines { max-height: 260px; overflow-y: auto; margin-top: 4px; }
+  #livelog #ll-copy { font-size: 11px; padding: 3px 10px; margin: 2px 0 0; }
+  #livelog textarea { width: 100%; height: 120px; font: 10px ui-monospace, Consolas, monospace; color: inherit;
+                      background: rgba(0,0,0,.35); border: 0; border-radius: 5px; }
 `;
 
-// el: {scene, pcs, lit, screens, said, release, fog?} elements; OBR: the SDK.
-export function startLighting(OBR, el, { build = "" } = {}) {
+// 🪵 Live log (popover.html, right under 🔥 Lighting): every screen's fog and door lines, as the
+// background sends them ({kind, text}, newest first: fog/livelog.js lineText), and a Copy button.
+// el: {lines, copy, said} elements. -> {show(lines, error)}
+export function startLiveLog(el) {
+  let shown = [];
+  const say = (text, cls = "dim") => {
+    if (!el.said) return;
+    el.said.className = `small ${cls}`;
+    el.said.textContent = text;
+  };
+  function show(lines, error = "") {
+    shown = Array.isArray(lines) ? lines.filter((l) => l && typeof l.text === "string") : [];
+    el.lines.innerHTML = "";
+    if (!shown.length) {
+      el.lines.innerHTML = `<p class="dim small">${error ? `🌫 Our fog didn't load here: ${esc(error)}`
+        : "Nothing yet: door requests, answers, door writes, the 🌫 switch and errors from every screen show here."}</p>`;
+      return;
+    }
+    for (const l of shown) {
+      const p = document.createElement("div");
+      p.className = `ll-line ${/^[a-z]+$/.test(l.kind || "") ? l.kind : ""}`;
+      p.textContent = l.text;
+      el.lines.append(p);
+    }
+  }
+  // Copy: the clipboard when the box may write it, else a selected text box to copy by hand.
+  async function copy() {
+    const text = shown.map((l) => l.text).join("\n");
+    if (!text) return say("Nothing to copy yet");
+    try {
+      await navigator.clipboard.writeText(text);
+      return say(`Copied ${shown.length} line(s)`, "ok");
+    } catch { /* this frame may not write the clipboard */ }
+    const box = document.createElement("textarea");
+    box.value = text;
+    box.readOnly = true;
+    el.lines.prepend(box);
+    box.focus?.();
+    box.select?.();
+    let done = false;
+    try { done = document.execCommand("copy"); } catch { done = false; }
+    say(done ? `Copied ${shown.length} line(s)` : "Press Ctrl+C (⌘C) to copy the selected lines", done ? "ok" : "warn");
+  }
+  if (el.copy) el.copy.onclick = () => { copy().catch((e) => say(`Couldn't copy: ${e?.message || e}`, "bad")); };
+  show([]);
+  return { show };
+}
+
+// el: {scene, pcs, lit, screens, said, release, fog?} elements; OBR: the SDK. ask(need, extra): a
+// LOCAL_ASK to this device's own background (popover.html), for the 🌫 switch.
+export function startLighting(OBR, el, { build = "", ask = null } = {}) {
   let ctx = null, items = [], sceneMeta = {}, roomMeta = {}, ready = false;
   let screens = null, myBuild = build, armed = 0, writer = null;
   // 🌫 Our fog: fog/fog.js, loaded on its own (the rest of the list works without it); the
-  // background's fog status on this screen (its LOCAL_STATE); the switch-on tap waiting for a second.
-  let fogMod = null, fogErr = "", fogStatus = null, fogArmed = 0;
+  // background's fog status on this screen (its LOCAL_STATE); the switch-on tap waiting for a second;
+  // the tap the background is writing ({id, on, timer}).
+  let fogMod = null, fogErr = "", fogStatus = null, fogArmed = 0, fogAsked = null;
   let pcIds = null; // the bridge heartbeat's PC ids (the background's snapshot), as the writer has them
 
   const say = (text, cls = "ok") => {
@@ -233,12 +296,15 @@ export function startLighting(OBR, el, { build = "" } = {}) {
     if (!s) return line("dim", "This screen: waiting for the extension's status…");
     if (!s.running) return line("warn", "This copy doesn't draw here (the other copy on this tab does, or it didn't start).");
     const n = (x, k) => Number(x?.[k]) || 0;
+    const a = s.answerer;
     line(s.error ? "warn" : "dim", `This screen: ${n(s.sight, "lights")} sight light(s) · ${n(s.walls, "walls")} wall(s)`
-      + ` on ${(s.walls?.maps || []).length} map(s) · ${n(s.doors, "handles")} door handle(s)`
-      + `${s.leader ? " · this tab writes the fog and the doors" : ""}${s.error ? ` · ⚠ ${s.error}` : ""}`);
+      + ` on ${(s.walls?.maps || []).length} map(s) · ${n(s.doors, "handles")} door(s)`
+      + `${a ? (a.here ? " · this screen answers the players' doors" : ` · players' doors: ${a.name}`) : ""}`
+      + `${s.error ? ` · ⚠ ${s.error}` : ""}`);
   }
 
-  // On takes two taps (it changes every screen at once); off takes one.
+  // On takes two taps (it changes every screen at once); off takes one. This device's background
+  // writes the whole switch at once (fog.js setOn); with no answer in SWITCH_WAIT_MS, this box does.
   async function toggleFog(on) {
     if (!ready) return say("Open a scene first", "warn");
     if (!fogMod) return say("🌫 Our fog didn't load", "bad");
@@ -249,11 +315,40 @@ export function startLighting(OBR, el, { build = "" } = {}) {
       return;
     }
     fogArmed = 0;
-    await fogMod.writeSwitch(OBR, on);
-    say(on ? "🌫 Our fog is on: every screen draws the party's sight, walls and doors (the leader GM tab turns the fog on in the scene's own colour)"
-      : "🌫 Our fog is off: Smoke & Spectre as before (the leader GM tab puts the fog's own fill back)");
+    if (fogAsked) return say("🌫 Still switching…", "dim");
+    if (typeof ask === "function") {
+      const id = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+      fogAsked = { id, on, timer: setTimeout(() => switchHere(on, id), SWITCH_WAIT_MS) };
+      say(on ? "🌫 Switching on…" : "🌫 Switching off…", "dim");
+      ask("fog-switch", { on, id });
+      return;
+    }
+    await switchHere(on, null);
+  }
+
+  // The background didn't answer (or there is none to ask): this box writes the switch itself.
+  async function switchHere(on, id) {
+    if (id && fogAsked?.id !== id) return; // answered meanwhile
+    if (fogAsked) clearTimeout(fogAsked.timer);
+    fogAsked = null;
+    try {
+      await fogMod.writeSwitch(OBR, on, Date.now());
+      say(on ? "🌫 Our fog is on: the fog's fill is on, every screen draws the party's sight, walls and doors"
+        : "🌫 Our fog is off: the fog's own fill is back, Smoke & Spectre as before");
+    } catch (e) {
+      say(`🌫 The switch failed: ${e?.error?.message || e?.message || e}`, "bad");
+    }
     await load();
     render();
+  }
+
+  // The background's answer to this box's tap (its LOCAL_STATE fog_said).
+  function switched(said) {
+    if (!fogAsked || !said || said.id !== fogAsked.id) return;
+    clearTimeout(fogAsked.timer);
+    fogAsked = null;
+    say(said.text || (said.ok ? "🌫 Done" : "🌫 The switch failed"), said.ok ? "ok" : "bad");
+    refresh();
   }
 
   function render() {
@@ -423,7 +518,7 @@ export function startLighting(OBR, el, { build = "" } = {}) {
     }
   }
 
-  import("./fog/fog.js?v=27b182c").then((m) => { fogMod = m; renderFog(); }, (e) => { fogErr = String(e?.message || e); renderFog(); });
+  import("./fog/fog.js?v=a84ca95").then((m) => { fogMod = m; renderFog(); }, (e) => { fogErr = String(e?.message || e); renderFog(); });
   OBR.scene.items.onChange(() => refresh());
   OBR.scene.onMetadataChange?.(() => refresh());
   OBR.scene.onReadyChange?.(() => refresh());
@@ -435,6 +530,7 @@ export function startLighting(OBR, el, { build = "" } = {}) {
     // The background's snapshot (LOCAL_STATE): the screens its bridge.js heard.
     state(s) {
       if (s?.build) myBuild = s.build;
+      if (s?.fog_said) switched(s.fog_said);
       if (s && "fog" in s) {
         const sig = JSON.stringify(s.fog ?? null);
         if (sig !== renderFog.sig) {

@@ -82,17 +82,23 @@ export const PROJECTOR_KEY = "dnd-npc/projector";
 // 🌫 Our own vision layer (docs/vision-layer-spec.md; the builders' contract is
 // docs/vision-layer-b2b3.md). FOG_KEY on the SCENE is the switch "🌫 Our fog": {v: 1, on, at,
 // prev?: {filled}}. Off or missing = our layer adds nothing, writes nothing, and Smoke & Spectre
-// works as before. Any GM screen writes `on` (the DM's click); the leader GM screen then turns the
-// fog's fill on and leaves its colour as the scene has it (like Smoke), keeping the fill it found
-// in `prev`, and puts that fill back (and drops `prev`) when it goes off. (An older build's prev
-// also held a colour: read fine, never written.) Every screen reads it: flags and a time only.
+// works as before. The GM screen whose 🌫 chip is tapped writes it all at once: on keeps the fog's
+// fill in `prev` and turns the fill on (its colour is left as the scene has it, like Smoke); off puts
+// prev's fill back and drops `prev`. (An older build's prev also held a colour: read fine, never
+// written.) Every screen reads it: flags and a time only.
 export const FOG_KEY = "dnd-npc/fog";
 // On a wall line (a CURVE, as 🏘 Set up interiors draws them, or one the DM marked): {kind: "wall"
-// | "door" | "window", open?: true, locked?: true} (open and locked only on a door, never both;
-// missing = false). Smoke & Spectre's own line keys (isVisionLine, isDoor, isWindow, doorOpen,
-// disabled, isDoorLocked, blocking, doubleSided) are still read (fog/lines.js); on a line that has
-// both, this key wins. A secret door nobody has found is a plain "wall": nothing in the scene says
-// it's special (every player screen can read it).
+// | "door" | "window", open, locked, knownLocked} (open, locked and knownLocked only mean anything
+// on a door; open and locked never both; missing = false). Our door writes (fog/lines.js doorEdit)
+// always write it in full with explicit booleans and NEVER delete a key, ours or Smoke's (a removed
+// key that another screen's copy already lacks breaks Owlbear's patch on that screen). knownLocked:
+// the party has found this lock by trying the door (players' screens show a lock only then); the
+// DM's lock starts unknown, an unlock forgets it. On a line in Smoke's format only, this key holds
+// just {knownLocked} (no kind): the door's state stays in Smoke's keys. Smoke & Spectre's own line
+// keys (isVisionLine, isDoor, isWindow, doorOpen, disabled, isDoorLocked, blocking, doubleSided) are
+// still read (fog/lines.js) by truthiness, so our explicit false is a shut, unlocked door to Smoke
+// too; on a line that has both formats, this key wins. A secret door nobody has found is a plain
+// "wall": nothing in the scene says it's special (every player screen can read it).
 export const WALL_KEY = "dnd-npc/wall";
 // On every LOCAL item the vision layer adds on a screen: {kind: "sight" | "wall" | "handle", key,
 // sig, host} (key: what it was made for, a PC token's id, a line's id or "edge:<map id>"; sig:
@@ -100,8 +106,21 @@ export const WALL_KEY = "dnd-npc/wall";
 // own). A door handle also carries {line, open, locked}: the door it works and how that door
 // stands, for the right-click menu's filters.
 export const FOG_LOCAL_KEY = "dnd-npc/fog-local";
-// Door requests, broadcast through bus.js send/on: any screen -> the leader GM screen, {req, op:
-// "open" | "close" | "lock" | "unlock", line, token, by, dm}; and the leader's answer, {audience:
-// "player:<id>" | "gm", req, line, op, ok, state: {open, locked}, why}.
+// Door requests, broadcast through bus.js send/on: a player's screen -> the answering GM screen
+// (fog/doors.js: the lowest connection among the GM screens that announced our fog), {req, op:
+// "open" | "close" | "lock" | "unlock", line, token, by, name, dm, via, to: <that GM's connection> |
+// null, any: true on the one retry}; and the answer, {audience: "player:<id>" | "gm", req, line, op,
+// ok, state: {open, locked} (a player's: only a lock the party knows), why, from: <the answering
+// connection>, name}. A GM's own door clicks write directly, never through a request.
 export const FOG_DOOR_CH = "dnd-npc/fog/door";
 export const FOG_DOOR_REPLY_CH = "dnd-npc/fog/door/reply";
+// Each GM screen drawing our fog says so on start and every 10 s: {conn, role: "GM", build, name}
+// ({bye: true} when it stops). Every screen keeps the ones heard in the last 25 s: the lowest
+// connection among them answers the players' door requests.
+export const FOG_HELLO_CH = "dnd-npc/fog/hello";
+// 🪵 Live log: each screen's new fog and door log lines, batched (at most one message per 2 s),
+// {audience: "gm", from, host, who, scr, lines: [{n, at, kind, text}]}; the GM screens collect them
+// for the GM box (fog/livelog.js). And a GM screen's background to its own GM box (LOCAL, the
+// popover's LOCAL_ASK "log" or a new line): {host, lines: [{kind, text}] (newest first), error}.
+export const FOG_LOG_CH = "dnd-npc/fog/log";
+export const FOG_LOG_LOCAL_CH = "dnd-npc/local/fog-log";

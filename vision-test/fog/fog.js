@@ -1,22 +1,24 @@
 // Our own vision layer's lifecycle (docs/vision-layer-spec.md sections 9-11; the builders' contract
 // is docs/vision-layer-b2b3.md, this file is its section 4 "fog.js"): the scene switch "🌫 Our fog",
 // one snapshot per pass for the three drawing parts (fog/sight.js: a light per PC, fog/walls.js: the
-// local walls, fog/doors.js: the door handles, their menus and the leader's door checks), the
-// throttle, and the leader GM screen's shared writes.
+// local walls, fog/doors.js: the door icons, their menus, the door writes and the players' requests),
+// the throttle, and the 🪵 Live log (fog/livelog.js).
 //
-//   SETTLE_MS, MAX_WAIT_MS, RETRY_MS, RETRY_MAX_MS, LEADER_RECHECK_MS, LEADER_WAIT_MS, LEADER_SLOW_MS
+//   SETTLE_MS, MAX_WAIT_MS, RETRY_MS, RETRY_MAX_MS
 //   SMOKE_VISION_OFF        Smoke & Spectre's own scene switch "Disable Vision" (its 5.0.4 MetadataKeys
 //                           FOG_DISABLE_VISION): true = Smoke draws no vision lights in this scene
 //   cleanFog(v)             FOG_KEY's value made safe: {v: 1, on, at, prev: {filled} | null} (an older
 //                           build's prev also held the fog's colour: read fine, and dropped)
 //   fogOn(sceneMeta)        is 🌫 Our fog on in this scene
-//   switchValue(raw, on, now)   what a click on 🌫 Our fog writes: {v: 1, on, at: now, prev?} (prev kept)
-//   writeSwitch(OBR, on, now)   that write (any GM screen: the DM's click; the 🔥 Lighting list uses it)
+//   switchValue(raw, on, now)   the switch's own value at a click: {v: 1, on, at: now, prev?} (prev kept)
+//   writeSwitch(OBR, on, now, {log})   the whole switch, from the GM screen whose chip was tapped: on
+//                           keeps the fog's fill in prev, turns the fill on and adopts Smoke's door state
+//                           (drift); off puts prev's fill back and clears prev. -> {next, filled, adopted}
 //   smokeVision(sceneMeta, items)   {here, on}: Smoke runs in this scene (its sceneId, a token it
 //                           gives sight), and its vision isn't switched off there
 //   inputSig(sceneMeta) / roomSig(roomMeta)   the metadata a pass depends on
 //   buildSnapshot(items, sceneMeta, roomMeta, grid, ctx)   the one snapshot every part plans from (pure)
-//   createFog(api, ctx, opts) -> {start(), stop(), status(), setOn(on), kick(), snapshot()}
+//   createFog(api, ctx, opts) -> {start(), stop(), status(), setOn(on), kick(), snapshot(), log(kind, text), logLines(max)}
 //
 // INERT WHEN OFF. While the scene's FOG_KEY.on isn't true, this file only watches the scene's
 // metadata (and whether a scene is open): no local item, no write, no menu, no item listener. The
@@ -24,24 +26,19 @@
 //
 // SAME PICTURE EVERYWHERE. Every screen that draws (GM tabs, the projector's Cast receiver, phones;
 // never a copy that only relays) builds its lights, walls and handles from the same snapshot. The
-// one screen-dependent choice is the GM pass-through, ctx.gmPass (contract section 8): "B" (the
-// default) puts each PC's light standalone on a GM screen, so no wall stops the DM's moves there.
+// screen-dependent choices: the GM pass-through, ctx.gmPass (contract section 8): "B" (the default)
+// puts each PC's light standalone on a GM screen, so no wall stops the DM's moves there; and the door
+// icons (a player's screen shows a lock only once the party has found it, fog/doors.js).
 //
-// ONE WRITER. Shared writes come only from the leader GM screen (opts.isLeader: the lights writer's
-// gate, fx/lightwriter.js), except the DM's own click on the switch:
-//   - 🌫 Our fog turns on: the fog fill found is kept in FOG_KEY.prev (once: an existing prev is the
-//     scene's own from before), the fill goes on in the scene's own fog colour (never changed, as
-//     Smoke leaves it), and every door line that has both formats takes Smoke's state (fog/lines.js
-//     drift: Smoke was in charge until now);
-//   - it turns off: prev's fill goes back on the fog (the colour is left alone), and FOG_KEY loses prev.
-// The leader does each once per switch time (FOG_KEY.at). A GM screen that isn't the leader yet (the
-// lights writer's 35 s warm-up) looks again every LEADER_RECHECK_MS while something is due, for
-// LEADER_WAIT_MS: by then the leader (another GM screen, or this one) has usually done it. When
-// nobody has (the scene still says so: FOG_KEY.prev waiting to go back, or no prev kept at a
-// switch-on), it keeps looking every LEADER_SLOW_MS for as long as that lasts: no GM screen may
-// lead for a while (GM screens on different builds, an old build open), and a fog left filled
-// would hide the map from Smoke's players. kick() also looks while something is due, and
-// background.js kicks whenever the lights writer's gate changes.
+// NO LEADER. Each shared write comes from the screen where it is asked for, at once:
+//   - the 🌫 switch, from the GM screen whose chip was tapped (writeSwitch): on keeps the fog fill it
+//     finds in FOG_KEY.prev (an existing prev is the scene's own from before), turns the fill on in
+//     the scene's own fog colour (never changed, as Smoke leaves it), and gives every door line that
+//     has both formats Smoke's state (fog/lines.js drift: Smoke was in charge until now); off puts
+//     prev's fill back (the colour is left alone) and writes prev: null (never a deleted key);
+//   - a GM's own door click, from that GM screen; a player's door request, from the GM screen that
+//     answers it (fog/doors.js). The lights writer's leader gate (fx/lightwriter.js) is the lights'
+//     alone.
 //
 // PASSES. One at a time (a request during one gives one more after it); stop() waits for the one
 // in flight, which checks after every await that it still should draw, so a copy stepping aside
@@ -54,25 +51,28 @@
 // plan is unchanged, so a pass with nothing new asks nothing of Owlbear. The walls go first, so a
 // switch-on never shows a light before the walls that stop it.
 //
+// 🪵 LIVE LOG. Every screen keeps its own fog and door lines and broadcasts the new ones (fog/livelog.js);
+// a GM screen collects them all for the GM box. A pass logs only when it fails (once per new error).
+//
 // While on, a GM screen whose scene also has Smoke's vision on gets one notification per switch-on,
 // and status().smoke says so for the 🔥 Lighting list: both would draw fog.
 
-import { FOG_KEY, FOG_LOCAL_KEY, PARTY_KEY, PARTY_SENSES_KEY, SCENE_LIGHTING_KEY, SMOKE } from "../keys.js?v=27b182c";
-import { planCtx } from "../fx/lightwriter.js?v=27b182c";
-import { readGrid } from "../fx/darkness.js?v=27b182c";
-import { mapRects } from "../views.js?v=27b182c";
-import { doorEdit, drift, occupiedMaps, readLines } from "./lines.js?v=27b182c";
-import { createSight } from "./sight.js?v=27b182c";
-import { createWalls } from "./walls.js?v=27b182c";
-import { createDoors } from "./doors.js?v=27b182c";
+import { FOG_KEY, FOG_LOCAL_KEY, PARTY_KEY, PARTY_SENSES_KEY, SCENE_LIGHTING_KEY, SMOKE } from "../keys.js?v=a84ca95";
+import { planCtx } from "../fx/lightwriter.js?v=a84ca95";
+import { readGrid } from "../fx/darkness.js?v=a84ca95";
+import { mapRects } from "../views.js?v=a84ca95";
+import { doorEdit, drift, occupiedMaps, readLines } from "./lines.js?v=a84ca95";
+import { createSight } from "./sight.js?v=a84ca95";
+import { createWalls } from "./walls.js?v=a84ca95";
+import { createDoors } from "./doors.js?v=a84ca95";
+import { createLiveLog, lineText } from "./livelog.js?v=a84ca95";
+
+export { lineText }; // a live-log line as text (background.js sends them to the GM box)
 
 export const SETTLE_MS = 150; // item changes settle this long before a pass
 export const MAX_WAIT_MS = 750; // ...but a long drag still gets a pass this often
 export const RETRY_MS = 2000; // a failed sync is tried again after this, doubling...
 export const RETRY_MAX_MS = 30000; // ...up to this
-export const LEADER_RECHECK_MS = 5000; // a GM screen with a leader's write due, but not the leader yet, looks again...
-export const LEADER_WAIT_MS = 60000; // ...this long (the lights writer's warm-up is 35 s; then some GM screen leads)
-export const LEADER_SLOW_MS = 30000; // ...then this often, while the scene shows nobody did it
 export const SMOKE_VISION_OFF = `${SMOKE}/disableVision`;
 const SMOKE_SCENE_ID = `${SMOKE}/sceneId`; // Smoke writes it the first time it runs in a scene
 const SMOKE_HAS_VISION = `${SMOKE}/hasVision`;
@@ -81,7 +81,7 @@ const isObj = (x) => !!x && typeof x === "object" && !Array.isArray(x);
 const finite = (x) => typeof x === "number" && Number.isFinite(x);
 const describe = (e) => e?.error?.message || e?.message || String(e);
 
-// ---- the switch (pure) ----
+// ---- the switch ----
 
 // prev is the fill only: the fog's colour is the scene's own and never ours to write (an older
 // build's prev.color is read without a fuss and left out, so it's never written back).
@@ -94,7 +94,8 @@ export function cleanFog(v) {
 
 export const fogOn = (sceneMeta) => cleanFog(sceneMeta?.[FOG_KEY]).on;
 
-// A click on 🌫 Our fog: on or off, now; the prev the leader kept stays (it puts it back itself).
+// The switch's own value at a click: on or off, now, the prev already kept (writeSwitch adds or
+// clears prev itself).
 export function switchValue(raw, on, now) {
   const cur = cleanFog(raw);
   const out = { v: 1, on: !!on, at: finite(now) ? now : 0 };
@@ -102,11 +103,53 @@ export function switchValue(raw, on, now) {
   return out;
 }
 
-export async function writeSwitch(OBR, on, now = Date.now()) {
+// Every door line with both formats gets Smoke's state (Smoke was in charge until our fog went on),
+// in one updateItems, through doorEdit (explicit values, never a deleted key). -> how many changed.
+async function adoptDrift(OBR) {
+  const list = await OBR.scene.items.getItems((i) => i?.type === "CURVE" && !!drift(i.metadata));
+  const ids = (Array.isArray(list) ? list : []).filter((i) => i?.type === "CURVE" && drift(i.metadata)).map((i) => i.id);
+  if (!ids.length) return 0;
+  let n = 0;
+  await OBR.scene.items.updateItems(ids, (ds) => {
+    for (const d of ds) {
+      const c = drift(d.metadata);
+      if (c && doorEdit(d.metadata, c)) n++;
+    }
+  });
+  return n;
+}
+
+// The DM's tap on 🌫 Our fog, written whole from that GM screen, at once. log(text): the 🪵 Live log.
+export async function writeSwitch(OBR, on, now = Date.now(), { log = null } = {}) {
+  const say = (t) => { try { log?.(t); } catch { /* the log is optional */ } };
   const meta = (await OBR.scene.getMetadata()) || {};
-  const next = switchValue(meta[FOG_KEY], on, now);
+  const cur = cleanFog(meta[FOG_KEY]);
+  const fill = OBR.scene.fog;
+  const at = finite(now) ? now : 0;
+  if (on) {
+    const was = (await fill.getFilled()) === true;
+    // An existing prev is the scene's own fill from before (a switch-on whose off never ran): kept.
+    const prev = cur.prev || { filled: was };
+    const next = { v: 1, on: true, at, prev };
+    await OBR.scene.setMetadata({ [FOG_KEY]: next });
+    // The fill only: the fog keeps the scene's own colour, as Smoke leaves it.
+    if (!was) await fill.setFilled(true);
+    const adopted = await adoptDrift(OBR);
+    say(`🌫 switched on from this screen: the fog's fill ${was ? "was on already" : "is on"} (its own, ${prev.filled ? "on" : "off"},`
+      + ` kept to put back)${adopted ? `; Smoke's door state adopted on ${adopted} line${adopted === 1 ? "" : "s"}` : ""}`);
+    return { next, filled: true, adopted };
+  }
+  // off: the scene's own fill back first (prev stays until it is), then the switch with prev cleared
+  let back = null;
+  if (cur.prev) {
+    back = cur.prev.filled;
+    if ((await fill.getFilled()) !== back) await fill.setFilled(back);
+  }
+  const next = { v: 1, on: false, at, prev: null };
   await OBR.scene.setMetadata({ [FOG_KEY]: next });
-  return next;
+  say(`🌫 switched off from this screen: ${back == null ? "no fill of the scene's own was kept, so the fog is left as it is"
+    : `the fog's own fill (${back ? "on" : "off"}) is back`}; Smoke & Spectre as before`);
+  return { next, filled: back, adopted: 0 };
 }
 
 // Is Smoke & Spectre drawing vision in this scene? `here`: it has run in it (the scene id it writes)
@@ -144,10 +187,11 @@ export function buildSnapshot(items, sceneMeta, roomMeta, grid, ctx = {}, at = 0
 
 // ---- the lifecycle on one screen ----
 
-// api: background.js's sdk ({OBR, buildLight, buildWall, buildShape, ...}). ctx: background.js's
-// (role, kind, host, conn, playerId, name, isPc, pcTokens, party, log; read live, through getters).
-// opts: {isLeader(), ownToken(), gmPass "A" | "B", doorTap, timers, makers ({sight, walls, doors}:
-// the offline check's fakes)}.
+// api: background.js's sdk ({OBR, buildLight, buildWall, buildShape, buildImage, ...}). ctx:
+// background.js's (role, kind, host, conn, playerId, name, build, isPc, pcTokens, party, log; read
+// live, through getters). opts: {ownToken(), gmPass "A" | "B", doorTap, lockHandles (door icons
+// locked: a live-check flag), timers, random() (the checks'), liveLog: false (none), makers ({sight,
+// walls, doors}: the offline check's fakes)}.
 export function createFog(api = {}, ctx = {}, opts = {}) {
   const O = api.OBR;
   const T = opts.timers || ctx.timers || {
@@ -155,9 +199,18 @@ export function createFog(api = {}, ctx = {}, opts = {}) {
   };
   const host = ctx.host ?? "";
   const isGm = () => ctx.role === "GM";
-  const leader = () => { try { return isGm() && !!opts.isLeader?.(); } catch { return false; } };
-  const log = (t) => { try { ctx.log?.(`fog: ${t}`); } catch { /* nowhere to say it */ } };
   const makers = { sight: createSight, walls: createWalls, doors: createDoors, ...(opts.makers || {}) };
+  // The 🪵 Live log: this screen's lines (and on a GM screen every screen's). Its echo is the console.
+  const live = opts.liveLog === false ? null : createLiveLog(api, {
+    timers: T,
+    me: () => ({ conn: ctx.conn ?? null, host, name: ctx.name, kind: ctx.kind, role: ctx.role }),
+    echo: (t) => { try { ctx.log?.(t); } catch { /* quiet */ } },
+  });
+  const say = (kind, text) => {
+    if (live) live.add(kind, text);
+    else { try { ctx.log?.(`fog ${kind}: ${text}`); } catch { /* nowhere to say it */ } }
+  };
+  const log = (t) => say("fog", t);
 
   let running = false, sceneReady = false, drawing = false;
   let items = null, sceneMeta = {}, roomMeta = {}, grid = null, gridStale = true;
@@ -167,24 +220,24 @@ export function createFog(api = {}, ctx = {}, opts = {}) {
   const partErrors = {};
   let unsubs = [], drawUnsubs = [];
   let busy = false, again = false, passes = 0, current = null; // current: the run in flight
-  let settleT = null, firstAt = null, retryT = null, retryMs = RETRY_MS, leaderT = null;
-  let doneOn = null, warnedAt = null; // the FOG_KEY.at the leader's switch-on work / the Smoke note was done for
-  let owing = null; // {key, since}: a leader's write this GM screen saw due while it wasn't the leader
-  let lastError = null, smoke = { here: false, on: false };
+  let settleT = null, firstAt = null, retryT = null, retryMs = RETRY_MS;
+  let warnedAt = null; // the FOG_KEY.at the Smoke note was given for
+  let lastError = null, saidError = null, smoke = { here: false, on: false };
 
   // The ctx the three parts get (contract section 2), read live from background.js's.
   const partCtx = {
     get role() { return ctx.role; }, get isGm() { return isGm(); }, get kind() { return ctx.kind; },
     get host() { return host; }, get conn() { return ctx.conn; }, get playerId() { return ctx.playerId; },
-    get name() { return ctx.name; },
-    isLeader: leader,
+    get name() { return ctx.name; }, get build() { return ctx.build ?? ""; },
     isPc: (i) => { try { return !!ctx.isPc?.(i); } catch { return false; } },
     ownToken: () => { try { return opts.ownToken?.() ?? null; } catch { return null; } },
     get gmPass() { return opts.gmPass === "A" ? "A" : "B"; },
     get doorTap() { return !!opts.doorTap; },
+    get lockHandles() { return !!opts.lockHandles; },
+    random: opts.random,
     snapshot: () => snap,
     timers: T,
-    log: (t) => { try { ctx.log?.(t); } catch { /* quiet */ } },
+    log: (t, kind = "fog") => say(kind, t),
   };
 
   function makeParts() {
@@ -196,12 +249,11 @@ export function createFog(api = {}, ctx = {}, opts = {}) {
       } catch (e) {
         parts[name] = null;
         partErrors[name] = describe(e);
-        log(`${name} didn't start: ${partErrors[name]}`);
+        say("error", `${name} didn't start: ${partErrors[name]}`);
       }
     }
     return parts;
   }
-  const each = (f) => { for (const p of Object.values(parts || {})) if (p) f(p); };
 
   // ---- passes: one at a time ----
 
@@ -220,7 +272,7 @@ export function createFog(api = {}, ctx = {}, opts = {}) {
         } while (again && running);
       } catch (e) {
         lastError = describe(e);
-        log(`pass failed: ${lastError}`);
+        sayError(`a pass failed: ${lastError}`);
         retry();
       } finally {
         busy = false;
@@ -228,6 +280,13 @@ export function createFog(api = {}, ctx = {}, opts = {}) {
       }
     })();
     return current;
+  }
+
+  // A failed pass, in the live log once per new error (a retry that fails the same way says nothing).
+  function sayError(text) {
+    if (text === saidError) return;
+    saidError = text;
+    say("error", text);
   }
 
   function soon() {
@@ -252,32 +311,14 @@ export function createFog(api = {}, ctx = {}, opts = {}) {
     }, ms);
   }
 
-  function leaderLater(ms = LEADER_RECHECK_MS) {
-    if (leaderT || !running || !isGm()) return;
-    leaderT = T.setTimeout(() => {
-      leaderT = null;
-      run();
-    }, ms);
-  }
-
   async function pass() {
     if (!running || !sceneReady) return;
     passes++;
     const fog = cleanFog(sceneMeta[FOG_KEY]);
-    let failed = null;
-    try {
-      await leaderWork(fog);
-    } catch (e) {
-      // the shared write failed (tried again after RETRY_MS, doubling): our drawing goes on
-      failed = `leader: ${describe(e)}`;
-      log(`the leader's write failed: ${describe(e)}`);
-    }
-    if (!running) return; // stop() came meanwhile: it cleans up
     if (!fog.on) {
       if (drawing) await bringDown();
-      lastError = failed;
-      if (failed) retry();
-      else retryMs = RETRY_MS;
+      lastError = null;
+      retryMs = RETRY_MS;
       return;
     }
     if (!drawing) await bringUp();
@@ -294,8 +335,10 @@ export function createFog(api = {}, ctx = {}, opts = {}) {
     if (isGm() && smoke.on && warnedAt !== fog.at) {
       warnedAt = fog.at;
       note("🌫 Our fog is on, and Smoke & Spectre's vision is on in this scene too: switch on “Disable Vision” in Smoke's settings", "WARNING");
+      say("fog", "Smoke & Spectre's vision is on in this scene too: both draw fog (switch on “Disable Vision” in Smoke)");
     }
     // The walls first: a light never shows before the walls that stop it.
+    let failed = null;
     for (const name of ["walls", "sight", "doors"]) {
       if (!running || !drawing) return;
       const p = parts[name];
@@ -309,8 +352,14 @@ export function createFog(api = {}, ctx = {}, opts = {}) {
       if (r?.failed) failed = `${name}: ${r.error || "failed"}`;
     }
     lastError = failed;
-    if (failed) retry();
-    else retryMs = RETRY_MS;
+    if (failed) {
+      sayError(`a pass failed (tried again in ${Math.round(retryMs / 1000)} s): ${failed}`);
+      retry();
+    } else {
+      if (saidError) say("fog", "a pass worked again");
+      saidError = null;
+      retryMs = RETRY_MS;
+    }
   }
 
   // Our items come on: the parts, the door menus, and the listeners only a drawing screen needs.
@@ -350,6 +399,7 @@ export function createFog(api = {}, ctx = {}, opts = {}) {
       await parts.doors?.start?.();
     } catch (e) {
       partErrors.doors = describe(e);
+      say("error", `the door menus didn't start: ${partErrors.doors}`);
     }
     log("on: drawing our sight, walls and doors here");
   }
@@ -371,6 +421,7 @@ export function createFog(api = {}, ctx = {}, opts = {}) {
     }
     await sweep();
     lastError = null;
+    saidError = null;
     log("off: our items are gone from this screen; Smoke & Spectre as before");
   }
 
@@ -390,62 +441,6 @@ export function createFog(api = {}, ctx = {}, opts = {}) {
       const p = O.notification?.show?.(text, variant);
       if (p && typeof p.catch === "function") p.catch(() => {});
     } catch { /* fine */ }
-  }
-
-  // ---- the leader's shared writes ----
-
-  // What the leader still owes this switch state: "on" (keep prev, fill on, adopt drift), "off"
-  // (put prev's fill back), or null.
-  const due = (fog) => (fog.on ? (doneOn === fog.at ? null : "on") : fog.prev ? "off" : null);
-
-  async function leaderWork(fog) {
-    const owe = due(fog);
-    if (!owe || !isGm()) {
-      owing = null;
-      return;
-    }
-    if (!leader()) {
-      const key = `${owe}|${fog.at}`;
-      if (owing?.key !== key) owing = { key, since: T.now() };
-      // After LEADER_WAIT_MS, go on looking (slowly) only while the scene shows nobody has done it:
-      // prev still waiting to go back, or none kept at this switch-on.
-      if (T.now() - owing.since < LEADER_WAIT_MS) leaderLater(LEADER_RECHECK_MS);
-      else if (owe === "off" || !fog.prev) leaderLater(LEADER_SLOW_MS);
-      return;
-    }
-    owing = null;
-    if (owe === "on") {
-      const fill = O.scene.fog;
-      if (!fog.prev) {
-        const prev = { filled: (await fill.getFilled()) === true };
-        // Only onto the switch as it stands now (the DM may have clicked again meanwhile).
-        const now = cleanFog(((await O.scene.getMetadata()) || {})[FOG_KEY]);
-        if (!now.on || now.at !== fog.at) return;
-        await O.scene.setMetadata({ [FOG_KEY]: { v: 1, on: true, at: fog.at, prev } });
-      }
-      // The fill only: the fog keeps the scene's own colour, as Smoke leaves it.
-      if ((await fill.getFilled()) !== true) await fill.setFilled(true);
-      const list = items || (await O.scene.items.getItems());
-      const drifted = list.filter((i) => i?.type === "CURVE" && drift(i.metadata)).map((i) => i.id);
-      if (drifted.length) {
-        await O.scene.items.updateItems(drifted, (ds) => {
-          for (const d of ds) {
-            const c = drift(d.metadata);
-            if (c) doorEdit(d.metadata, c);
-          }
-        });
-        log(`adopted Smoke's door state on ${drifted.length} line(s)`);
-      }
-      doneOn = fog.at;
-      log("switched on: the fog is on in the scene's own colour (its own fill kept to put back)");
-      return;
-    }
-    // off: put the scene's own fill back (the colour was never ours), then drop prev
-    const now = cleanFog(((await O.scene.getMetadata()) || {})[FOG_KEY]);
-    if (now.on || !now.prev) return;
-    await O.scene.fog.setFilled(now.prev.filled);
-    await O.scene.setMetadata({ [FOG_KEY]: { v: 1, on: false, at: now.at } });
-    log("switched off: the fog's own fill is back");
   }
 
   // ---- watching the scene ----
@@ -480,6 +475,7 @@ export function createFog(api = {}, ctx = {}, opts = {}) {
   async function start() {
     if (running) return;
     running = true;
+    try { live?.start(); } catch (e) { log(`the live log didn't start: ${describe(e)}`); }
     const sub = (f) => {
       try {
         const u = f();
@@ -501,38 +497,49 @@ export function createFog(api = {}, ctx = {}, opts = {}) {
     if (!running) return;
     running = false;
     for (const u of unsubs.splice(0)) { try { u(); } catch { /* gone */ } }
-    for (const t of [leaderT, settleT, retryT]) if (t) T.clearTimeout(t);
-    leaderT = settleT = retryT = null;
+    for (const t of [settleT, retryT]) if (t) T.clearTimeout(t);
+    settleT = retryT = null;
     // The pass in flight first (it stops at its next await): then nothing of it lands after this.
     if (current) { try { await current; } catch { /* run() keeps its own errors */ } }
     if (drawing) await bringDown();
     else await sweep();
+    try { live?.stop(); } catch { /* gone */ }
   }
 
-  // kick(): an input background.js holds changed (the heartbeat's PC ids, the party; the lights
-  // writer's gate): a pass while drawing, and while off too when a leader's write is still due.
+  // kick(): an input background.js holds changed (the heartbeat's PC ids, the party): a pass while drawing.
   function kick() {
     if (drawing) soon();
-    else if (running && sceneReady && isGm() && due(cleanFog(sceneMeta[FOG_KEY]))) run();
   }
 
-  // The DM's click on 🌫 Our fog (any GM screen).
+  // The DM's tap on 🌫 Our fog (any GM screen): the whole switch from here, at once.
   async function setOn(on) {
     if (!isGm()) return { ok: false, text: "Only the DM switches 🌫 Our fog" };
     if (!(await O.scene.isReady())) return { ok: false, text: "Open a scene first" };
-    await writeSwitch(O, on, T.now());
-    return { ok: true, text: on ? "🌫 Our fog is on" : "🌫 Our fog is off: Smoke & Spectre as before" };
+    try {
+      await writeSwitch(O, on, T.now(), { log: (t) => say("switch", t) });
+    } catch (e) {
+      say("error", `the 🌫 switch failed: ${describe(e)}`);
+      return { ok: false, text: `🌫 The switch failed: ${describe(e)}` };
+    }
+    return { ok: true, text: on ? "🌫 Our fog is on: the fog's fill is on, every screen draws the party's sight, walls and doors"
+      : "🌫 Our fog is off: the fog's own fill is back, Smoke & Spectre as before" };
   }
 
   function status() {
     const st = (name) => { try { return parts?.[name]?.status?.() ?? null; } catch (e) { return { error: describe(e) }; } };
     const fog = cleanFog(sceneMeta[FOG_KEY]);
+    const doors = st("doors");
     return {
-      running, ready: sceneReady, on: fog.on, drawing, leader: leader(), gm_pass: partCtx.gmPass, passes,
-      smoke: fog.on ? smoke : null, sight: st("sight"), walls: st("walls"), doors: st("doors"),
-      errors: { ...partErrors }, error: lastError,
+      running, ready: sceneReady, on: fog.on, drawing, gm_pass: partCtx.gmPass, passes,
+      answerer: drawing ? doors?.answerer ?? null : null,
+      smoke: fog.on ? smoke : null, sight: st("sight"), walls: st("walls"), doors,
+      errors: { ...partErrors }, error: lastError, log: live ? live.status() : null,
     };
   }
 
-  return { start, stop, status, setOn, kick, snapshot: () => snap };
+  return {
+    start, stop, status, setOn, kick, snapshot: () => snap,
+    log: (kind, text) => say(kind, text),
+    logLines: (max) => (live ? live.lines(max) : []),
+  };
 }

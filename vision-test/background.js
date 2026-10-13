@@ -18,14 +18,14 @@
 // and a player's view follows their PC after a portal trip. Those load with import() and may fail
 // on their own: the map jobs, rings and HP keep working without them.
 import OBR, { buildCurve, buildEffect, buildImage, buildLabel, buildLight, buildPath, buildShape, buildText, buildWall, Math2,
-  MathM } from "./obr-sdk.js?v=27b182c";
-import { contains, isRoom, size } from "./areas.js?v=27b182c";
-import { checkPortals, describe, panelLog, setUpInteriors } from "./interiors.js?v=27b182c";
-import { cleanParty, placeTownsfolk, rememberParty } from "./gather.js?v=27b182c";
-import { isPcToken, nameKey, pcName, tokenLabel } from "./fx/pcs.js?v=27b182c";
-import { BADGE_KEY, BADGE_URL, BUBBLES_KEY, BUBBLES_NAME_KEY, COND_KEY, CONDITIONS, DOWN_COLOR, GRIMOIRE_KEY, MARK_PREFIX, PARTY_KEY, PARTY_SENSES_KEY, PLACE_KEY, RING_KEY, TARGET_COLOR, WHO_KEY } from "./keys.js?v=27b182c";
+  MathM } from "./obr-sdk.js?v=a84ca95";
+import { contains, isRoom, size } from "./areas.js?v=a84ca95";
+import { checkPortals, describe, panelLog, setUpInteriors } from "./interiors.js?v=a84ca95";
+import { cleanParty, placeTownsfolk, rememberParty } from "./gather.js?v=a84ca95";
+import { isPcToken, nameKey, pcName, tokenLabel } from "./fx/pcs.js?v=a84ca95";
+import { BADGE_KEY, BADGE_URL, BUBBLES_KEY, BUBBLES_NAME_KEY, COND_KEY, CONDITIONS, DOWN_COLOR, FOG_LOG_LOCAL_CH, GRIMOIRE_KEY, MARK_PREFIX, PARTY_KEY, PARTY_SENSES_KEY, PLACE_KEY, RING_KEY, TARGET_COLOR, WHO_KEY } from "./keys.js?v=a84ca95";
 import { CH, DEFAULT_SETTINGS, LS, buildOf, forMe, here, isLocalOrigin, kindOf, lsGet, on as busOn, send as busSend,
-  setConnection, setSceneWrite, startSceneReader, tierOf } from "./bus.js?v=27b182c";
+  setConnection, setSceneWrite, startSceneReader, tierOf } from "./bus.js?v=a84ca95";
 
 const HEARTBEAT_MS = 10000;
 const DEBOUNCE_MS = 250;
@@ -629,18 +629,18 @@ const JOBS = {
 // The parts that load on their own (R4): a broken one is left out and the rest carry on.
 // Literal paths, so the publisher can stamp each with the build.
 const MODULES = {
-  bridge: () => import("./bridge.js?v=27b182c"),
-  fx: () => import("./fx/engine.js?v=27b182c"),
-  samples: () => import("./fx/samples.js?v=27b182c"),
-  aim: () => import("./aim/tool.js?v=27b182c"),
-  geometry: () => import("./aim/geometry.js?v=27b182c"),
-  rings: () => import("./aim/rings.js?v=27b182c"),
-  player: () => import("./player/state.js?v=27b182c"),
-  lights: () => import("./fx/lighting.js?v=27b182c"),
-  lightjobs: () => import("./fx/lightjobs.js?v=27b182c"),
-  lightwriter: () => import("./fx/lightwriter.js?v=27b182c"),
-  views: () => import("./views.js?v=27b182c"),
-  fog: () => import("./fog/fog.js?v=27b182c"),
+  bridge: () => import("./bridge.js?v=a84ca95"),
+  fx: () => import("./fx/engine.js?v=a84ca95"),
+  samples: () => import("./fx/samples.js?v=a84ca95"),
+  aim: () => import("./aim/tool.js?v=a84ca95"),
+  geometry: () => import("./aim/geometry.js?v=a84ca95"),
+  rings: () => import("./aim/rings.js?v=a84ca95"),
+  player: () => import("./player/state.js?v=a84ca95"),
+  lights: () => import("./fx/lighting.js?v=a84ca95"),
+  lightjobs: () => import("./fx/lightjobs.js?v=a84ca95"),
+  lightwriter: () => import("./fx/lightwriter.js?v=a84ca95"),
+  views: () => import("./views.js?v=a84ca95"),
+  fog: () => import("./fog/fog.js?v=a84ca95"),
 };
 
 const HELLO_MS = 30000; // each screen says hello this often, so the panel's screens list stays fresh
@@ -660,10 +660,14 @@ let legacy = false; // a localhost tab whose bridge.js didn't load: the game-nig
 
 const sdk = { OBR, buildCurve, buildEffect, buildImage, buildLabel, buildLight, buildPath, buildShape, buildText, buildWall, Math2, MathM };
 // 🌫 Our fog on this device (fog/fog.js), for the live checks only: "A" = the DM's pass-through by
-// non-blocking walls instead of standalone lights (contract section 8; "B" by default), and "1" =
-// a plain click on a door handle works the door.
+// non-blocking walls instead of standalone lights (contract section 8; "B" by default), "1" = a plain
+// click on a door icon works the door, and "1" = the door icons are locked items (whether a player's
+// right-click or long-press menu still opens on a locked local item is untested live; unlocked, a
+// moved, scaled or turned icon springs back).
 const FOG_GM_PASS_LS = "dnd-npc/fog-gm-pass";
 const FOG_DOOR_TAP_LS = "dnd-npc/fog-door-tap";
+const FOG_HANDLE_LOCK_LS = "dnd-npc/fog-handle-lock";
+const LOCAL_LOG_MAX_BYTES = 12000; // the 🪵 Live log to this device's GM box, under bus.js MAX_BYTES
 
 async function gridOf(O) {
   const scale = await O.scene.grid.getScale();
@@ -797,24 +801,52 @@ export async function boot(api = sdk, opts = {}) {
   const kickWriter = () => { try { writer?.kick?.(); } catch (e) { console.warn("dnd-npc: lights writer", e); } };
 
   // 🌫 Our fog (fog/fog.js): every screen kind. Created on every copy; started only where this copy
-  // draws (start()), stopped when it steps aside. Inert while the scene's switch is off. Its shared
-  // writes go through the leader GM screen: the lights writer's gate (fx/lightwriter.js).
+  // draws (start()), stopped when it steps aside. Inert while the scene's switch is off. No leader:
+  // the 🌫 switch is written by the GM screen whose chip was tapped (LOCAL_ASK "fog-switch" below), a
+  // GM's door click by that GM screen, a player's door request by the GM screen that answers it
+  // (fog/doors.js). The lights writer's gate (fx/lightwriter.js) is the lights' alone.
   let fog = null;
   try {
     fog = fogMod?.createFog ? fogMod.createFog(api, ctx, {
       timers: T,
-      isLeader: () => {
-        try { const s = writer?.gate?.().state; return s === "leader" || s === "backoff"; } catch { return false; }
-      },
       ownToken: () => player?.snapshot?.()?.entry?.token || null,
       gmPass: lsGet(FOG_GM_PASS_LS) === "A" ? "A" : "B",
       doorTap: lsGet(FOG_DOOR_TAP_LS) === "1",
+      lockHandles: lsGet(FOG_HANDLE_LOCK_LS) === "1",
     }) : null;
   } catch (e) {
     errors.fog = String(e?.message || e);
     console.warn("dnd-npc: our fog didn't start", e);
   }
   const kickFog = () => { try { fog?.kick?.(); } catch (e) { console.warn("dnd-npc: our fog", e); } };
+  // 🪵 Live log for this device's GM box (popover.html): the newest lines, as text, under the bus's size cap.
+  let logSent = null;
+  const sendLog = (force = false) => {
+    if (role !== "GM") return;
+    let lines = [];
+    try {
+      lines = (fog?.logLines?.(40) || []).map((l) => ({ kind: l.kind, text: fogMod.lineText(l) }));
+    } catch (e) {
+      lines = [{ kind: "error", text: `the live log can't be read: ${String(e?.message || e)}` }];
+    }
+    while (lines.length > 1 && new TextEncoder().encode(JSON.stringify(lines)).length > LOCAL_LOG_MAX_BYTES) lines.pop();
+    const sig = JSON.stringify(lines);
+    if (!force && sig === logSent) return;
+    logSent = sig;
+    busSend(api, FOG_LOG_LOCAL_CH, { host: ctx.host, lines, error: errors.fog || "" }, "LOCAL");
+  };
+  let fogSaid = null; // the last 🌫 switch answer, for the GM box that asked
+  // The GM box's tap on 🌫 Our fog: this screen writes the whole switch (fog/fog.js setOn).
+  async function fogSwitch(msg) {
+    let r;
+    try {
+      r = fog ? await fog.setOn(msg?.on === true) : { ok: false, text: `🌫 Our fog didn't load here${errors.fog ? `: ${errors.fog}` : ""}` };
+    } catch (e) {
+      r = { ok: false, text: `🌫 The switch failed: ${String(e?.message || e)}` };
+    }
+    fogSaid = { id: String(msg?.id ?? ""), ok: !!r?.ok, text: String(r?.text || "") };
+    return fogSaid;
+  }
   // One lights object for HELLO and this tab's own screen row: the drawing's status + the writer's state.
   ctx.writer = writer ? ctx.build : null;
   ctx.lightsStatus = () => {
@@ -1040,6 +1072,7 @@ export async function boot(api = sdk, opts = {}) {
       pc_tokens: [...ctx.pcTokens], // the heartbeat's PC ids: the 🔥 menu and list plan with them, as the writer does
       writer: (() => { try { return writer?.status?.() ?? null; } catch { return null; } })(),
       fog: (() => { try { return fog?.status?.() ?? null; } catch { return null; } })(), // 🌫 Our fog on this screen
+      fog_said: fogSaid, // the last 🌫 switch answer (lightpanel.js shows it to the box that tapped)
       // 📺 the table screens heard lately: how each holds the view the DM locked (views.js status)
       projector: [...projectors.values()].filter((p) => T.now() - p.at < PROJECTOR_GONE_MS)
         .map((p) => ({ ...p.view, name: p.name, age_s: Math.round((T.now() - p.at) / 1000) })),
@@ -1097,18 +1130,10 @@ export async function boot(api = sdk, opts = {}) {
 
   // ---- what every screen hears ----
   busOn(api, CH.BRIDGE, (hb, ev) => onHeartbeat(hb, ev));
-  // Every GM copy's HELLO, for the lights writer's leader and its old-build gate. 🌫 Our fog's
-  // shared writes wait on that gate too: when its state changes, the fog looks again (a restore of
-  // the fog's own fill may be due).
-  let gateSeen = null;
+  // Every GM copy's HELLO, for the lights writer's leader and its old-build gate (the lights' alone:
+  // 🌫 Our fog has no leader).
   busOn(api, CH.HELLO, (msg, ev) => {
     try { writer?.heard?.(msg, ev); } catch (e) { console.warn("dnd-npc: lights writer", e); }
-    let g = null;
-    try { g = writer?.gate?.().state ?? null; } catch { g = null; }
-    if (g !== gateSeen) {
-      gateSeen = g;
-      kickFog();
-    }
   });
   busOn(api, CH.HELLO, (msg, ev) => {
     // The other copy of this extension on this same tab: same connection, the other host. The
@@ -1187,16 +1212,19 @@ export async function boot(api = sdk, opts = {}) {
     // The GM popover asks; a player's popover talks to player/state.js instead.
     busOn(api, CH.LOCAL_ASK, async (msg) => {
       if (!mine(msg)) return;
-      let note = "";
+      let note;
+      if (msg.need === "log") return sendLog(true); // the 🪵 Live log, now (a GM box just opened)
       if (msg.need === "find-panel") bridge?.retry();
       else if (msg.need === "force") await bridge?.force();
       else if (msg.need === "test") note = await playTest();
+      else if (msg.need === "fog-switch") await fogSwitch(msg); // 🌫 Our fog, tapped in this device's GM box
       else if (msg.need === "refresh") {
         applySettings(ctx.settings);
         if (sceneFallback()) startSceneReader(api, conn);
         bridge?.retry();
       }
       busSend(api, CH.LOCAL_STATE, snapshot(note), "LOCAL");
+      sendLog(); // ...and the live log, when it has new lines
     });
   } else {
     // player/state.js answers its popover itself; this only says why when it didn't load.

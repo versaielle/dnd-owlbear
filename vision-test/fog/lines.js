@@ -24,22 +24,27 @@
 //   lineMap(line, rects, byId)  the map a line belongs to: the one it hangs on, else the one under
 //                        its middle
 //   midpointAlong(points) / nearestOnLine(p, points)
-//   ourState(v) / smokeState(meta) / drift(meta)   a door's state in each format, and Smoke's when
-//                        it differs from ours on a line that has both
-//   doorEdit(meta, {open?, locked?})  open, close, lock or unlock a door on a metadata draft, in
-//                        every format the line has (the leader's write)
+//   ourState(v) / smokeState(meta) / knownOf(meta) / drift(meta)   a door's state in each format,
+//                        whether the party knows its lock, and Smoke's state when it differs from
+//                        ours on a line that has both
+//   doorAfter(now, change)  how a door stands after {open?, locked?, knownLocked?}
+//   doorEdit(meta, {open?, locked?, knownLocked?})  open, close, lock or unlock a door (or mark its
+//                        lock found) on a metadata draft, in every format the line has: explicit
+//                        values only, never a key deleted, nothing touched that already holds them
 //
 // Doors: open clears locked and locked means shut, as in Smoke (an open door is never locked). A
 // Smoke door stands open with doorOpen (and disabled, which Smoke sets with it); a Smoke line that
-// isn't a door and is disabled is switched off: it makes no wall, and stops nothing.
+// isn't a door and is disabled is switched off: it makes no wall, and stops nothing. The party's
+// knowledge of a lock (knownLocked) lives with the lock: a new lock starts unknown, and a door that
+// isn't locked knows none.
 
-import { WALL_KEY } from "../keys.js?v=27b182c";
-import { centreOf, mapAt, mapRects } from "../views.js?v=27b182c";
-import { KINDS, SMOKE_LINE, ourState, readLine as readBare, smokeState, toWorld, worldPoints } from "./lineread.js?v=27b182c";
+import { WALL_KEY } from "../keys.js?v=a84ca95";
+import { centreOf, mapAt, mapRects } from "../views.js?v=a84ca95";
+import { KINDS, SMOKE_LINE, knownOf, ourState, readLine as readBare, smokeState, toWorld, worldPoints } from "./lineread.js?v=a84ca95";
 
 // The map-free part lives in fog/lineread.js (a leaf: gather.js and fx/lighting.js import it
 // without views.js); every part of the vision layer reads it from here.
-export { KINDS, SMOKE_LINE, ourState, smokeState, toWorld, worldPoints };
+export { KINDS, SMOKE_LINE, knownOf, ourState, smokeState, toWorld, worldPoints };
 
 const finite = (...xs) => xs.every((x) => typeof x === "number" && Number.isFinite(x));
 const isObj = (x) => !!x && typeof x === "object" && !Array.isArray(x);
@@ -80,8 +85,8 @@ export function nearestOnLine(p, pts) {
 
 // ---- what a line is ----
 
-// On a door line that has both formats: Smoke's {open, locked} when they differ from ours (the
-// leader adopts it when 🌫 Our fog goes on: Smoke was in charge until then), else null.
+// On a door line that has both formats: Smoke's {open, locked} when they differ from ours (the GM
+// screen that switches 🌫 Our fog on adopts it: Smoke was in charge until then), else null.
 export function drift(meta) {
   const ours = ourState(meta?.[WALL_KEY]);
   const smoke = smokeState(meta);
@@ -193,43 +198,61 @@ export function occupiedMaps(items, { isPc = () => false, rects = null, dpi = 15
   return out;
 }
 
-// ---- doors: the leader's write ----
+// ---- doors: the one door writer ----
 
-// Open, close, lock or unlock a door on `meta` (a metadata draft in an updateItems), in every
-// format the line has: our key when it has ours (and Smoke's keys too when it also has them, so
-// Smoke reads the same door if the DM switches back to it), else Smoke's keys alone, the way
-// Smoke's own door toggle writes them. change: {open?, locked?}; what's left out stays as it is.
-// open: true unlocks; locked: true shuts. Returns true when anything changed; a line that isn't a
-// door (or isn't a line) is left alone.
+// How a door that stands `now` ({open, locked, knownLocked}) stands after `change` ({open?, locked?,
+// knownLocked?}; what's left out stays): open unlocks, locked shuts; a new lock starts unknown to
+// the party, and a door that isn't locked has no known lock.
+export function doorAfter(now, change = {}) {
+  const c = isObj(change) ? change : {};
+  let open = typeof c.open === "boolean" ? c.open : !!now?.open;
+  let locked = typeof c.locked === "boolean" ? c.locked : !!now?.locked;
+  if (c.locked === true) open = false;
+  else if (open) locked = false;
+  const fresh = c.locked === true && !now?.locked; // the DM's new lock: nobody has tried it yet
+  const knownLocked = locked && (typeof c.knownLocked === "boolean" ? c.knownLocked : !fresh && !!now?.knownLocked);
+  return { open, locked, knownLocked };
+}
+
+// Open, close, lock or unlock a door on `meta` (a metadata draft in an updateItems), or mark its
+// lock found (knownLocked), in every format the line has: our key when it has ours (and Smoke's keys
+// too when it also has them, so Smoke reads the same door if the DM switches back to it), else
+// Smoke's keys alone (our key then holds only {knownLocked}, and only once a lock is found).
+//
+// Patch-safe (the live bug of 2026-10-12: a removed key that another screen's copy already lacked
+// broke Owlbear's patch there, and that screen stopped seeing doors): it NEVER deletes a key. Our key
+// is written in full, {..., kind: "door", open, locked, knownLocked} as explicit booleans; Smoke's
+// doorOpen, disabled and isDoorLocked as true or false (Smoke reads them by truthiness or `=== true`:
+// false is a shut, unlocked door to it). Idempotent: a format that already holds the target state is
+// not touched, so a draft that holds it all asks Owlbear for nothing. Returns true when anything
+// changed; a line that isn't a door (or isn't a line) is left alone.
 export function doorEdit(meta, change = {}) {
   if (!isObj(meta)) return false;
-  const ours = ourState(meta[WALL_KEY]);
+  const wall = meta[WALL_KEY];
+  const ours = ourState(wall);
   const smoke = smokeState(meta);
   const now = ours || smoke;
   if (!now || now.kind !== "door") return false;
-  let open = typeof change.open === "boolean" ? change.open : now.open;
-  let locked = typeof change.locked === "boolean" ? change.locked : now.locked;
-  if (change.locked === true) open = false;
-  else if (open) locked = false;
-  const before = JSON.stringify([meta[WALL_KEY], ...Object.values(SMOKE_LINE).map((k) => meta[k])]);
+  const known = now.locked && knownOf(meta);
+  const t = doorAfter({ open: now.open, locked: now.locked, knownLocked: known }, change);
+  let changed = false;
   if (ours) {
-    const v = { ...meta[WALL_KEY], kind: "door" };
-    delete v.open;
-    delete v.locked;
-    if (open) v.open = true;
-    if (locked) v.locked = true;
-    meta[WALL_KEY] = v;
+    if (ours.open !== t.open || ours.locked !== t.locked || known !== t.knownLocked) {
+      meta[WALL_KEY] = { ...wall, kind: "door", open: t.open, locked: t.locked, knownLocked: t.knownLocked };
+      changed = true;
+    }
+  } else if (known !== t.knownLocked) {
+    // a Smoke-only door: our key carries only what the party knows (no kind: the state stays Smoke's)
+    meta[WALL_KEY] = { ...(isObj(wall) ? wall : {}), knownLocked: t.knownLocked };
+    changed = true;
   }
   if (smoke && smoke.kind === "door") {
-    if (open) {
-      meta[SMOKE_LINE.disabled] = true;
-      meta[SMOKE_LINE.open] = true;
-    } else {
-      delete meta[SMOKE_LINE.disabled];
-      delete meta[SMOKE_LINE.open];
+    const want = [[SMOKE_LINE.open, t.open], [SMOKE_LINE.disabled, t.open], [SMOKE_LINE.locked, t.locked]];
+    for (const [k, v] of want) {
+      if (!!meta[k] === v) continue; // already reads so (a missing key is false): left as it is
+      meta[k] = v;
+      changed = true;
     }
-    if (locked) meta[SMOKE_LINE.locked] = true;
-    else delete meta[SMOKE_LINE.locked];
   }
-  return JSON.stringify([meta[WALL_KEY], ...Object.values(SMOKE_LINE).map((k) => meta[k])]) !== before;
+  return changed;
 }

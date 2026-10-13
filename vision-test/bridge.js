@@ -27,8 +27,8 @@
 // Every Owlbear call and fetch goes through `api` and `mods`, so check_bridge.mjs can run it
 // against a fake room and a fake clock.
 import { CH, DEFAULT_SETTINGS, LS, PANEL_PORTS, RPC_PATHS, canSeal, lsGet, lsSet, on, seal, send, setConnection,
-  setSceneWrite } from "./bus.js?v=27b182c";
-import { RING_KEY, TARGET_COLOR } from "./keys.js?v=27b182c";
+  setSceneWrite } from "./bus.js?v=a84ca95";
+import { RING_KEY, TARGET_COLOR } from "./keys.js?v=a84ca95";
 
 const HELLO_TIMEOUT_MS = 800; // per port, when looking for the panel
 const FIND_RETRY_MS = 30000; // no panel found: look again

@@ -1,64 +1,93 @@
 // Doors for the vision layer (docs/vision-layer-spec.md section 4, the contract in
-// docs/vision-layer-b2b3.md sections 4, 6 and 9): a handle at the middle of every door, the
-// right-click menus that work it, and the leader GM screen's checks and its one door write.
+// docs/vision-layer-b2b3.md sections 4, 6 and 9): a door icon at the middle of every door, the
+// right-click menus that work it, the GM screens' door writes, and the players' requests.
 //
-//   DOOR_REACH_FT, REPLY_WAIT_MS, PLAYER_OPS, GM_OPS, HANDLE_LAYER, MENU, menuIds(host) (the ids a copy uses)
-//   handlePlan(snap)     one handle per door on an occupied map: [{key, line, position, size, open,
-//                        locked, sig}] (key and line: the door line's id)
+//   DOOR_REACH_FT, REPLY_WAIT_MS, RETRY_AFTER_MS, HELLO_EVERY_MS, HELLO_STALE_MS, HOLD_MS, PLAYER_OPS,
+//   GM_OPS, HANDLE_LAYER, HANDLE_SIZE, ICON_PX, ICON_URL, MENU, menuIds(host) (the ids a copy uses)
+//   iconOf(door, {gm})   the icon a screen shows for a door: "open" | "closed" | "locked" (a player's
+//                        screen shows a lock only once the party has found it)
+//   handlePlan(snap, {gm})  one handle per door on an occupied map: [{key, line, position, size, open,
+//                        locked (as this screen shows it), secret (GM: the party hasn't found the lock),
+//                        icon, sig}] (key and line: the door line's id)
 //   doorCheck(door, pcs, segments, grid)  can one of these PCs work this door: {ok, reason, pc}.
 //                        A PC's middle must be within DOOR_REACH_FT of the door line and see the
 //                        nearest point of it past `segments` (fog/los.js segments; the door's own
 //                        are skipped). grid: {dpi, pxPerFt} (snap.grid)
-//   checkRequest(req, snap, {fromGm})  the leader's answer to one request: {ok, why, change:
-//                        {open?, locked?} | null (null: nothing to write), state: {open, locked}
-//                        after it (null when it isn't a door)}
+//   checkRequest(req, snap, {fromGm})  the answer to one request: {ok, why, change: {open?, locked?,
+//                        knownLocked?} | null (null: nothing to write), state: {open, locked,
+//                        knownLocked} after it (null when it isn't a door), found (a player found the lock)}
 //   checkLive(req, snap, item, {fromGm})  the same against the door line as it stands NOW (item:
 //                        the shared CURVE, or a draft of it; null: it's gone), the rest of the
-//                        snapshot as it was: what the leader decides and writes from
+//                        snapshot as it was (snap may be null for a GM's own click)
+//   shownState(state, {gm})  a door's state as a reply may tell it: a player hears of a known lock only
 //   opFor(state, {gm})   what a click on a door that stands so asks for: "open" | "close" | null
+//   gmPool(heard, {now, self})  the GM screens a screen knows (announced in the last HELLO_STALE_MS,
+//                        itself too), lowest connection first: the first answers players' requests
+//   answerHow(msg, {pool, me, heard, answered})  should this GM screen answer: "now" | "hold" | "again" | "no"
 //   menuIcons(host, icon)  the menus' icons and filters, by MENU id
-//   createDoors(api, ctx)  -> {start(), stop(), sync(snap), clear(), status(), ask(op, line, via)}
+//   createDoors(api, ctx)  -> {start(), stop(), sync(snap), clear(), status(), ask(op, line, via), act(op, line, via)}
 //
-// Every screen, while 🌫 Our fog is on: a small LOCAL circle at each door's middle, on the PROP
-// layer, under the fog (the fog hides the handles nobody sees, so door positions don't leak),
-// tagged FOG_LOCAL_KEY {kind: "handle", key, sig, host, line, open, locked}. Its colour says how
-// the door stands (shut, open, locked). A right-click on it (a long-press on a phone) shows our
-// menu: 🚪 Open door / 🚪 Close door, or 🔒 Locked for a player; a GM also gets Lock / Unlock, and
-// the same on the shared door lines themselves (either format). Owlbear shows one icon per menu,
-// so a GM's Lock / Unlock is a second menu (MENU.handleLock, MENU.lineLock). After a menu click
-// the handle is deselected. A plain click that selects a handle is left alone: a right-click
-// selects it too, and taking the selection away then could close the very menu it opened (not
-// tried live). With ctx.doorTap, a select asks for the opposite of how the door stands, and
-// deselects. A handle isn't locked, so a player can drag it: it goes back to its door
-// SNAP_BACK_MS after the drag.
+// Every screen, while 🌫 Our fog is on: a small LOCAL door icon (an image: owlbear/icons/door-*.svg,
+// 0.6 squares) at each door's middle, on the PROP layer, under the fog (the fog hides the icons nobody
+// sees, so door positions don't leak), tagged FOG_LOCAL_KEY {kind: "handle", key, sig, host, line, open,
+// locked, secret, icon}. The icon says how the door stands on THIS screen: the DM's shows the truth (a
+// lock is a lock, with a menu hint while the party hasn't found it); a player's (and the projector's)
+// shows a lock only once a PC has tried that door and the answer was "It's locked" (WALL_KEY
+// knownLocked, written by the answering GM screen). Until then a locked door is a plain closed door,
+// and the player's menu offers "🚪 Open door" for it. A right-click on an icon (a long-press on a
+// phone) shows our menu: 🚪 Open door / 🚪 Close door, or 🔒 Locked for a player; a GM also gets Lock /
+// Unlock, and the same on the shared door lines themselves (either format). Owlbear shows one icon per
+// menu, so a GM's Lock / Unlock is a second menu (MENU.handleLock, MENU.lineLock). After a menu click
+// the icon is deselected. A plain click that selects an icon is left alone: a right-click selects it
+// too, and taking the selection away then could close the very menu it opened (not tried live). With
+// ctx.doorTap, a select asks for the opposite of how the door stands, and deselects. An icon is not
+// locked unless ctx.lockHandles (whether a player's menu works on a locked local item is untested
+// live), so a player could drag, scale or turn it: it goes back (position, scale and turn)
+// SNAP_BACK_MS after any change.
 //
-// Every click is a request on FOG_DOOR_CH to every screen; only the leader (ctx.isLeader(), the
-// lights writer's gate) acts on it, one request at a time: it reads the door line as it stands now
-// (the snapshot is up to MAX_WAIT_MS old: a lock the DM just made, or an open a moment ago, isn't
-// in it yet), runs checkLive, writes the change in one updateItems through fog/lines.js doorEdit
-// (both formats in step, contract section 6) after checking once more against the draft it
-// writes, and answers on FOG_DOOR_REPLY_CH from that last check. The sender shows the answer's
-// `why`, or "No DM screen answered" after REPLY_WAIT_MS. A DM's request (dm: true) skips the checks only when its sender's
-// connection is a GM's. Players never write scene items.
+// NO LEADER. A GM's own click writes the door from that GM screen at once (act): it reads the door as
+// it stands now and decides and writes in one updateItems, on the draft. A player's click is a request
+// on FOG_DOOR_CH, addressed (`to`) to the answerer the player's screen knows: the lowest connection
+// among the GM screens that announced our fog (FOG_HELLO_CH: on start, when asked, and every
+// HELLO_EVERY_MS; forgotten after HELLO_STALE_MS). A GM screen answers when it is `to`, or when `to` is
+// missing or unknown to it and it is the lowest it knows (after a random hold under HOLD_MS, unless an
+// answer is heard meanwhile). No answer in RETRY_AFTER_MS: the player asks once more with any: true,
+// answered by the lowest GM screen the receiver knows that hasn't answered and wasn't the one asked
+// (it, when it's the only one), after the same hold; a screen that answered already sends its answer
+// again. No answer in REPLY_WAIT_MS: "No DM screen answered". Door writes are idempotent (fog/lines.js
+// doorEdit), so two screens that both answer write the same thing once. The answer goes back on
+// FOG_DOOR_REPLY_CH; a player's tells only a lock the party knows. Players never write scene items.
 //
 // The handles are reconciled like fx/lighting.js: what was drawn is remembered (key -> {id, sig}),
 // nothing is asked of Owlbear while the plan's signature is unchanged, at most one local delete,
 // one add and one update per sync, and our items are read back only after a clear or a failure.
 // Syncs and clears run one at a time, so a clear can't slip in while a sync's add is on its way.
+// Every request, answer, write and error is a line in the 🪵 Live log (ctx.log(text, kind)).
 
-import { FOG_DOOR_CH, FOG_DOOR_REPLY_CH, FOG_LOCAL_KEY, WALL_KEY } from "../keys.js?v=27b182c";
-import { forMe, here, newId, on, send } from "../bus.js?v=27b182c";
-import { centreOf } from "../views.js?v=27b182c";
-import { canSee, sightBlockers } from "./los.js?v=27b182c";
-import { SMOKE_LINE, doorEdit, edgeWalls, midpointAlong, nearestOnLine, readLine, segmentsOf } from "./lines.js?v=27b182c";
+import { FOG_DOOR_CH, FOG_DOOR_REPLY_CH, FOG_HELLO_CH, FOG_LOCAL_KEY, WALL_KEY } from "../keys.js?v=a84ca95";
+import { forMe, here, newId, on, send } from "../bus.js?v=a84ca95";
+import { centreOf } from "../views.js?v=a84ca95";
+import { canSee, sightBlockers } from "./los.js?v=a84ca95";
+import { SMOKE_LINE, doorAfter, doorEdit, edgeWalls, midpointAlong, nearestOnLine, readLine, segmentsOf } from "./lines.js?v=a84ca95";
 
 export const DOOR_REACH_FT = 5; // from the PC's middle to the nearest point of the door line
 export const REPLY_WAIT_MS = 4000; // no answer by then: "No DM screen answered"
+export const RETRY_AFTER_MS = 1500; // no answer by then: asked once more, of any GM screen
+export const HELLO_EVERY_MS = 10000; // a GM screen drawing our fog says so this often...
+export const HELLO_STALE_MS = 25000; // ...and is forgotten when unheard this long
+export const HOLD_MS = 300; // a GM screen not asked by name waits up to this (at random) before it answers
 export const PLAYER_OPS = ["open", "close"];
 export const GM_OPS = ["open", "close", "lock", "unlock"];
 export const HANDLE_LAYER = "PROP"; // under the fog
-export const HANDLE_SIZE = 0.4; // squares across
-export const SNAP_BACK_MS = 300; // a dragged handle goes back to its door this long after the drag
+export const HANDLE_SIZE = 0.6; // squares across
+export const ICON_PX = 128; // the icons' own size (owlbear/icons/door-*.svg)
+// The door icons, from this copy's own site (Pages ext/ or vision-test/, or this PC's panel).
+export const ICON_URL = {
+  closed: here("../icons/door-closed.svg", import.meta.url),
+  open: here("../icons/door-open.svg", import.meta.url),
+  locked: here("../icons/door-locked.svg", import.meta.url),
+};
+export const SNAP_BACK_MS = 300; // a moved, scaled or turned handle goes back this long after the change
 // The right-click menus. Owlbear shows ONE icon per menu (the first whose filter matches), so
 // open/close and lock/unlock are two menus each.
 export const MENU = {
@@ -72,19 +101,29 @@ export const menuIds = (host) => (host === "local"
   ? Object.fromEntries(Object.entries(MENU).map(([k, id]) => [k, id.replace("dnd-npc/", "dnd-npc/local/")]))
   : MENU);
 export const NO_ANSWER = "No DM screen answered";
-const COLOUR = { shut: "#ff8c1a", open: "#3cb371", locked: "#d23c3c" };
+export const LOCKED = "It's locked";
 const CHANGE = { open: { open: true }, close: { open: false }, lock: { locked: true }, unlock: { locked: false } };
+const KEEP_REQS = 100; // requests remembered (answers given, answers heard)
 
 const finite = (...xs) => xs.every((x) => typeof x === "number" && Number.isFinite(x));
 const r2 = (x) => Math.round(x * 100) / 100 + 0; // + 0: no -0
 const isObj = (x) => !!x && typeof x === "object" && !Array.isArray(x);
 const tagOf = (i) => (isObj(i?.metadata?.[FOG_LOCAL_KEY]) ? i.metadata[FOG_LOCAL_KEY] : null);
 const describe = (e) => e?.error?.message || e?.message || String(e);
+const short = (id) => String(id ?? "?").slice(0, 8);
 
 // ---- the plan ----
 
+// The icon a screen shows for a door: the DM's the truth, a player's (the projector's too) a lock
+// only once the party has found it.
+export function iconOf(door, { gm = false } = {}) {
+  if (door?.open) return "open";
+  if (door?.locked && (gm || door?.knownLocked)) return "locked";
+  return "closed";
+}
+
 // One handle per door line on a map a PC stands on, at the middle of its length.
-export function handlePlan(snap) {
+export function handlePlan(snap, { gm = false } = {}) {
   const dpi = finite(snap?.grid?.dpi) && snap.grid.dpi > 0 ? snap.grid.dpi : 150;
   const occ = snap?.occupied instanceof Set ? snap.occupied : new Set(snap?.occupied || []);
   const size = r2(dpi * HANDLE_SIZE);
@@ -94,18 +133,19 @@ export function handlePlan(snap) {
     const at = midpointAlong(l.points);
     if (!at || !finite(at.x, at.y)) continue;
     const position = { x: r2(at.x), y: r2(at.y) };
-    out.push({ key: l.id, line: l.id, position, size, open: !!l.open, locked: !!l.locked,
-               sig: `${position.x},${position.y}|${size}|${l.open ? "o" : "c"}|${l.locked ? "l" : "u"}` });
+    const icon = iconOf(l, { gm });
+    const secret = !!gm && !!l.locked && !l.knownLocked; // the DM's hint: the party hasn't found this lock
+    out.push({ key: l.id, line: l.id, position, size, open: !!l.open, locked: icon === "locked", secret, icon,
+               sig: `${position.x},${position.y}|${size}|${icon}${secret ? "|s" : ""}` });
   }
   return out;
 }
 
 // The part of a handle's sig that needs a new item when it changes (where it is and its size);
-// the rest (open, locked) is an update.
+// the rest (the icon, the tag) is an update.
 const placeOf = (h) => `${h.position.x},${h.position.y}|${h.size}`;
-const colourOf = (h) => (h.open ? COLOUR.open : h.locked ? COLOUR.locked : COLOUR.shut);
 
-// ---- the checks (the leader's) ----
+// ---- the checks (an answering GM screen's, and a GM's own click) ----
 
 // Can one of `pcs` work `door`? The first PC near enough that sees it wins; otherwise the answer
 // for the nearest miss ("You can't see that door" beats "Too far from the door").
@@ -127,33 +167,23 @@ export function doorCheck(door, pcs, segments, grid = {}) {
   return { ok: false, reason, pc: null };
 }
 
-// How a door stands after `change`: open unlocks, locked shuts (fog/lines.js doorEdit).
-function after(state, change) {
-  if (!change) return { ...state };
-  let open = typeof change.open === "boolean" ? change.open : state.open;
-  let locked = typeof change.locked === "boolean" ? change.locked : state.locked;
-  if (change.locked === true) open = false;
-  else if (open) locked = false;
-  return { open, locked };
-}
-
 const already = (op, s) => (op === "open" && s.open) || (op === "close" && !s.open)
   || (op === "lock" && s.locked) || (op === "unlock" && !s.locked);
 
-// The leader's answer to one request (contract section 4, doors.js).
+// The answer to one request (contract section 4, doors.js).
 export function checkRequest(req, snap, { fromGm = false } = {}) {
-  const no = (why, state = null) => ({ ok: false, why, change: null, state });
+  const no = (why, state = null) => ({ ok: false, why, change: null, state, found: false });
   const line = (Array.isArray(snap?.lines) ? snap.lines : []).find((l) => l?.id === req?.line);
   if (!line || line.kind !== "door") return no("That isn't a door");
-  const state = { open: !!line.open, locked: !!line.locked };
+  const state = { open: !!line.open, locked: !!line.locked, knownLocked: !!line.locked && !!line.knownLocked };
   const op = req?.op;
   if (!GM_OPS.includes(op)) return no("A door can't do that", state);
   if (!fromGm && !PLAYER_OPS.includes(op)) return no("Only the DM can lock doors", state);
-  if (already(op, state)) return { ok: true, why: null, change: null, state };
+  if (already(op, state)) return { ok: true, why: null, change: null, state, found: false };
   const change = { ...CHANGE[op] };
-  const yes = () => ({ ok: true, why: null, change, state: after(state, change) });
+  const yes = () => ({ ok: true, why: null, change, state: doorAfter(state, change), found: false });
   if (fromGm || op === "close") return yes();
-  if (state.locked) return no("It's locked", state);
+  // A player's open: their PC must be at the door and see it before anything about the door is told.
   // The PC that asks: the sender's own token when it is a PC, else any PC.
   const pcs = Array.isArray(snap?.pcs) ? snap.pcs : [];
   const own = req?.token != null ? pcs.find((p) => p?.id === req.token) : null;
@@ -162,11 +192,17 @@ export function checkRequest(req, snap, { fromGm = false } = {}) {
   const mapItem = line.mapId != null ? snap?.byId?.get?.(line.mapId) || rect : null;
   const segs = [...segmentsOf(snap.lines, [line.mapId]), ...(mapItem ? edgeWalls(mapItem, dpi) : [])];
   const c = doorCheck(line, own ? [own] : pcs, segs, snap?.grid);
-  return c.ok ? yes() : no(c.reason, state);
+  if (!c.ok) return no(c.reason, state);
+  if (state.locked) {
+    // Tried, and it's locked: the party knows now (written once: an already known lock writes nothing).
+    const found = state.knownLocked ? null : { knownLocked: true };
+    return { ok: false, why: LOCKED, change: found, state: doorAfter(state, found || {}), found: !!found };
+  }
+  return yes();
 }
 
-// checkRequest against the door line as it stands now: `item` (the shared CURVE, or the draft the
-// leader is about to write) replaces the snapshot's line of that id; no item: the line is gone.
+// checkRequest against the door line as it stands now: `item` (the shared CURVE, or the draft about
+// to be written) replaces the snapshot's line of that id; no item: the line is gone.
 export function checkLive(req, snap, item, opts = {}) {
   const lines = (Array.isArray(snap?.lines) ? snap.lines : []).filter((l) => l?.id !== req?.line);
   const live = item && item.id === req?.line ? readLine(item, { rects: snap?.rects || [], byId: snap?.byId || null }) : null;
@@ -174,12 +210,49 @@ export function checkLive(req, snap, item, opts = {}) {
   return checkRequest(req, { ...(snap || {}), lines }, opts);
 }
 
+// A door's state as an answer may tell it: a GM the truth, a player a lock only once the party knows it.
+export function shownState(state, { gm = false } = {}) {
+  if (!state) return null;
+  return { open: !!state.open, locked: !!state.locked && (gm || !!state.knownLocked) };
+}
+
 // What a click on a door that stands so asks for: close an open one, open a shut one; a locked one
-// opens only for a GM (open unlocks), and asks for nothing from a player.
+// opens only for a GM (open unlocks), and asks for nothing from a player (a lock the party knows).
 export function opFor(state, { gm = false } = {}) {
   if (state?.open) return "close";
   if (state?.locked && !gm) return null;
   return "open";
+}
+
+// ---- who answers the players ----
+
+// The GM screens a screen knows: heard announcing our fog in the last HELLO_STALE_MS (heard: a Map
+// conn -> {at}), itself too when it is one (self), sorted: the first is the answerer.
+export function gmPool(heard, { now = 0, self = null } = {}) {
+  const out = new Set();
+  for (const [conn, g] of heard instanceof Map ? heard : []) {
+    if (conn && finite(g?.at) && now - g.at <= HELLO_STALE_MS) out.add(conn);
+  }
+  if (self) out.add(self);
+  return [...out].sort();
+}
+
+// Should this GM screen (me) answer a request? "now": it was asked by name; "hold": it is the one by
+// the rules but wasn't named (wait up to HOLD_MS at random, then answer unless someone did); "again":
+// a retry of one it answered (send the same answer again); "no". pool: gmPool(); heard: the
+// connections heard answering this request; answered: this screen answered it already.
+export function answerHow(msg, { pool = [], me = null, heard = new Set(), answered = false } = {}) {
+  if (!me || !msg) return "no";
+  if (msg.any === true) {
+    if (answered) return "again";
+    const fresh = pool.filter((c) => !heard.has(c));
+    const others = fresh.filter((c) => c !== msg.to); // the one asked first didn't answer: another, if any
+    return (others.length ? others : fresh)[0] === me ? "hold" : "no";
+  }
+  if (answered) return "no";
+  if (msg.to != null && msg.to === me) return "now";
+  if ((msg.to == null || !pool.includes(msg.to)) && pool[0] === me) return "hold";
+  return "no";
 }
 
 // ---- the menus' filters ----
@@ -190,32 +263,37 @@ const handleOf = (host) => [{ key: tagKey("kind"), value: "handle" }, { key: tag
 export function menuIcons(host, icon) {
   const h = handleOf(host);
   const ours = { key: ["metadata", WALL_KEY, "kind"], value: "door" };
-  const smoke = { key: ["metadata", SMOKE_LINE.door], value: true };
+  // Smoke's keys count only on a line without our kind: ours wins on a line that has both.
+  const smoke = [{ key: ["metadata", SMOKE_LINE.door], value: true }, { key: ["metadata", WALL_KEY, "kind"], value: undefined }];
   const curve = { key: "type", value: "CURVE" };
   const gm = (label, every) => ({ icon, label, filter: { roles: ["GM"], every } });
+  const secret = { key: tagKey("secret"), value: true };
   return {
+    // A player's handle says `locked` only for a lock the party found: an unknown lock offers Open.
     [MENU.handle]: [
       { icon, label: "🚪 Close door", filter: { every: [...h, { key: tagKey("open"), value: true }] } },
       { icon, label: "🚪 Open door", filter: { every: [...h, { key: tagKey("locked"), value: false }] } },
+      gm("🚪 Open door (unlock it) · the party doesn't know it's locked", [...h, secret]),
       gm("🚪 Open door (unlock it)", [...h]),
       { icon, label: "🔒 Locked", filter: { roles: ["PLAYER"], every: [...h] } },
     ],
     [MENU.handleLock]: [
+      gm("🔓 Unlock door · the party doesn't know it's locked", [...h, { key: tagKey("locked"), value: true }, secret]),
       gm("🔓 Unlock door", [...h, { key: tagKey("locked"), value: true }]),
       gm("🔒 Lock door", [...h]),
     ],
     // The shared lines, in either format (ours first: it wins on a line that has both).
     [MENU.line]: [
       gm("🚪 Close door", [curve, ours, { key: ["metadata", WALL_KEY, "open"], value: true }]),
-      gm("🚪 Close door", [curve, smoke, { key: ["metadata", SMOKE_LINE.open], value: true }]),
+      gm("🚪 Close door", [curve, ...smoke, { key: ["metadata", SMOKE_LINE.open], value: true }]),
       gm("🚪 Open door", [curve, ours]),
-      gm("🚪 Open door", [curve, smoke]),
+      gm("🚪 Open door", [curve, ...smoke]),
     ],
     [MENU.lineLock]: [
       gm("🔓 Unlock door", [curve, ours, { key: ["metadata", WALL_KEY, "locked"], value: true }]),
-      gm("🔓 Unlock door", [curve, smoke, { key: ["metadata", SMOKE_LINE.locked], value: true }]),
+      gm("🔓 Unlock door", [curve, ...smoke, { key: ["metadata", SMOKE_LINE.locked], value: true }]),
       gm("🔒 Lock door", [curve, ours]),
-      gm("🔒 Lock door", [curve, smoke]),
+      gm("🔒 Lock door", [curve, ...smoke]),
     ],
   };
 }
@@ -225,37 +303,54 @@ export function menuIcons(host, icon) {
 export function createDoors(api, ctx) {
   const host = ctx?.host || "pages";
   const T = ctx?.timers || { setTimeout: (f, ms) => setTimeout(f, ms), clearTimeout: (t) => clearTimeout(t), now: () => Date.now() };
-  const log = (t) => { try { ctx?.log?.(t); } catch { /* fine */ } };
+  const log = (text, kind = "door") => { try { ctx?.log?.(text, kind); } catch { /* fine */ } };
+  const random = () => {
+    try { const r = ctx?.random?.(); if (finite(r)) return Math.min(1, Math.max(0, r)); } catch { /* the real one */ }
+    return Math.random();
+  };
   const icon = here("../icon.svg", import.meta.url);
   const menuId = menuIds(host);
   const OBR = () => api.OBR;
+  const isGm = () => !!ctx?.isGm;
+  const me = () => ctx?.conn ?? null;
+  const lockHandles = () => { try { return !!ctx?.lockHandles; } catch { return false; } };
 
-  const drawn = new Map(); // key -> {id, sig, place, position, line, open, locked}
+  const drawn = new Map(); // key -> {id, sig, place, position, line, open, locked, icon}
   let lastSig = null; // the plan last applied in full
   let readBack = true; // read our handles back on the next sync (first, after a clear, after a failure)
   let error = null;
   let started = false;
   let menusOn = false;
   const offs = []; // listeners to remove on stop()
-  const pending = new Map(); // req -> {timer, line, op}
-  let leaderQueue = Promise.resolve();
+  const pending = new Map(); // req -> {msg, to, retryT, failT}: this player's requests waiting for an answer
+  const answered = new Map(); // req -> the answer this GM screen gave
+  const heardBy = new Map(); // req -> Set of connections heard answering it
+  const gms = new Map(); // conn -> {at, name, build}: other GM screens heard announcing our fog
+  let helloT = null, lastAnswerer;
+  let queue = Promise.resolve(); // a GM screen's door writes, one at a time
   let lastSel = "";
   let snapTimer = null;
+
+  const remember = (map, k, v) => {
+    map.set(k, v);
+    while (map.size > KEEP_REQS) map.delete(map.keys().next().value);
+  };
 
   // ---- the handles ----
 
   function tag(h) {
-    return { kind: "handle", key: h.key, sig: h.sig, host, line: h.line, open: h.open, locked: h.locked };
+    return { kind: "handle", key: h.key, sig: h.sig, host, line: h.line, open: h.open, locked: h.locked,
+             secret: !!h.secret, icon: h.icon };
   }
 
   function build(h) {
-    return api.buildShape()
-      .shapeType("CIRCLE")
-      .width(h.size).height(h.size)
+    return api.buildImage(
+      { width: ICON_PX, height: ICON_PX, url: ICON_URL[h.icon] || ICON_URL.closed, mime: "image/svg+xml" },
+      { dpi: ICON_PX / HANDLE_SIZE, offset: { x: ICON_PX / 2, y: ICON_PX / 2 } },
+    )
       .position({ x: h.position.x, y: h.position.y })
-      .fillColor(colourOf(h)).fillOpacity(0.9)
-      .strokeColor("#ffffff").strokeOpacity(1).strokeWidth(3)
       .layer(HANDLE_LAYER)
+      .locked(lockHandles())
       .name("🚪 Door")
       .metadata({ [FOG_LOCAL_KEY]: tag(h) })
       .build();
@@ -263,7 +358,7 @@ export function createDoors(api, ctx) {
 
   async function doSync(snap) {
     const res = { added: 0, removed: 0, updated: 0, failed: false, error: null };
-    const plan = snap ? handlePlan(snap) : [];
+    const plan = snap ? handlePlan(snap, { gm: isGm() }) : [];
     const sig = plan.map((h) => `${h.key}:${h.sig}`).join(";");
     if (sig === lastSig && !readBack) return res;
     const O = OBR();
@@ -297,7 +392,8 @@ export function createDoors(api, ctx) {
       try {
         const item = build(h);
         add.push(item);
-        added.push([k, { id: item.id, sig: h.sig, place: placeOf(h), position: { ...h.position }, line: h.line, open: h.open, locked: h.locked }]);
+        added.push([k, { id: item.id, sig: h.sig, place: placeOf(h), position: { ...h.position }, line: h.line, open: h.open,
+                         locked: h.locked, icon: h.icon }]);
       } catch (e) {
         error = `doors: a handle could not be built: ${describe(e)}`;
       }
@@ -328,12 +424,12 @@ export function createDoors(api, ctx) {
             const h = upd.get(d.id);
             if (!h) continue;
             d.metadata[FOG_LOCAL_KEY] = tag(h);
-            if (d.style) d.style.fillColor = colourOf(h);
+            if (d.image) d.image.url = ICON_URL[h.icon] || ICON_URL.closed;
           }
         });
         for (const [id, h] of upd) {
           const d = drawn.get(h.key);
-          if (d?.id === id) Object.assign(d, { sig: h.sig, open: h.open, locked: h.locked });
+          if (d?.id === id) Object.assign(d, { sig: h.sig, open: h.open, locked: h.locked, icon: h.icon });
         }
         res.updated = ids.length;
       } catch (e) {
@@ -384,7 +480,16 @@ export function createDoors(api, ctx) {
 
   const drawnById = (id) => [...drawn.values()].find((d) => d.id === id) || null;
 
-  // A handle is a local item a player can drag: put it back on its door once the drag settles.
+  // Moved, scaled or turned since it was drawn (a handle is drawn at scale 1, unturned).
+  const displaced = (i, d) => {
+    const p = i?.position, s = i?.scale, r = i?.rotation;
+    return (!!p && finite(p.x, p.y) && Math.hypot(p.x - d.position.x, p.y - d.position.y) > 0.5)
+      || (!!s && (Math.abs((finite(s.x) ? s.x : 1) - 1) > 1e-3 || Math.abs((finite(s.y) ? s.y : 1) - 1) > 1e-3))
+      || (finite(r) && Math.abs(r) > 1e-3);
+  };
+
+  // A handle is a local item a player can drag, scale or turn (unless ctx.lockHandles): put it back
+  // on its door, at its size, unturned, once the change settles.
   function onLocal(items) {
     if (!started) return;
     const moved = [];
@@ -394,8 +499,7 @@ export function createDoors(api, ctx) {
       if (t?.kind !== "handle" || t.host !== host) continue;
       ids.add(i.id);
       const d = drawnById(i.id);
-      const p = i.position;
-      if (d && p && Math.hypot(p.x - d.position.x, p.y - d.position.y) > 0.5) moved.push(d);
+      if (d && displaced(i, d)) moved.push(d);
     }
     for (const d of drawn.values()) if (!ids.has(d.id)) { lastSig = null; readBack = true; } // deleted here
     if (!moved.length) return;
@@ -404,12 +508,63 @@ export function createDoors(api, ctx) {
       snapTimer = null;
       const back = new Map(moved.map((d) => [d.id, d.position]));
       Promise.resolve(OBR().scene.local.updateItems([...back.keys()], (ds) => {
-        for (const d of ds) if (back.has(d.id)) d.position = { ...back.get(d.id) };
+        for (const x of ds) {
+          if (!back.has(x.id)) continue;
+          x.position = { ...back.get(x.id) };
+          x.scale = { x: 1, y: 1 };
+          x.rotation = 0;
+        }
       })).catch(() => { lastSig = null; readBack = true; });
     }, SNAP_BACK_MS);
   }
 
-  // ---- asking ----
+  // ---- who answers ----
+
+  const pool = () => gmPool(gms, { now: T.now(), self: isGm() && started ? me() : null });
+  const answerer = () => pool()[0] ?? null;
+  const nameOf = (conn) => (conn == null ? "nobody" : conn === me() ? `${ctx?.name || "this screen"} (this screen)`
+    : gms.get(conn)?.name ? `${gms.get(conn).name} (${short(conn)})` : `GM screen ${short(conn)}`);
+
+  function noteAnswerer() {
+    const a = answerer();
+    if (a === lastAnswerer) return;
+    lastAnswerer = a;
+    const n = pool().length;
+    log(a ? `answerer: ${nameOf(a)}, the lowest of ${n} GM screen${n === 1 ? "" : "s"} with our fog`
+      : "answerer: no GM screen with our fog heard yet", "answerer");
+  }
+
+  function hello({ bye = false, ask = false } = {}) {
+    send(api, FOG_HELLO_CH, { conn: me(), role: "GM", build: String(ctx?.build ?? ""), name: String(ctx?.name || ""),
+                              ...(bye ? { bye: true } : {}), ...(ask ? { ask: true } : {}) }, "ALL");
+  }
+
+  function helloLoop() {
+    if (helloT) T.clearTimeout(helloT);
+    helloT = T.setTimeout(() => {
+      helloT = null;
+      if (!started) return;
+      hello();
+      noteAnswerer(); // a GM screen gone quiet drops out of the pool
+      helloLoop();
+    }, HELLO_EVERY_MS);
+  }
+
+  function onHello(msg, ev) {
+    if (!started || !msg || ev?.viaScene) return;
+    // Owlbear stamps the sender's connection on the event; our own frame's copy carries msg.conn.
+    const conn = ev?.local || !ev?.connectionId ? msg.conn : ev.connectionId;
+    if (msg.role === "GM" && conn && conn !== me()) {
+      if (msg.bye) gms.delete(conn);
+      else gms.set(conn, { at: T.now(), name: String(msg.name || ""), build: String(msg.build || "") });
+      noteAnswerer();
+    }
+    // Someone just started and asks who's there: a GM screen says so at once (a screen asks only when
+    // its doors start, so this is a handful of messages at a switch-on).
+    if (msg.ask && isGm() && conn !== me()) hello();
+  }
+
+  // ---- a player asks ----
 
   function notify(text, variant = "WARNING") {
     try {
@@ -426,27 +581,51 @@ export function createDoors(api, ctx) {
     } catch { /* fine */ }
   }
 
-  // Ask the leader for `op` on the door `line`. Returns the request id.
+  // Work the door `line`: a GM writes it here and now (act); a player asks the answering GM screen.
+  // Returns the request id (a player's), or the promise of the GM's write.
   function ask(op, line, via) {
+    if (isGm()) return act(op, line, via);
     const req = newId();
     let token = null;
     try { token = ctx?.ownToken?.() ?? null; } catch { token = null; }
-    const timer = T.setTimeout(() => {
+    noteAnswerer();
+    const to = answerer();
+    const msg = { req, op, line, token, by: ctx?.playerId ?? null, name: String(ctx?.name || ""), dm: false, via, to };
+    const p = { msg, to, retryT: null, failT: null };
+    p.retryT = T.setTimeout(() => {
+      p.retryT = null;
+      if (!pending.has(req)) return;
+      send(api, FOG_DOOR_CH, { ...msg, any: true }, "ALL");
+      log(`↻ no answer in ${RETRY_AFTER_MS / 1000} s: asked again (any GM screen) to ${op} door ${short(line)}`);
+    }, RETRY_AFTER_MS);
+    p.failT = T.setTimeout(() => {
+      p.failT = null;
       if (!pending.delete(req)) return;
+      if (p.retryT) { T.clearTimeout(p.retryT); p.retryT = null; }
       notify(NO_ANSWER);
+      log(`✖ ${NO_ANSWER} in ${REPLY_WAIT_MS / 1000} s (${op} door ${short(line)})`);
     }, REPLY_WAIT_MS);
-    pending.set(req, { timer, line, op });
-    send(api, FOG_DOOR_CH, { req, op, line, token, by: ctx?.playerId ?? null, dm: !!ctx?.isGm, via }, "ALL");
+    pending.set(req, p);
+    send(api, FOG_DOOR_CH, msg, "ALL");
+    log(`→ ${ctx?.name || "a player"} asked to ${op} door ${short(line)} (${via || "?"}), to ${to ? nameOf(to) : "any GM screen (none heard yet)"}`);
     return req;
   }
 
-  function onReply(msg) {
-    if (!forMe(msg, { role: ctx?.role, playerId: ctx?.playerId })) return;
+  function onReply(msg, ev) {
+    if (!msg?.req) return;
+    const from = msg.from ?? (ev?.local ? me() : ev?.connectionId) ?? null;
+    if (from) {
+      const s = heardBy.get(msg.req) || new Set();
+      s.add(from);
+      remember(heardBy, msg.req, s);
+    }
     const p = pending.get(msg.req);
-    if (!p) return;
-    T.clearTimeout(p.timer);
+    if (!p || !forMe(msg, { role: ctx?.role, playerId: ctx?.playerId })) return;
     pending.delete(msg.req);
+    if (p.retryT) T.clearTimeout(p.retryT);
+    if (p.failT) T.clearTimeout(p.failT);
     if (!msg.ok && msg.why) notify(`🚪 ${msg.why}`);
+    log(`← ${msg.name || nameOf(from)} answered: ${msg.ok ? msg.did || "done" : msg.why || "no"} (${msg.op} door ${short(msg.line)})`);
   }
 
   // A click on our menu, on handles (local items) or on shared door lines.
@@ -454,20 +633,20 @@ export function createDoors(api, ctx) {
     const items = (context?.items || []).filter((i) => tagOf(i)?.kind === "handle" && tagOf(i)?.host === host);
     for (const i of items) {
       const t = tagOf(i);
-      const state = { open: !!t.open, locked: !!t.locked };
-      const op = lock ? (state.locked ? "unlock" : "lock") : opFor(state, { gm: !!ctx?.isGm });
-      if (!op) notify("🔒 It's locked");
-      else if (!lock || ctx?.isGm) ask(op, t.line, "menu"); // lock and unlock: the GM's menu only
+      const state = { open: !!t.open, locked: !!t.locked }; // as this screen shows it
+      const op = lock ? (state.locked ? "unlock" : "lock") : opFor(state, { gm: isGm() });
+      if (!op) notify(`🔒 ${LOCKED}`);
+      else if (!lock || isGm()) ask(op, t.line, "menu"); // lock and unlock: the GM's menu only
     }
     deselect(items.map((i) => i.id));
   }
 
   function onLineMenu(context, { lock = false } = {}) {
-    if (!ctx?.isGm) return;
+    if (!isGm()) return;
     for (const item of context?.items || []) {
       const l = readLine(item);
       if (l?.kind !== "door") continue;
-      ask(lock ? (l.locked ? "unlock" : "lock") : l.open ? "close" : "open", l.id, "line-menu");
+      act(lock ? (l.locked ? "unlock" : "lock") : l.open ? "close" : "open", l.id, "line-menu");
     }
   }
 
@@ -482,18 +661,53 @@ export function createDoors(api, ctx) {
     const picked = ids.map(drawnById).filter(Boolean);
     if (!picked.length) return;
     for (const d of picked) {
-      const op = opFor(d, { gm: !!ctx?.isGm });
+      const op = opFor(d, { gm: isGm() });
       if (op) ask(op, d.line, "select");
-      else notify("🔒 It's locked");
+      else notify(`🔒 ${LOCKED}`);
     }
     deselect(picked.map((d) => d.id));
   }
 
-  // ---- the leader ----
+  // ---- the door writes (a GM screen's) ----
+
+  // Decide from the door as it stands now and write it, in one updateItems: the draft is checked and
+  // edited in place (fog/lines.js doorEdit: explicit values, never a deleted key, nothing touched that
+  // already holds them, so a draft already in that state asks Owlbear for nothing).
+  async function writeDoor(req, snap, fromGm) {
+    let r = null;
+    let wrote = false;
+    await OBR().scene.items.updateItems([req.line], (ds) => {
+      for (const d of ds) {
+        r = checkLive(req, snap, d, { fromGm });
+        if (r.change && doorEdit(d.metadata, r.change)) wrote = true;
+      }
+    });
+    if (!r) return { ok: false, why: "That isn't a door", change: null, state: null, found: false, wrote: false };
+    return { ...r, wrote };
+  }
+
+  const didOf = (r) => (r.ok ? (r.wrote ? "done" : "already so") : r.found ? "lock found" : null);
+
+  // A GM's own click: written from this screen, at once.
+  async function act(op, line, via) {
+    const req = { req: newId(), op, line, token: null, by: ctx?.playerId ?? null, dm: true, via };
+    const who = ctx?.name || "the DM";
+    let r;
+    try {
+      r = await writeDoor(req, ctx?.snapshot?.() ?? null, true);
+    } catch (e) {
+      log(`✖ the door write failed (${who}: ${op} door ${short(line)}): ${describe(e)}`, "error");
+      notify(`🚪 The door didn't move (${describe(e)})`);
+      return { ok: false, why: describe(e) };
+    }
+    log(`✎ ${who} (this screen) ${op} door ${short(line)} (${via || "?"}): ${r.ok ? didOf(r) : `refused: ${r.why}`}`);
+    if (!r.ok && r.why) notify(`🚪 ${r.why}`);
+    return r;
+  }
 
   async function fromGmOf(msg, event) {
     if (msg?.dm !== true || event?.viaScene) return false;
-    if (event?.local || (event?.connectionId && event.connectionId === ctx?.conn)) return !!ctx?.isGm;
+    if (event?.local || (event?.connectionId && event.connectionId === ctx?.conn)) return isGm();
     try {
       const players = await OBR().party.getPlayers();
       return (players || []).some((p) => p?.connectionId === event?.connectionId && p?.role === "GM");
@@ -502,49 +716,61 @@ export function createDoors(api, ctx) {
     }
   }
 
-  async function lead(msg, event) {
-    let leader = false;
-    try { leader = !!ctx?.isLeader?.(); } catch { leader = false; }
-    if (!leader || !msg?.req || typeof msg.line !== "string") return;
+  // Answer one player's request (this GM screen is the one to, by the rules).
+  async function answer(msg, event) {
     const fromGm = await fromGmOf(msg, event);
+    const who = msg.name || `player ${short(msg.by)}`;
     const snap = ctx?.snapshot?.() ?? null;
-    let r = { ok: false, why: "The DM's screen isn't ready", change: null, state: null };
-    let item = null;
+    let r = { ok: false, why: "The DM's screen isn't ready", change: null, state: null, found: false, wrote: false };
     if (snap) {
-      // The door as it stands now, not as the snapshot (up to MAX_WAIT_MS old) has it.
       try {
-        [item = null] = (await OBR().scene.items.getItems([msg.line])) || [];
-        r = checkLive(msg, snap, item, { fromGm });
+        r = await writeDoor(msg, snap, fromGm);
       } catch (e) {
-        r = { ok: false, why: `The DM's screen can't read that door (${describe(e)})`, change: null, state: null };
+        r = { ok: false, why: `The door didn't move (${describe(e)})`, change: null, state: null, found: false, wrote: false };
+        log(`✖ the door write failed (${who}: ${msg.op} door ${short(msg.line)}): ${describe(e)}`, "error");
       }
     }
-    if (r.ok && r.change) {
-      const l = readLine(item);
-      const was = l ? { open: !!l.open, locked: !!l.locked } : null;
-      let now = null;
-      try {
-        // ...and once more against the draft it writes: decided and written in one step.
-        await OBR().scene.items.updateItems([msg.line], (ds) => {
-          for (const d of ds) {
-            now = checkLive(msg, snap, d, { fromGm });
-            if (now.ok && now.change) doorEdit(d.metadata, now.change);
-          }
-        });
-        r = now || { ok: false, why: "That isn't a door", change: null, state: null };
-      } catch (e) {
-        r = { ok: false, why: `The door didn't move (${describe(e)})`, change: null, state: was };
-      }
-    }
-    const audience = fromGm ? "gm" : `player:${msg.by}`;
-    send(api, FOG_DOOR_REPLY_CH, { audience, req: msg.req, line: msg.line, op: msg.op, ok: r.ok, state: r.state, why: r.why }, "ALL");
-    log(`🚪 ${fromGm ? "DM" : `player ${msg.by}`} asked to ${msg.op} door ${String(msg.line).slice(0, 8)} (${msg.via || "?"}): `
-      + `${r.ok ? (r.change ? "done" : "already so") : r.why}`);
+    const reply = { audience: fromGm ? "gm" : `player:${msg.by}`, req: msg.req, line: msg.line, op: msg.op, ok: r.ok,
+                    state: shownState(r.state, { gm: fromGm }), why: r.why, did: didOf(r), from: me(), name: String(ctx?.name || "") };
+    remember(answered, msg.req, reply);
+    send(api, FOG_DOOR_REPLY_CH, reply, "ALL");
+    log(`✔ answered ${who}: ${msg.op} door ${short(msg.line)}: ${r.ok ? didOf(r) : `refused: ${r.why}`}`);
+    if (r.found && r.wrote) log(`🔒 ${who} tried door ${short(msg.line)}: it's locked, and the party knows it now`);
   }
 
-  function onRequest(msg, event) {
-    leaderQueue = leaderQueue.then(() => lead(msg, event)).catch((e) => { error = `doors: ${describe(e)}`; });
-    return leaderQueue;
+  function onRequest(msg, ev) {
+    if (!started || !isGm() || !msg?.req || typeof msg.line !== "string") return undefined;
+    const who = msg.name || `player ${short(msg.by)}`;
+    const p = pool();
+    const how = answerHow(msg, { pool: p, me: me(), heard: heardBy.get(msg.req) || new Set(), answered: answered.has(msg.req) });
+    const to = msg.to ? (msg.to === me() ? "to this screen" : `to ${nameOf(msg.to)}`) : "to any GM screen";
+    log(`⇐ ${who} asks to ${msg.op} door ${short(msg.line)} (${to}${msg.any ? ", asked again" : ""}): `
+      + (how === "no" ? `not this screen's (the answerer is ${nameOf(p[0] ?? null)})` : how === "again" ? "answered already: sent again" : "answering"));
+    if (how === "no") return undefined;
+    if (how === "again") {
+      send(api, FOG_DOOR_REPLY_CH, answered.get(msg.req), "ALL");
+      return undefined;
+    }
+    const go = () => {
+      queue = queue.then(() => answer(msg, ev)).catch((e) => {
+        error = `doors: ${describe(e)}`;
+        log(`✖ answering failed: ${describe(e)}`, "error");
+      });
+      return queue;
+    };
+    if (how === "now") return go();
+    // Not asked by name: wait a moment, and leave it to whoever answered meanwhile.
+    return new Promise((resolve) => {
+      T.setTimeout(() => {
+        const by = heardBy.get(msg.req);
+        if (answered.has(msg.req) || by?.size) {
+          log(`stood down: ${nameOf([...(by || [])][0] ?? me())} answered ${who} first`);
+          resolve();
+          return;
+        }
+        resolve(go());
+      }, Math.round(random() * HOLD_MS));
+    });
   }
 
   // ---- start and stop ----
@@ -553,22 +779,32 @@ export function createDoors(api, ctx) {
     if (started) return;
     started = true;
     const O = OBR();
-    offs.push(on(api, FOG_DOOR_CH, onRequest), on(api, FOG_DOOR_REPLY_CH, onReply));
+    offs.push(on(api, FOG_DOOR_REPLY_CH, onReply), on(api, FOG_HELLO_CH, onHello));
+    if (isGm()) offs.push(on(api, FOG_DOOR_CH, onRequest));
     try { offs.push(O.player.onChange((p) => onSelection(p?.selection))); } catch { /* no selection here */ }
     try { offs.push(O.scene.local.onChange(onLocal)); } catch { /* no snap-back here */ }
     const icons = menuIcons(host, icon);
     const made = [O.contextMenu.create({ id: menuId.handle, icons: icons[MENU.handle], onClick: (c) => onHandleMenu(c) })];
-    if (ctx?.isGm) {
+    if (isGm()) {
       made.push(
         O.contextMenu.create({ id: menuId.handleLock, icons: icons[MENU.handleLock], onClick: (c) => onHandleMenu(c, { lock: true }) }),
         O.contextMenu.create({ id: menuId.line, icons: icons[MENU.line], onClick: (c) => onLineMenu(c) }),
         O.contextMenu.create({ id: menuId.lineLock, icons: icons[MENU.lineLock], onClick: (c) => onLineMenu(c, { lock: true }) }));
     }
     menusOn = true;
+    // Who's there: a GM screen announces itself (and asks the others to), a player only asks.
+    if (isGm()) {
+      hello({ ask: true });
+      helloLoop();
+    } else {
+      send(api, FOG_HELLO_CH, { conn: me(), role: String(ctx?.role || "PLAYER"), ask: true }, "ALL");
+    }
+    noteAnswerer();
     try {
       await Promise.all(made);
     } catch (e) {
       error = `doors: a menu could not be made: ${describe(e)}`;
+      log(`✖ ${error}`, "error");
     }
   }
 
@@ -579,20 +815,31 @@ export function createDoors(api, ctx) {
       const off = offs.pop();
       try { if (typeof off === "function") off(); } catch { /* gone */ }
     }
-    for (const p of pending.values()) T.clearTimeout(p.timer);
+    if (isGm()) hello({ bye: true }); // the other screens pick their answerer again at once
+    if (helloT) { T.clearTimeout(helloT); helloT = null; }
+    for (const p of pending.values()) {
+      if (p.retryT) T.clearTimeout(p.retryT);
+      if (p.failT) T.clearTimeout(p.failT);
+    }
     pending.clear();
+    gms.clear();
+    answered.clear();
+    heardBy.clear();
+    lastAnswerer = undefined;
     if (snapTimer) { T.clearTimeout(snapTimer); snapTimer = null; }
     lastSel = "";
     if (menusOn) {
       menusOn = false;
-      const gone = ctx?.isGm ? Object.values(menuId) : [menuId.handle];
+      const gone = isGm() ? Object.values(menuId) : [menuId.handle];
       await Promise.all(gone.map((id) => Promise.resolve().then(() => OBR().contextMenu.remove(id)).catch(() => {})));
     }
   }
 
   function status() {
-    return { handles: drawn.size, pending: pending.size, menus: menusOn, error };
+    const a = started ? answerer() : null;
+    return { handles: drawn.size, pending: pending.size, menus: menusOn, error, gms: started ? pool().length : 0,
+             answerer: a ? { conn: a, name: nameOf(a), here: a === me() } : null };
   }
 
-  return { start, stop, sync, clear, status, ask };
+  return { start, stop, sync, clear, status, ask, act };
 }
