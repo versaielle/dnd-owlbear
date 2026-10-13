@@ -11,7 +11,7 @@
 //   readLine(item)       one line: {id, mapId: null, kind, open, locked, disabled, blocking,
 //                        doubleSided, src: "ours" | "smoke", points}, or null when it isn't one
 
-import { SMOKE, WALL_KEY } from "../keys.js?v=3fa571c";
+import { SMOKE, WALL_KEY } from "../keys.js?v=27b182c";
 
 export const KINDS = ["wall", "door", "window"];
 const SK = (k) => `${SMOKE}/${k}`;

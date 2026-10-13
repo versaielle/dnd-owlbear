@@ -10,12 +10,12 @@
 // where it stands), a lit goblin's light goes on a carrier the leader makes. The DM's own light
 // (LIGHT_KEY) is never touched here: a spell ending never puts out a torch.
 
-import { SPELL_LIGHT_KEY } from "../keys.js?v=3fa571c";
-import { lightChanges, planItem, reachOf, setSpellLight, stable, writeLightPart } from "./lightmeta.js?v=3fa571c";
-import { planCtx } from "./lightwriter.js?v=3fa571c";
-import { readGrid } from "./darkness.js?v=3fa571c";
-import { SOURCES } from "./lights.js?v=3fa571c";
-import { isPcToken } from "./pcs.js?v=3fa571c";
+import { SPELL_LIGHT_KEY } from "../keys.js?v=27b182c";
+import { lightChanges, planItem, reachOf, setSpellLight, stable, writeLightPart } from "./lightmeta.js?v=27b182c";
+import { planCtx } from "./lightwriter.js?v=27b182c";
+import { readGrid } from "./darkness.js?v=27b182c";
+import { SOURCES } from "./lights.js?v=27b182c";
+import { isPcToken } from "./pcs.js?v=27b182c";
 
 // lightChanges() lives in lightmeta.js; still offered here for older importers.
 export { lightChanges };

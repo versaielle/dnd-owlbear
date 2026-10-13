@@ -7,6 +7,7 @@
 // when it goes off: while the switch is off this file adds nothing.
 //
 //   SIGHT_Z                 the lights' z-index (0)
+//   SIGHT_FALLOFF           the lights' falloff (0: a hard edge, as Smoke draws a PC's sight)
 //   SOURCE_RADIUS           the default sourceRadius (0: Owlbear's fast light path, and a blocking
 //                           wall stops an attached token with its middle on the wall line)
 //   sightReachFt(item, vctx)   how far a PC sees (feet): the number Smoke gets from
@@ -27,7 +28,8 @@
 // after the token moves: nothing is attached there, so no wall can stop the DM's drags, arrow
 // keys or 🧭 Bring PCs. A light is made again (a delete and an add) only when its sig changes,
 // which is whether it's attached and to what; a new reach (a 🌑 PC walking towards a torch), a
-// new sourceRadius or a standalone light's new place is one update.
+// new sourceRadius, a standalone light's new place or a light read back with another falloff (an
+// earlier page's, drawn with Owlbear's default) is one update.
 //
 // ctx (fog.js): host, isGm, gmPass, log(text); optionally sightSourceRadius (a number, or a
 // function returning one, read on every sync: scene px, default SOURCE_RADIUS). api: {OBR,
@@ -36,12 +38,16 @@
 // FOG_LOCAL_KEY {kind: "sight", key, sig, host}) only on its first sync after a clear(), a
 // forget() (the scene closed: Owlbear dropped them) or a failed write; fog.js retries a failure.
 
-import { FOG_LOCAL_KEY } from "../keys.js?v=3fa571c";
-import { LIT_SIGHT, SELF_SIGHT, effectiveLight, visionOf } from "../fx/lightmeta.js?v=3fa571c";
-import { farLight } from "../fx/darkness.js?v=3fa571c";
-import { centreOf, mapAt } from "../views.js?v=3fa571c";
+import { FOG_LOCAL_KEY } from "../keys.js?v=27b182c";
+import { LIT_SIGHT, SELF_SIGHT, effectiveLight, visionOf } from "../fx/lightmeta.js?v=27b182c";
+import { farLight } from "../fx/darkness.js?v=27b182c";
+import { centreOf, mapAt } from "../views.js?v=27b182c";
 
 export const SIGHT_Z = 0;
+// A hard edge: Smoke's default for a seer (BSConstants FALLOFFDEFAULT "0"). buildLight's own
+// default, 1, fades the fog out across the whole reach and leaves a grey film over everything a PC
+// sees, even on a lit scene (found live 2026-10-12).
+export const SIGHT_FALLOFF = 0;
 export const SOURCE_RADIUS = 0;
 const KIND = "sight";
 // The light rides with its PC; nothing of the PC's own visibility or size carries over.
@@ -116,7 +122,7 @@ export function createSight(api = {}, ctx = {}) {
     return radiusOf(v ?? SOURCE_RADIUS);
   };
 
-  // key -> {id, sig, attached, attenuation, sourceRadius, position}: what this screen has drawn.
+  // key -> {id, sig, attached, attenuation, sourceRadius, falloff, position}: what this screen has drawn.
   let drawn = new Map();
   let applied = null; // planSig of the last plan drawn in full
   let sweep = true; // read our items back before the next sync
@@ -130,6 +136,7 @@ export function createSight(api = {}, ctx = {}) {
     return a
       .sourceRadius(s.sourceRadius)
       .attenuationRadius(s.attenuation)
+      .falloff(SIGHT_FALLOFF)
       .lightType("PRIMARY")
       .zIndex(SIGHT_Z)
       .locked(true)
@@ -146,7 +153,8 @@ export function createSight(api = {}, ctx = {}) {
       const t = i.metadata[FOG_LOCAL_KEY];
       if (t.key == null || next.has(t.key)) { del.push(i.id); continue; }
       next.set(t.key, { id: i.id, sig: t.sig, attached: !!i.attachedTo, attenuation: radiusOf(i.attenuationRadius),
-        sourceRadius: radiusOf(i.sourceRadius), position: i.position ? { x: r2(i.position.x), y: r2(i.position.y) } : null });
+        sourceRadius: radiusOf(i.sourceRadius), falloff: finite(i.falloff) ? i.falloff : null,
+        position: i.position ? { x: r2(i.position.x), y: r2(i.position.y) } : null });
     }
     drawn = next;
   }
@@ -171,7 +179,9 @@ export function createSight(api = {}, ctx = {}) {
       const rec = drawn.get(s.key);
       if (!rec) { add.push(s); continue; }
       const moved = !s.attached && (!rec.position || rec.position.x !== s.position.x || rec.position.y !== s.position.y);
-      if (moved || rec.attenuation !== s.attenuation || rec.sourceRadius !== s.sourceRadius) upd.set(rec.id, s);
+      if (moved || rec.attenuation !== s.attenuation || rec.sourceRadius !== s.sourceRadius || rec.falloff !== SIGHT_FALLOFF) {
+        upd.set(rec.id, s);
+      }
     }
 
     let failed = false;
@@ -194,7 +204,7 @@ export function createSight(api = {}, ctx = {}) {
         const built = add.map(item);
         await OBR().scene.local.addItems(built);
         add.forEach((s, k) => drawn.set(s.key, { id: built[k].id, sig: s.sig, attached: s.attached, attenuation: s.attenuation,
-          sourceRadius: s.sourceRadius, position: s.position }));
+          sourceRadius: s.sourceRadius, falloff: SIGHT_FALLOFF, position: s.position }));
         done.added = add.length;
       } catch (e) {
         fail("add", e);
@@ -208,12 +218,13 @@ export function createSight(api = {}, ctx = {}) {
             if (!s) continue;
             d.attenuationRadius = s.attenuation;
             d.sourceRadius = s.sourceRadius;
+            d.falloff = SIGHT_FALLOFF;
             if (!s.attached) d.position = { ...s.position };
           }
         });
         for (const s of upd.values()) {
           const rec = drawn.get(s.key);
-          if (rec) Object.assign(rec, { attenuation: s.attenuation, sourceRadius: s.sourceRadius, position: s.position });
+          if (rec) Object.assign(rec, { attenuation: s.attenuation, sourceRadius: s.sourceRadius, falloff: SIGHT_FALLOFF, position: s.position });
         }
         done.updated = upd.size;
       } catch (e) {

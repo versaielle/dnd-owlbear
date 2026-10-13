@@ -81,10 +81,11 @@ export const PARTY_KEY = "dnd-npc/party";
 export const PROJECTOR_KEY = "dnd-npc/projector";
 // 🌫 Our own vision layer (docs/vision-layer-spec.md; the builders' contract is
 // docs/vision-layer-b2b3.md). FOG_KEY on the SCENE is the switch "🌫 Our fog": {v: 1, on, at,
-// prev?: {filled, color}}. Off or missing = our layer adds nothing, writes nothing, and Smoke &
-// Spectre works as before. Any GM screen writes `on` (the DM's click); the leader GM screen then
-// fills the fog black, keeping the fill and colour it found in `prev`, and puts them back (and
-// drops `prev`) when it goes off. Every screen reads it: a flag, a time and a colour only.
+// prev?: {filled}}. Off or missing = our layer adds nothing, writes nothing, and Smoke & Spectre
+// works as before. Any GM screen writes `on` (the DM's click); the leader GM screen then turns the
+// fog's fill on and leaves its colour as the scene has it (like Smoke), keeping the fill it found
+// in `prev`, and puts that fill back (and drops `prev`) when it goes off. (An older build's prev
+// also held a colour: read fine, never written.) Every screen reads it: flags and a time only.
 export const FOG_KEY = "dnd-npc/fog";
 // On a wall line (a CURVE, as 🏘 Set up interiors draws them, or one the DM marked): {kind: "wall"
 // | "door" | "window", open?: true, locked?: true} (open and locked only on a door, never both;

@@ -46,11 +46,11 @@
 // one add and one update per sync, and our items are read back only after a clear or a failure.
 // Syncs and clears run one at a time, so a clear can't slip in while a sync's add is on its way.
 
-import { FOG_DOOR_CH, FOG_DOOR_REPLY_CH, FOG_LOCAL_KEY, WALL_KEY } from "../keys.js?v=3fa571c";
-import { forMe, here, newId, on, send } from "../bus.js?v=3fa571c";
-import { centreOf } from "../views.js?v=3fa571c";
-import { canSee, sightBlockers } from "./los.js?v=3fa571c";
-import { SMOKE_LINE, doorEdit, edgeWalls, midpointAlong, nearestOnLine, readLine, segmentsOf } from "./lines.js?v=3fa571c";
+import { FOG_DOOR_CH, FOG_DOOR_REPLY_CH, FOG_LOCAL_KEY, WALL_KEY } from "../keys.js?v=27b182c";
+import { forMe, here, newId, on, send } from "../bus.js?v=27b182c";
+import { centreOf } from "../views.js?v=27b182c";
+import { canSee, sightBlockers } from "./los.js?v=27b182c";
+import { SMOKE_LINE, doorEdit, edgeWalls, midpointAlong, nearestOnLine, readLine, segmentsOf } from "./lines.js?v=27b182c";
 
 export const DOOR_REACH_FT = 5; // from the PC's middle to the nearest point of the door line
 export const REPLY_WAIT_MS = 4000; // no answer by then: "No DM screen answered"

@@ -2,8 +2,8 @@
 // fit across (or kept as it is when already closer), and the token is selected. Offered from
 // the right-click menu on anything (menu.html, kind=goto), the toolbar button's box
 // (popover.html) and a key (background.js). The PC tokens are gather.js's.
-import OBR from "./obr-sdk.js?v=3fa571c";
-import { findPcs, partyNames, tokenBox } from "./gather.js?v=3fa571c";
+import OBR from "./obr-sdk.js?v=27b182c";
+import { findPcs, partyNames, tokenBox } from "./gather.js?v=27b182c";
 
 const SQUARES = 12; // squares across the screen after the jump
 

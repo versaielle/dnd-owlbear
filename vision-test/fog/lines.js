@@ -33,9 +33,9 @@
 // Smoke door stands open with doorOpen (and disabled, which Smoke sets with it); a Smoke line that
 // isn't a door and is disabled is switched off: it makes no wall, and stops nothing.
 
-import { WALL_KEY } from "../keys.js?v=3fa571c";
-import { centreOf, mapAt, mapRects } from "../views.js?v=3fa571c";
-import { KINDS, SMOKE_LINE, ourState, readLine as readBare, smokeState, toWorld, worldPoints } from "./lineread.js?v=3fa571c";
+import { WALL_KEY } from "../keys.js?v=27b182c";
+import { centreOf, mapAt, mapRects } from "../views.js?v=27b182c";
+import { KINDS, SMOKE_LINE, ourState, readLine as readBare, smokeState, toWorld, worldPoints } from "./lineread.js?v=27b182c";
 
 // The map-free part lives in fog/lineread.js (a leaf: gather.js and fx/lighting.js import it
 // without views.js); every part of the vision layer reads it from here.

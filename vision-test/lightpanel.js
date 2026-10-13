@@ -19,13 +19,13 @@
 // with the lights writer's own ctx, in one write (fx/lightwriter.js writeNow): the writer's next
 // pass plans nothing more. Any control here that changes an input takes a scene released to
 // Smoke back (SCENE_LIGHTING_KEY.managed true); "Release lights to Smoke" sets it false.
-import { FOG_KEY, MAP_DARKNESS_KEY, PARTY_KEY, SCENE_LIGHTING_KEY } from "./keys.js?v=3fa571c";
-import { SOURCES } from "./fx/lights.js?v=3fa571c";
-import { isMap, mapDarkness, readGrid, sceneDarkness } from "./fx/darkness.js?v=3fa571c";
-import { writeNow } from "./fx/lightwriter.js?v=3fa571c";
-import { cleanParty } from "./gather.js?v=3fa571c";
+import { FOG_KEY, MAP_DARKNESS_KEY, PARTY_KEY, SCENE_LIGHTING_KEY } from "./keys.js?v=27b182c";
+import { SOURCES } from "./fx/lights.js?v=27b182c";
+import { isMap, mapDarkness, readGrid, sceneDarkness } from "./fx/darkness.js?v=27b182c";
+import { writeNow } from "./fx/lightwriter.js?v=27b182c";
+import { cleanParty } from "./gather.js?v=27b182c";
 import { DARKNESS, applyMeta, autoKind, carriers, describe, editFor, lightingOf, lightingRows, managed, releaseItem,
-         screenLine, screenWarnings, uiCtx } from "./lightui.js?v=3fa571c";
+         screenLine, screenWarnings, uiCtx } from "./lightui.js?v=27b182c";
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 const COMMON = ["candle", "torch", "lamp", "hooded_lantern", "brazier"].filter((k) => SOURCES[k]);
@@ -216,7 +216,7 @@ export function startLighting(OBR, el, { build = "" } = {}) {
     const arming = !f.on && Date.now() - fogArmed < 5000;
     box.append(chip(f.on ? "✓ 🌫 Our fog" : arming ? "🌫 Tap again: on for every screen" : "🌫 Our fog", f.on,
       f.on ? "Our own vision layer is on in this scene. Tap to switch it off (Smoke & Spectre as before)"
-        : "Our own vision layer (not for game night until rehearsed): party sight, walls and doors on every screen; the fog goes black",
+        : "Our own vision layer (not for game night until rehearsed): party sight, walls and doors on every screen; the fog goes on in the scene's own colour",
       () => toggleFog(!f.on)));
     el.fog.append(box);
     const line = (cls, text) => {
@@ -250,8 +250,8 @@ export function startLighting(OBR, el, { build = "" } = {}) {
     }
     fogArmed = 0;
     await fogMod.writeSwitch(OBR, on);
-    say(on ? "🌫 Our fog is on: every screen draws the party's sight, walls and doors (the leader GM tab fills the fog black)"
-      : "🌫 Our fog is off: Smoke & Spectre as before (the leader GM tab puts the fog's own fill and colour back)");
+    say(on ? "🌫 Our fog is on: every screen draws the party's sight, walls and doors (the leader GM tab turns the fog on in the scene's own colour)"
+      : "🌫 Our fog is off: Smoke & Spectre as before (the leader GM tab puts the fog's own fill back)");
     await load();
     render();
   }
@@ -423,7 +423,7 @@ export function startLighting(OBR, el, { build = "" } = {}) {
     }
   }
 
-  import("./fog/fog.js?v=3fa571c").then((m) => { fogMod = m; renderFog(); }, (e) => { fogErr = String(e?.message || e); renderFog(); });
+  import("./fog/fog.js?v=27b182c").then((m) => { fogMod = m; renderFog(); }, (e) => { fogErr = String(e?.message || e); renderFog(); });
   OBR.scene.items.onChange(() => refresh());
   OBR.scene.onMetadataChange?.(() => refresh());
   OBR.scene.onReadyChange?.(() => refresh());

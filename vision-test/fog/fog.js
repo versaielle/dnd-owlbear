@@ -4,11 +4,11 @@
 // local walls, fog/doors.js: the door handles, their menus and the leader's door checks), the
 // throttle, and the leader GM screen's shared writes.
 //
-//   SETTLE_MS, MAX_WAIT_MS, RETRY_MS, RETRY_MAX_MS, FOG_COLOR, LEADER_RECHECK_MS, LEADER_WAIT_MS,
-//   LEADER_SLOW_MS
+//   SETTLE_MS, MAX_WAIT_MS, RETRY_MS, RETRY_MAX_MS, LEADER_RECHECK_MS, LEADER_WAIT_MS, LEADER_SLOW_MS
 //   SMOKE_VISION_OFF        Smoke & Spectre's own scene switch "Disable Vision" (its 5.0.4 MetadataKeys
 //                           FOG_DISABLE_VISION): true = Smoke draws no vision lights in this scene
-//   cleanFog(v)             FOG_KEY's value made safe: {v: 1, on, at, prev: {filled, color} | null}
+//   cleanFog(v)             FOG_KEY's value made safe: {v: 1, on, at, prev: {filled} | null} (an older
+//                           build's prev also held the fog's colour: read fine, and dropped)
 //   fogOn(sceneMeta)        is 🌫 Our fog on in this scene
 //   switchValue(raw, on, now)   what a click on 🌫 Our fog writes: {v: 1, on, at: now, prev?} (prev kept)
 //   writeSwitch(OBR, on, now)   that write (any GM screen: the DM's click; the 🔥 Lighting list uses it)
@@ -29,16 +29,17 @@
 //
 // ONE WRITER. Shared writes come only from the leader GM screen (opts.isLeader: the lights writer's
 // gate, fx/lightwriter.js), except the DM's own click on the switch:
-//   - 🌫 Our fog turns on: the fog fill and colour found are kept in FOG_KEY.prev (once: an existing
-//     prev is the scene's own from before), the fill goes on and black, and every door line that has
-//     both formats takes Smoke's state (fog/lines.js drift: Smoke was in charge until now);
-//   - it turns off: prev goes back on the fog, and FOG_KEY loses prev.
+//   - 🌫 Our fog turns on: the fog fill found is kept in FOG_KEY.prev (once: an existing prev is the
+//     scene's own from before), the fill goes on in the scene's own fog colour (never changed, as
+//     Smoke leaves it), and every door line that has both formats takes Smoke's state (fog/lines.js
+//     drift: Smoke was in charge until now);
+//   - it turns off: prev's fill goes back on the fog (the colour is left alone), and FOG_KEY loses prev.
 // The leader does each once per switch time (FOG_KEY.at). A GM screen that isn't the leader yet (the
 // lights writer's 35 s warm-up) looks again every LEADER_RECHECK_MS while something is due, for
 // LEADER_WAIT_MS: by then the leader (another GM screen, or this one) has usually done it. When
 // nobody has (the scene still says so: FOG_KEY.prev waiting to go back, or no prev kept at a
 // switch-on), it keeps looking every LEADER_SLOW_MS for as long as that lasts: no GM screen may
-// lead for a while (GM screens on different builds, an old build open), and a fog left black
+// lead for a while (GM screens on different builds, an old build open), and a fog left filled
 // would hide the map from Smoke's players. kick() also looks while something is due, and
 // background.js kicks whenever the lights writer's gate changes.
 //
@@ -56,14 +57,14 @@
 // While on, a GM screen whose scene also has Smoke's vision on gets one notification per switch-on,
 // and status().smoke says so for the 🔥 Lighting list: both would draw fog.
 
-import { FOG_KEY, FOG_LOCAL_KEY, PARTY_KEY, PARTY_SENSES_KEY, SCENE_LIGHTING_KEY, SMOKE } from "../keys.js?v=3fa571c";
-import { planCtx } from "../fx/lightwriter.js?v=3fa571c";
-import { readGrid } from "../fx/darkness.js?v=3fa571c";
-import { mapRects } from "../views.js?v=3fa571c";
-import { doorEdit, drift, occupiedMaps, readLines } from "./lines.js?v=3fa571c";
-import { createSight } from "./sight.js?v=3fa571c";
-import { createWalls } from "./walls.js?v=3fa571c";
-import { createDoors } from "./doors.js?v=3fa571c";
+import { FOG_KEY, FOG_LOCAL_KEY, PARTY_KEY, PARTY_SENSES_KEY, SCENE_LIGHTING_KEY, SMOKE } from "../keys.js?v=27b182c";
+import { planCtx } from "../fx/lightwriter.js?v=27b182c";
+import { readGrid } from "../fx/darkness.js?v=27b182c";
+import { mapRects } from "../views.js?v=27b182c";
+import { doorEdit, drift, occupiedMaps, readLines } from "./lines.js?v=27b182c";
+import { createSight } from "./sight.js?v=27b182c";
+import { createWalls } from "./walls.js?v=27b182c";
+import { createDoors } from "./doors.js?v=27b182c";
 
 export const SETTLE_MS = 150; // item changes settle this long before a pass
 export const MAX_WAIT_MS = 750; // ...but a long drag still gets a pass this often
@@ -72,7 +73,6 @@ export const RETRY_MAX_MS = 30000; // ...up to this
 export const LEADER_RECHECK_MS = 5000; // a GM screen with a leader's write due, but not the leader yet, looks again...
 export const LEADER_WAIT_MS = 60000; // ...this long (the lights writer's warm-up is 35 s; then some GM screen leads)
 export const LEADER_SLOW_MS = 30000; // ...then this often, while the scene shows nobody did it
-export const FOG_COLOR = "#000000"; // solid black on the projector and the phones (spike S5)
 export const SMOKE_VISION_OFF = `${SMOKE}/disableVision`;
 const SMOKE_SCENE_ID = `${SMOKE}/sceneId`; // Smoke writes it the first time it runs in a scene
 const SMOKE_HAS_VISION = `${SMOKE}/hasVision`;
@@ -83,10 +83,12 @@ const describe = (e) => e?.error?.message || e?.message || String(e);
 
 // ---- the switch (pure) ----
 
+// prev is the fill only: the fog's colour is the scene's own and never ours to write (an older
+// build's prev.color is read without a fuss and left out, so it's never written back).
 export function cleanFog(v) {
   const o = isObj(v) ? v : {};
   const p = isObj(o.prev) ? o.prev : null;
-  const prev = p ? { filled: p.filled === true, color: typeof p.color === "string" && p.color ? p.color : null } : null;
+  const prev = p ? { filled: p.filled === true } : null;
   return { v: 1, on: o.on === true, at: finite(o.at) ? o.at : 0, prev };
 }
 
@@ -392,8 +394,8 @@ export function createFog(api = {}, ctx = {}, opts = {}) {
 
   // ---- the leader's shared writes ----
 
-  // What the leader still owes this switch state: "on" (keep prev, fill black, adopt drift), "off"
-  // (put prev back), or null.
+  // What the leader still owes this switch state: "on" (keep prev, fill on, adopt drift), "off"
+  // (put prev's fill back), or null.
   const due = (fog) => (fog.on ? (doneOn === fog.at ? null : "on") : fog.prev ? "off" : null);
 
   async function leaderWork(fog) {
@@ -415,14 +417,14 @@ export function createFog(api = {}, ctx = {}, opts = {}) {
     if (owe === "on") {
       const fill = O.scene.fog;
       if (!fog.prev) {
-        const prev = { filled: (await fill.getFilled()) === true, color: (await fill.getColor()) || null };
+        const prev = { filled: (await fill.getFilled()) === true };
         // Only onto the switch as it stands now (the DM may have clicked again meanwhile).
         const now = cleanFog(((await O.scene.getMetadata()) || {})[FOG_KEY]);
         if (!now.on || now.at !== fog.at) return;
         await O.scene.setMetadata({ [FOG_KEY]: { v: 1, on: true, at: fog.at, prev } });
       }
+      // The fill only: the fog keeps the scene's own colour, as Smoke leaves it.
       if ((await fill.getFilled()) !== true) await fill.setFilled(true);
-      if (String((await fill.getColor()) || "").toLowerCase() !== FOG_COLOR) await fill.setColor(FOG_COLOR);
       const list = items || (await O.scene.items.getItems());
       const drifted = list.filter((i) => i?.type === "CURVE" && drift(i.metadata)).map((i) => i.id);
       if (drifted.length) {
@@ -435,16 +437,15 @@ export function createFog(api = {}, ctx = {}, opts = {}) {
         log(`adopted Smoke's door state on ${drifted.length} line(s)`);
       }
       doneOn = fog.at;
-      log("switched on: the fog is filled black (its own fill and colour kept to put back)");
+      log("switched on: the fog is on in the scene's own colour (its own fill kept to put back)");
       return;
     }
-    // off: put the scene's own fill and colour back, then drop prev
+    // off: put the scene's own fill back (the colour was never ours), then drop prev
     const now = cleanFog(((await O.scene.getMetadata()) || {})[FOG_KEY]);
     if (now.on || !now.prev) return;
     await O.scene.fog.setFilled(now.prev.filled);
-    if (now.prev.color) await O.scene.fog.setColor(now.prev.color);
     await O.scene.setMetadata({ [FOG_KEY]: { v: 1, on: false, at: now.at } });
-    log("switched off: the fog's own fill and colour are back");
+    log("switched off: the fog's own fill is back");
   }
 
   // ---- watching the scene ----

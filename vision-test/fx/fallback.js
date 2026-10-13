@@ -7,7 +7,7 @@
 //   death                           the same ring, in red
 //   number                          unchanged (numbers.js); flash and shake are skipped
 // Every shape is a local item on the ATTACHMENT layer, locked and click-through.
-import { placeRect, rotate } from "./place.js?v=3fa571c";
+import { placeRect, rotate } from "./place.js?v=27b182c";
 
 const TRAVEL = ["bolt", "ray", "arrow"];
 const AREA = ["burst", "cone", "line", "cube"];

@@ -1,13 +1,13 @@
 // BLUE target rings, written the way Owlbear's Colored Rings extension writes them, so the
 // panel's ring reader (_take_target_pick) and the DM's own clicks treat them like any other.
 // The bridge rings what a locked aim caught; a GM aimer does it itself when the bridge is gone.
-import { RING_KEY, TARGET_COLOR } from "../keys.js?v=3fa571c";
-import { footprint } from "./geometry.js?v=3fa571c";
+import { RING_KEY, TARGET_COLOR } from "../keys.js?v=27b182c";
+import { footprint } from "./geometry.js?v=27b182c";
 
 let sdk = null;
 async function shapeBuilder(api) {
   if (api.buildShape) return api.buildShape;
-  sdk ||= import("../obr-sdk.js?v=3fa571c");
+  sdk ||= import("../obr-sdk.js?v=27b182c");
   return (await sdk).buildShape;
 }
 
