@@ -25,9 +25,9 @@
 // strings. A missing visionDark leaves a stale ring in Smoke: we write "0", never delete it while
 // the token is ours.
 
-import { BUBBLES_NAME_KEY, CARRIER_KEY, LIGHT_BASE_KEY, LIGHT_KEY, SMOKE, SPELL_LIGHT_KEY, VISION_KEY } from "../keys.js?v=69dedbd";
-import { SOURCES } from "./lights.js?v=69dedbd";
-import { farLight, regionAt } from "./darkness.js?v=69dedbd";
+import { BUBBLES_NAME_KEY, CARRIER_KEY, LIGHT_BASE_KEY, LIGHT_KEY, SMOKE, SPELL_LIGHT_KEY, VISION_KEY } from "../keys.js?v=7f44662";
+import { SOURCES } from "./lights.js?v=7f44662";
+import { farLight, regionAt } from "./darkness.js?v=7f44662";
 
 const K = (name) => `${SMOKE}/${name}`;
 // The Smoke keys we write (and so may have to remove), by their short names.
@@ -135,7 +135,7 @@ function underHiddenCharacter(item, ctx = {}) {
 // Smoke range, which Smoke's own controls change. ctx: planCtx's (lighting, byId, isPc).
 export function isNativeTorch(item, ctx = {}) {
   const meta = item?.metadata;
-  if (!isObj(meta) || meta[CARRIER_KEY] || !smokeTorch(meta) || meta[LIGHT_BASE_KEY] !== undefined) return false;
+  if (!isObj(meta) || meta[CARRIER_KEY] || !smokeTorch(meta) || meta[LIGHT_BASE_KEY] != null) return false;
   if (!VISION_LAYERS.includes(item.layer) || item.layer === "CHARACTER") return false;
   if (meta[LIGHT_KEY] !== undefined || meta[SPELL_LIGHT_KEY] !== undefined || meta[VISION_KEY]?.dm?.seer === true) return false;
   // A darkvision on it (a preset, the slider): Smoke's ring on a torch depends on the order each
@@ -251,7 +251,7 @@ function managed(item, meta, ctx) {
 // LIGHT_BASE_KEY (the first build, 2.305.0) -> VISION_KEY, once (handoff §3g). A token that
 // already has a profile only loses the old key: its Smoke range is our own max() by now.
 function migrate(meta, ctx) {
-  if (meta[LIGHT_BASE_KEY] === undefined) return false;
+  if (meta[LIGHT_BASE_KEY] == null) return false; // missing, or released (lightui.js applyMeta's explicit null): nothing to migrate
   const base = meta[LIGHT_BASE_KEY];
   delete meta[LIGHT_BASE_KEY];
   if (isObj(meta[VISION_KEY]) || !isObj(base)) return true;
@@ -333,7 +333,7 @@ function adoptInto(meta, item, ctx, notes) {
     else if (n !== null && (field === "sight" || n > 0)) dm[field] = n;
     out[k] = v;
   }
-  if (meta[K("isTorch")] === undefined) delete out.isTorch;
+  if (meta[K("isTorch")] == null) delete out.isTorch; // missing, or an explicit null (released): the same
   else if (out.isTorch === undefined) out.isTorch = meta[K("isTorch")]; // ours from now (never on a token)
   meta[VISION_KEY] = { dm, out };
 }
@@ -408,6 +408,7 @@ export function planItem(item, ctx = {}, notes = null) {
   }
   const keep = canonDm(dm, view, ctx);
   if (Object.keys(keep).length || Object.keys(out).length) meta[VISION_KEY] = { dm: keep, out };
+  else if (item.metadata[VISION_KEY] === null) meta[VISION_KEY] = null; // released: null is no profile, kept (never a removed key)
   else delete meta[VISION_KEY];
   return stable(item.metadata) === stable(meta) ? null : meta;
 }
@@ -421,7 +422,10 @@ export function adoptEdits(item, ctx = {}, notes = null) {
   adoptInto(meta, item, ctx, notes);
   if (isObj(meta[VISION_KEY])) {
     const p = profileOf(meta);
-    if (!Object.keys(p.dm).length && !Object.keys(p.out).length && !isObj(item.metadata[VISION_KEY])) delete meta[VISION_KEY];
+    if (!Object.keys(p.dm).length && !Object.keys(p.out).length && !isObj(item.metadata[VISION_KEY])) {
+      if (item.metadata[VISION_KEY] === null) meta[VISION_KEY] = null; // released: kept null, as planItem
+      else delete meta[VISION_KEY];
+    }
   }
   return stable(item.metadata) === stable(meta) ? null : meta;
 }

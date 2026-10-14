@@ -23,10 +23,10 @@
 // The automatic threshold (2 visits plus 10 active minutes, spec section 7) comes after Thursday;
 // it will write the same MEMORY_KEY setRemembered writes, so nothing here changes.
 
-import { MAP_FOG_KEY, MEMORY_KEY, SEEN_KEY } from "../keys.js?v=69dedbd";
-import { mapRects } from "../views.js?v=69dedbd";
-import { count } from "./bitset.js?v=69dedbd";
-import { FOG_MODES, MAP_KINDS, buildingOf, emptySeen, mapFogOf, mapGrid, mapStates, paintedKind, seenOf } from "./maps.js?v=69dedbd";
+import { MAP_FOG_KEY, MEMORY_KEY, SEEN_KEY } from "../keys.js?v=7f44662";
+import { mapRects } from "../views.js?v=7f44662";
+import { count } from "./bitset.js?v=7f44662";
+import { FOG_MODES, MAP_KINDS, buildingOf, emptySeen, mapFogOf, mapGrid, mapStates, paintedKind, seenOf } from "./maps.js?v=7f44662";
 
 export const FORGET_ARM_MS = 5000;
 

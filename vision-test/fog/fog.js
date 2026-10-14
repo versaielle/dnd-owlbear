@@ -17,8 +17,15 @@
 //   writeSwitch(OBR, on, now, {log})   the whole switch, from the GM screen whose chip was tapped: on
 //                           keeps the fog's fill in prev, turns the fill on and adopts Smoke's door state
 //                           (drift); off puts prev's fill back and clears prev. -> {next, filled, adopted}
-//   smokeVision(sceneMeta, items)   {here, on}: Smoke runs in this scene (its sceneId, a token it
-//                           gives sight), and its vision isn't switched off there
+//   offWords(filled)        what the scene shows once 🌫 is off, by the fill writeSwitch put back (its
+//                           `filled`: true, false, null = none kept); never "Smoke & Spectre works": on a
+//                           game night it is switched off in the room, and then nothing draws sight at all
+//   SMOKE_CHECK_MS          a GM screen looks for Smoke's running local items at most this often
+//   isSmokeLocal(item)      a local LIGHT or WALL that Smoke & Spectre draws while it runs (its keys, none of ours)
+//   smokeVision(sceneMeta, localItems)   {here, on}: Smoke runs on this screen now (its local lights
+//                           or walls are here), and its vision isn't switched off in the scene. Its
+//                           sceneId and a token's hasVision never count: they outlive the extension,
+//                           and our own lights writer writes hasVision on the PCs
 //   inputSig(sceneMeta) / roomSig(roomMeta)   the metadata a pass depends on
 //   buildSnapshot(items, sceneMeta, roomMeta, grid, ctx)   the one snapshot every part plans from (pure)
 //   createFog(api, ctx, opts) -> {start(), stop(), status(), setOn(on), kick(), snapshot(), log(kind, text), logLines(max)}
@@ -63,21 +70,24 @@
 // 🪵 LIVE LOG. Every screen keeps its own fog and door lines and broadcasts the new ones (fog/livelog.js);
 // a GM screen collects them all for the GM box. A pass logs only when it fails (once per new error).
 //
-// While on, a GM screen whose scene also has Smoke's vision on gets one notification per switch-on,
-// and status().smoke says so for the 🔥 Lighting list: both would draw fog.
+// While on, a GM screen where Smoke & Spectre is RUNNING with its vision on (its own local lights or
+// walls are on that screen, and its "Disable Vision" isn't set) gets one notification per switch-on,
+// and status().smoke says so for the 🔥 Lighting list: both would draw fog. It looks on a pass and on
+// the answerer watch, at most every SMOKE_CHECK_MS (one OBR.scene.local.getItems), never on a
+// player's screen. Smoke's leftover shared data (its sceneId, a token's hasVision) never counts.
 
-import { FOG_KEY, FOG_LOCAL_KEY, PARTY_KEY, PARTY_SENSES_KEY, SCENE_LIGHTING_KEY, SMOKE } from "../keys.js?v=69dedbd";
-import { planCtx } from "../fx/lightwriter.js?v=69dedbd";
-import { readGrid } from "../fx/darkness.js?v=69dedbd";
-import { mapRects } from "../views.js?v=69dedbd";
-import { doorEdit, drift, occupiedMaps, readLines } from "./lines.js?v=69dedbd";
-import { mapStates } from "./maps.js?v=69dedbd";
-import { createSight } from "./sight.js?v=69dedbd";
-import { createWalls } from "./walls.js?v=69dedbd";
-import { ANSWERER_SETTLE_MS, createDoors } from "./doors.js?v=69dedbd";
-import { createSeen } from "./seen.js?v=69dedbd";
-import { createMemory } from "./memory.js?v=69dedbd";
-import { createLiveLog, lineText } from "./livelog.js?v=69dedbd";
+import { FOG_KEY, FOG_LOCAL_KEY, PARTY_KEY, PARTY_SENSES_KEY, SCENE_LIGHTING_KEY, SMOKE } from "../keys.js?v=7f44662";
+import { planCtx } from "../fx/lightwriter.js?v=7f44662";
+import { readGrid } from "../fx/darkness.js?v=7f44662";
+import { mapRects } from "../views.js?v=7f44662";
+import { doorEdit, drift, occupiedMaps, readLines } from "./lines.js?v=7f44662";
+import { mapStates } from "./maps.js?v=7f44662";
+import { createSight } from "./sight.js?v=7f44662";
+import { createWalls } from "./walls.js?v=7f44662";
+import { ANSWERER_SETTLE_MS, createDoors } from "./doors.js?v=7f44662";
+import { createSeen } from "./seen.js?v=7f44662";
+import { createMemory } from "./memory.js?v=7f44662";
+import { createLiveLog, lineText } from "./livelog.js?v=7f44662";
 
 export { lineText }; // a live-log line as text (background.js sends them to the GM box)
 
@@ -88,8 +98,11 @@ export const RETRY_MAX_MS = 30000; // ...up to this
 export const ANSWER_WATCH_MS = 5000; // a GM screen checks this often whether it became (or stopped being) the answerer
 export const PARTS = ["walls", "sight", "doors", "seen", "memory"]; // the sync order of each pass
 export const SMOKE_VISION_OFF = `${SMOKE}/disableVision`;
-const SMOKE_SCENE_ID = `${SMOKE}/sceneId`; // Smoke writes it the first time it runs in a scene
-const SMOKE_HAS_VISION = `${SMOKE}/hasVision`;
+export const SMOKE_CHECK_MS = 5000; // a GM screen looks for Smoke's running local items at most this often
+// The Smoke warning's last words: Smoke's local lights and walls may outlive its switch-off on a tab
+// that had the scene open (not checked live), and they still draw there until they go. Short: the Live
+// log line that ends with it must fit in fog/livelog.js LOG_TEXT_MAX.
+export const SMOKE_LEFTOVERS = "Already off? Its leftovers stay on this screen till the tab reloads or the scene reopens";
 
 const isObj = (x) => !!x && typeof x === "object" && !Array.isArray(x);
 const finite = (x) => typeof x === "number" && Number.isFinite(x);
@@ -161,19 +174,44 @@ export async function writeSwitch(OBR, on, now = Date.now(), { log = null } = {}
   }
   const next = { v: 1, on: false, at, prev: null };
   await OBR.scene.setMetadata({ [FOG_KEY]: next });
-  say(`🌫 switched off from this screen: ${back == null ? "no fill of the scene's own was kept, so the fog is left as it is"
-    : `the fog's own fill (${back ? "on" : "off"}) is back`}; Smoke & Spectre as before`);
+  say(`🌫 switched off from this screen: ${offWords(back)}`);
   return { next, filled: back, adopted: 0 };
 }
 
-// Is Smoke & Spectre drawing vision in this scene? `here`: it has run in it (the scene id it writes)
-// or a token has its sight; `on`: here, and its "Disable Vision" isn't set (Smoke then makes no
-// vision lights at all). Its own local walls may stay either way (not checked live yet).
-export function smokeVision(sceneMeta, items) {
-  const m = isObj(sceneMeta) ? sceneMeta : {};
-  const here = m[SMOKE_SCENE_ID] != null
-    || (Array.isArray(items) ? items : []).some((i) => i?.metadata?.[SMOKE_HAS_VISION] === true);
-  return { here, on: here && m[SMOKE_VISION_OFF] !== true };
+// The off line (the 🪵 Live log, the DM's box, the panel's): what shows now, by the fill put back.
+// With the fill on, nothing of ours draws sight any more: the map is fogged whole unless something
+// else draws vision (Smoke & Spectre, where it still runs). It never says Smoke works: on Thursday
+// Smoke is switched off in the room (review of the merge round, 2026-10-13).
+export function offWords(filled) {
+  if (filled === true) {
+    return "the fog's own fill (on) is back and our fog draws no sight now: without Smoke & Spectre the map is fogged whole"
+      + " (turn the fill off in Owlbear's fog tool for an open map)";
+  }
+  if (filled === false) return "the fog's own fill (off) is back: the map shows (any fog drawn by hand stays)";
+  return "no fill of the scene's own was kept, so the fog's fill is left as it is (if it's on, the map is fogged whole:"
+    + " turn the fill off in Owlbear's fog tool for an open map)";
+}
+
+// Is a local item one Smoke & Spectre draws while it RUNS on this screen? Smoke 5.0.4 makes its vision
+// lights and walls as local items, tagged with its own keys (a LIGHT: <SMOKE>/isVisionLight,
+// visionRange...; a WALL: <SMOKE>/isVisionWall, isWindow). Their names are the SDK builders' defaults
+// ("Light", "Wall"), which any extension's lights and walls get too, so only the keys count. Never
+// one of ours: an item with any "dnd-npc/" key is ours (our sight lights and walls, the memory's).
+export function isSmokeLocal(item) {
+  if (item?.type !== "LIGHT" && item?.type !== "WALL") return false;
+  const keys = isObj(item.metadata) ? Object.keys(item.metadata) : [];
+  return !keys.some((k) => k.startsWith("dnd-npc/")) && keys.some((k) => k.startsWith(`${SMOKE}/`));
+}
+
+// Is Smoke & Spectre drawing vision on this screen? `here`: it runs here now (its local lights or
+// walls are on this screen: localItems are this screen's OBR.scene.local items); `on`: here, and its
+// "Disable Vision" isn't set in the scene (Smoke then makes no vision lights at all; its local walls
+// may stay). Never the shared data: Smoke's sceneId and a token's hasVision / visionRange outlive the
+// extension (switched off, they stay), and our own lights writer (fx/lightmeta.js smokeFor) writes
+// hasVision and visionRange on the PCs itself.
+const smokeState = (sceneMeta, here) => ({ here: !!here, on: !!here && (isObj(sceneMeta) ? sceneMeta : {})[SMOKE_VISION_OFF] !== true });
+export function smokeVision(sceneMeta, localItems) {
+  return smokeState(sceneMeta, (Array.isArray(localItems) ? localItems : []).some(isSmokeLocal));
 }
 
 // The colour in OBR.scene.fog.onChange's value: the SDK's Fog is {filled, style: {color, strokeWidth}}
@@ -251,6 +289,7 @@ export function createFog(api = {}, ctx = {}, opts = {}) {
   let settleT = null, firstAt = null, retryT = null, retryMs = RETRY_MS;
   let warnedAt = null; // the FOG_KEY.at the Smoke note was given for
   let lastError = null, saidError = null, smoke = { here: false, on: false };
+  let smokeHere = false, smokeAt = null, smokeFor = null, smokeBusy = false; // the last look at Smoke's local items
 
   // The ctx the three parts get (contract section 2), read live from background.js's.
   const partCtx = {
@@ -374,12 +413,8 @@ export function createFog(api = {}, ctx = {}, opts = {}) {
     snap = buildSnapshot(items, sceneMeta, roomMeta, grid, ctx, T.now());
     snap.fogColor = fogColor;
     wasAnswerer = partCtx.isAnswerer();
-    smoke = smokeVision(sceneMeta, items);
-    if (isGm() && smoke.on && warnedAt !== fog.at) {
-      warnedAt = fog.at;
-      note("🌫 Our fog is on, and Smoke & Spectre's vision is on in this scene too: switch on “Disable Vision” in Smoke's settings", "WARNING");
-      say("fog", "Smoke & Spectre's vision is on in this scene too: both draw fog (switch on “Disable Vision” in Smoke)");
-    }
+    await lookForSmoke(fog);
+    if (!running || !drawing) return;
     // The walls first: a light never shows before the walls that stop it. Then the explored squares
     // (the answerer only) and, last, the memory drawn from them.
     let failed = null;
@@ -477,8 +512,38 @@ export function createFog(api = {}, ctx = {}, opts = {}) {
       watchT = null;
       if (!running || !drawing) return;
       if (partCtx.isAnswerer() !== wasAnswerer) soon();
+      lookForSmoke(cleanFog(sceneMeta[FOG_KEY])).catch(() => {}); // Smoke started or stopped without a pass
       watchAnswerer();
     }, ms);
+  }
+
+  // A GM screen: is Smoke & Spectre RUNNING here with its vision on (smokeVision)? One look at this
+  // screen's local items at most every SMOKE_CHECK_MS, and at once after a switch-on (a new
+  // FOG_KEY.at); Smoke's "Disable Vision" is read from the scene each time. Told once per switch-on
+  // (a notification and a Live log line). A player's screen never looks.
+  async function lookForSmoke(fog) {
+    if (!isGm()) {
+      smoke = { here: false, on: false };
+      return;
+    }
+    const now = T.now();
+    if (!smokeBusy && (smokeFor !== fog.at || smokeAt == null || now - smokeAt >= SMOKE_CHECK_MS)) {
+      smokeBusy = true;
+      smokeAt = now;
+      smokeFor = fog.at;
+      try {
+        const list = await O.scene.local.getItems(isSmokeLocal);
+        smokeHere = (Array.isArray(list) ? list : []).some(isSmokeLocal);
+      } catch { /* no scene, or an older SDK: the last look stands */ } finally {
+        smokeBusy = false;
+      }
+    }
+    smoke = smokeState(sceneMeta, smokeHere);
+    if (smoke.on && drawing && warnedAt !== fog.at) {
+      warnedAt = fog.at;
+      note(`🌫 Our fog is on, and Smoke & Spectre is running here with its vision on: switch on “Disable Vision” in Smoke's settings, or switch Smoke off. ${SMOKE_LEFTOVERS}`, "WARNING");
+      say("fog", `Smoke & Spectre is running on this screen with its vision on: both draw fog (set Smoke's “Disable Vision”, or switch Smoke off). ${SMOKE_LEFTOVERS}`);
+    }
   }
 
   // ...and off: menus, listeners, every local item of ours on this screen.
@@ -502,7 +567,7 @@ export function createFog(api = {}, ctx = {}, opts = {}) {
     await sweep();
     lastError = null;
     saidError = null;
-    log("off: our items are gone from this screen; Smoke & Spectre as before");
+    log("off: our items are gone from this screen (the scene's own fog fill shows as it is)");
   }
 
   // Every local item of ours (this host's), whatever made it: an earlier page's, a part's that failed.
@@ -600,14 +665,15 @@ export function createFog(api = {}, ctx = {}, opts = {}) {
   async function setOn(on) {
     if (!isGm()) return { ok: false, text: "Only the DM switches 🌫 Our fog" };
     if (!(await O.scene.isReady())) return { ok: false, text: "Open a scene first" };
+    let res = null;
     try {
-      await writeSwitch(O, on, T.now(), { log: (t) => say("switch", t) });
+      res = await writeSwitch(O, on, T.now(), { log: (t) => say("switch", t) });
     } catch (e) {
       say("error", `the 🌫 switch failed: ${describe(e)}`);
       return { ok: false, text: `🌫 The switch failed: ${describe(e)}` };
     }
     return { ok: true, text: on ? "🌫 Our fog is on: the fog's fill is on, every screen draws the party's sight, walls and doors"
-      : "🌫 Our fog is off: the fog's own fill is back, Smoke & Spectre as before" };
+      : `🌫 Our fog is off: ${offWords(res?.filled ?? null)}` };
   }
 
   function status() {

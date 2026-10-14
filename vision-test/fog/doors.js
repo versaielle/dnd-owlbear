@@ -44,12 +44,14 @@
 // phone) shows our menu: 🚪 Open door / 🚪 Close door, or 🔒 Locked for a player; a GM also gets Lock /
 // Unlock, and the same on the shared door lines themselves (either format). Owlbear shows one icon per
 // menu, so a GM's Lock / Unlock is a second menu (MENU.handleLock, MENU.lineLock). After a menu click
-// the icon is deselected. A plain click that selects an icon is left alone: a right-click selects it
-// too, and taking the selection away then could close the very menu it opened (not tried live). With
-// ctx.doorTap, a select asks for the opposite of how the door stands, and deselects. An icon is not
-// locked unless ctx.lockHandles (whether a player's menu works on a locked local item is untested
-// live), so a player could drag, scale or turn it: it goes back (position, scale and turn)
-// SNAP_BACK_MS after any change.
+// the icon is deselected. THE DM'S CTRL+CLICK: a GM screen draws its icons as LOCKED items, which
+// Owlbear selects only on a Ctrl+click (Cmd+click) or a double-click, so a GM screen's selection of one
+// icon works that door at once (open ⇄ closed; a locked door opens, unlocked) and deselects it
+// (fog/doorclick.js). A player's icon is not locked (unless ctx.lockHandles: whether a player's menu
+// works on a locked local item is untested live), and a plain click that selects one is left alone: a
+// right-click selects it too, and taking the selection away then could close the very menu it opened.
+// With ctx.doorTap, a select of an icon works the door on any screen. A player could drag, scale or
+// turn an unlocked icon: it goes back (position, scale and turn) SNAP_BACK_MS after any change.
 //
 // NO LEADER. A GM's own click writes the door from that GM screen at once (act): it reads the door as
 // it stands now and decides and writes in one updateItems, on the draft. A player's click is a request
@@ -70,11 +72,12 @@
 // Syncs and clears run one at a time, so a clear can't slip in while a sync's add is on its way.
 // Every request, answer, write and error is a line in the 🪵 Live log (ctx.log(text, kind)).
 
-import { FOG_DOOR_CH, FOG_DOOR_REPLY_CH, FOG_HELLO_CH, FOG_LOCAL_KEY, WALL_KEY } from "../keys.js?v=69dedbd";
-import { forMe, here, newId, on, send } from "../bus.js?v=69dedbd";
-import { centreOf } from "../views.js?v=69dedbd";
-import { canSee, sightBlockers } from "./los.js?v=69dedbd";
-import { SMOKE_LINE, doorAfter, doorEdit, edgeWalls, midpointAlong, nearestOnLine, readLine, segmentsOf } from "./lines.js?v=69dedbd";
+import { FOG_DOOR_CH, FOG_DOOR_REPLY_CH, FOG_HELLO_CH, FOG_LOCAL_KEY, WALL_KEY } from "../keys.js?v=7f44662";
+import { forMe, here, newId, on, send } from "../bus.js?v=7f44662";
+import { centreOf } from "../views.js?v=7f44662";
+import { canSee, sightBlockers } from "./los.js?v=7f44662";
+import { SMOKE_LINE, doorAfter, doorEdit, edgeWalls, midpointAlong, nearestOnLine, readLine, segmentsOf } from "./lines.js?v=7f44662";
+import { LINE_PICKED, clickedHandle, clickedLine } from "./doorclick.js?v=7f44662";
 
 export const DOOR_REACH_FT = 5; // from the PC's middle to the nearest point of the door line
 export const REPLY_WAIT_MS = 4000; // no answer by then: "No DM screen answered"
@@ -322,8 +325,11 @@ export function createDoors(api, ctx) {
   const isGm = () => !!ctx?.isGm;
   const me = () => ctx?.conn ?? null;
   const lockHandles = () => { try { return !!ctx?.lockHandles; } catch { return false; } };
+  // A GM screen's icons are locked items: only a Ctrl+click or a double-click selects one (the DM's door
+  // click). A player's only with ctx.lockHandles.
+  const held = () => isGm() || lockHandles();
 
-  const drawn = new Map(); // key -> {id, sig, place, position, line, open, locked, icon}
+  const drawn = new Map(); // key -> {id, sig, place, position, line, open, locked, icon, held (a locked item)}
   let lastSig = null; // the plan last applied in full
   let readBack = true; // read our handles back on the next sync (first, after a clear, after a failure)
   let error = null;
@@ -337,7 +343,7 @@ export function createDoors(api, ctx) {
   const gms = new Map(); // conn -> {at, name, build}: other GM screens heard announcing our fog
   let helloT = null, lastAnswerer, lastSeenWriter;
   let queue = Promise.resolve(); // a GM screen's door writes, one at a time
-  let lastSel = "";
+  let lastSel = "", lastIds = [];
   let snapTimer = null;
 
   const remember = (map, k, v) => {
@@ -352,14 +358,14 @@ export function createDoors(api, ctx) {
              secret: !!h.secret, icon: h.icon };
   }
 
-  function build(h) {
+  function build(h, locked) {
     return api.buildImage(
       { width: ICON_PX, height: ICON_PX, url: ICON_URL[h.icon] || ICON_URL.closed, mime: "image/svg+xml" },
       { dpi: ICON_PX / HANDLE_SIZE, offset: { x: ICON_PX / 2, y: ICON_PX / 2 } },
     )
       .position({ x: h.position.x, y: h.position.y })
       .layer(HANDLE_LAYER)
-      .locked(lockHandles())
+      .locked(locked)
       .name("🚪 Door")
       .metadata({ [FOG_LOCAL_KEY]: tag(h) })
       .build();
@@ -368,7 +374,8 @@ export function createDoors(api, ctx) {
   async function doSync(snap) {
     const res = { added: 0, removed: 0, updated: 0, failed: false, error: null };
     const plan = snap ? handlePlan(snap, { gm: isGm() }) : [];
-    const sig = plan.map((h) => `${h.key}:${h.sig}`).join(";");
+    const H = held(); // a change of it (the role) makes every icon again: an item is locked when it's made
+    const sig = `${H ? "L" : "U"}|${plan.map((h) => `${h.key}:${h.sig}`).join(";")}`;
     if (sig === lastSig && !readBack) return res;
     const O = OBR();
     const want = new Map(plan.map((h) => [h.key, h]));
@@ -388,7 +395,7 @@ export function createDoors(api, ctx) {
     }
     for (const [k, d] of drawn) {
       const h = want.get(k);
-      if (h && placeOf(h) === d.place) {
+      if (h && placeOf(h) === d.place && d.held === H) {
         if (h.sig !== d.sig) upd.set(d.id, h);
         continue;
       }
@@ -399,10 +406,10 @@ export function createDoors(api, ctx) {
     for (const [k, h] of want) {
       if (drawn.has(k)) continue;
       try {
-        const item = build(h);
+        const item = build(h, H);
         add.push(item);
         added.push([k, { id: item.id, sig: h.sig, place: placeOf(h), position: { ...h.position }, line: h.line, open: h.open,
-                         locked: h.locked, icon: h.icon }]);
+                         locked: h.locked, icon: h.icon, held: H }]);
       } catch (e) {
         error = `doors: a handle could not be built: ${describe(e)}`;
       }
@@ -675,22 +682,34 @@ export function createDoors(api, ctx) {
     }
   }
 
-  // A plain click that selects a handle: nothing (a right-click selects it too, and taking the
-  // selection away would close the menu it opened), unless ctx.doorTap.
+  // A selection that newly takes one handle (fog/doorclick.js). On a GM screen, whose handles are
+  // locked, that is the DM's Ctrl+click (or a double-click): the door opens or closes, written here at
+  // once (act, logged), and the handle is deselected. A player's plain select is left alone (a
+  // right-click selects it too, and taking the selection away would close the menu it opened), unless
+  // ctx.doorTap. On a GM screen, a selection that newly takes one door LINE with an icon drawn here (the
+  // hidden line runs through the icon's middle, above it: a Ctrl+click on the icon's centre may take it)
+  // works nothing, and the DM is told so (LINE_PICKED), once per such selection, with a Live log line.
   function onSelection(selection) {
-    const ids = Array.isArray(selection) ? selection : [];
+    const ids = Array.isArray(selection) ? [...selection] : [];
     const key = ids.join(",");
     if (key === lastSel) return;
+    const prev = lastIds;
     lastSel = key;
-    if (!ctx?.doorTap || !ids.length) return;
-    const picked = ids.map(drawnById).filter(Boolean);
-    if (!picked.length) return;
-    for (const d of picked) {
-      const op = opFor(d, { gm: isGm() });
-      if (op) ask(op, d.line, "select");
-      else notify(`🔒 ${LOCKED}`);
+    lastIds = ids;
+    const hit = clickedHandle(prev, ids, drawnById, { gm: isGm(), doorTap: !!ctx?.doorTap });
+    const d = hit && drawnById(hit.id);
+    if (!d) {
+      const line = clickedLine(prev, ids, (id) => drawn.has(id), { gm: isGm() });
+      if (line) {
+        notify(LINE_PICKED, "INFO");
+        log(`🚪 door ${short(line)}: its line was selected, not its icon, so nothing was worked`);
+      }
+      return;
     }
-    deselect(picked.map((d) => d.id));
+    const op = opFor(d, { gm: isGm() });
+    if (op) ask(op, d.line, hit.via);
+    else notify(`🔒 ${LOCKED}`);
+    deselect([d.id]);
   }
 
   // ---- the door writes (a GM screen's) ----
@@ -856,6 +875,7 @@ export function createDoors(api, ctx) {
     lastSeenWriter = undefined;
     if (snapTimer) { T.clearTimeout(snapTimer); snapTimer = null; }
     lastSel = "";
+    lastIds = [];
     if (menusOn) {
       menusOn = false;
       const gone = isGm() ? Object.values(menuId) : [menuId.handle];

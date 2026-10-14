@@ -17,11 +17,11 @@
 // with the writer's ctx, in ONE write (fx/lightwriter.js writeNow): the same pure function on the
 // same inputs as the leader's writer, so a tap writes once and the writer's next pass plans
 // nothing for that token.
-import * as LM from "./fx/lightmeta.js?v=69dedbd";
-import { planCtx } from "./fx/lightwriter.js?v=69dedbd";
-import { SOURCES } from "./fx/lights.js?v=69dedbd";
-import { CARRIER_KEY, LIGHT_KEY, SCENE_LIGHTING_KEY, SMOKE, SPELL_LIGHT_KEY, VISION_KEY } from "./keys.js?v=69dedbd";
-import { pcName, tokenLabel } from "./fx/pcs.js?v=69dedbd";
+import * as LM from "./fx/lightmeta.js?v=7f44662";
+import { planCtx } from "./fx/lightwriter.js?v=7f44662";
+import { SOURCES } from "./fx/lights.js?v=7f44662";
+import { CARRIER_KEY, LIGHT_KEY, SCENE_LIGHTING_KEY, SMOKE, SPELL_LIGHT_KEY, VISION_KEY } from "./keys.js?v=7f44662";
+import { pcName, tokenLabel } from "./fx/pcs.js?v=7f44662";
 
 // The scene's (and each map's) darkness, as docs/lights-darkness-spec.md says it: darkness comes
 // from light, per point. The 🔥 Lighting list's chips (lightpanel.js) say these.
@@ -92,14 +92,19 @@ export function planWrite(item, ctx, change = {}) {
 }
 
 // Put the new metadata on an Owlbear draft: only the keys that changed (a key another tab
-// wrote meanwhile is kept). `before`: the metadata planWrite started from.
+// wrote meanwhile is kept). `before`: the metadata planWrite started from. A key `after` lacks is
+// written as an explicit null, never deleted: an Owlbear JSON-patch "remove" of a key another
+// screen lacks throws OPERATION_PATH_UNRESOLVABLE there and leaves that screen's items stale (live,
+// 2026-10-12). Every reader takes null as missing: lightmeta.js (VISION_KEY, LIGHT_BASE_KEY and
+// Smoke's hasVision / isTorch / visionRange / visionDark), and Smoke itself for its vision.
 export function applyMeta(draft, before, after) {
   draft.metadata = draft.metadata || {};
   for (const k of new Set([...Object.keys(before || {}), ...Object.keys(after || {})])) {
     const a = JSON.stringify(before?.[k]), b = JSON.stringify(after?.[k]);
     if (a === b) continue;
-    if (after?.[k] === undefined) delete draft.metadata[k];
-    else draft.metadata[k] = clone({ v: after[k] }).v;
+    if (after?.[k] === undefined) {
+      if (draft.metadata[k] !== null) draft.metadata[k] = null;
+    } else draft.metadata[k] = clone({ v: after[k] }).v;
   }
 }
 

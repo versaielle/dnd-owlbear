@@ -46,14 +46,14 @@
 // ctx (fog.js partCtx): isAnswerer(), snapshot(), timers (setTimeout, clearTimeout and now), log(text,
 // kind). api: {OBR}.
 
-import { SEEN_KEY } from "../keys.js?v=69dedbd";
-import { SELF_SIGHT, effectiveLight, visionOf } from "../fx/lightmeta.js?v=69dedbd";
-import { centreOf, mapAt } from "../views.js?v=69dedbd";
-import { createBits, decode, encode, getBit, setBits } from "./bitset.js?v=69dedbd";
-import { edgeWalls, segmentsOf } from "./lines.js?v=69dedbd";
-import { seenCells, sightBlockers, visibilityPolygon } from "./los.js?v=69dedbd";
-import { seenOf } from "./maps.js?v=69dedbd";
-import { sightReachFt } from "./sight.js?v=69dedbd";
+import { SEEN_KEY } from "../keys.js?v=7f44662";
+import { SELF_SIGHT, effectiveLight, visionOf } from "../fx/lightmeta.js?v=7f44662";
+import { centreOf, mapAt } from "../views.js?v=7f44662";
+import { createBits, decode, encode, getBit, setBits } from "./bitset.js?v=7f44662";
+import { edgeWalls, segmentsOf } from "./lines.js?v=7f44662";
+import { seenCells, sightBlockers, visibilityPolygon } from "./los.js?v=7f44662";
+import { seenOf } from "./maps.js?v=7f44662";
+import { sightReachFt } from "./sight.js?v=7f44662";
 
 export const SEEN_EVERY_MS = 1000;
 export const SEEN_WRITE_MS = 5000;

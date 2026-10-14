@@ -29,13 +29,13 @@
 // with the lights writer's own ctx, in one write (fx/lightwriter.js writeNow): the writer's next
 // pass plans nothing more. Any control here that changes an input takes a scene released to
 // Smoke back (SCENE_LIGHTING_KEY.managed true); "Release lights to Smoke" sets it false.
-import { FOG_KEY, MAP_DARKNESS_KEY, PARTY_KEY, SCENE_LIGHTING_KEY } from "./keys.js?v=69dedbd";
-import { SOURCES } from "./fx/lights.js?v=69dedbd";
-import { isMap, mapDarkness, readGrid, sceneDarkness } from "./fx/darkness.js?v=69dedbd";
-import { writeNow } from "./fx/lightwriter.js?v=69dedbd";
-import { cleanParty } from "./gather.js?v=69dedbd";
+import { FOG_KEY, MAP_DARKNESS_KEY, PARTY_KEY, SCENE_LIGHTING_KEY } from "./keys.js?v=7f44662";
+import { SOURCES } from "./fx/lights.js?v=7f44662";
+import { isMap, mapDarkness, readGrid, sceneDarkness } from "./fx/darkness.js?v=7f44662";
+import { writeNow } from "./fx/lightwriter.js?v=7f44662";
+import { cleanParty } from "./gather.js?v=7f44662";
 import { DARKNESS, applyMeta, autoKind, carriers, describe, editFor, lightingOf, lightingRows, managed, releaseItem,
-         screenLine, screenWarnings, uiCtx } from "./lightui.js?v=69dedbd";
+         screenLine, screenWarnings, uiCtx } from "./lightui.js?v=7f44662";
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 const COMMON = ["candle", "torch", "lamp", "hooded_lantern", "brazier"].filter((k) => SOURCES[k]);
@@ -372,7 +372,7 @@ export function startLighting(OBR, el, { build = "", ask = null } = {}) {
     box.className = "chips";
     const arming = !f.on && Date.now() - fogArmed < 5000;
     box.append(chip(f.on ? "✓ 🌫 Our fog" : arming ? "🌫 Tap again: on for every screen" : "🌫 Our fog", f.on,
-      f.on ? "Our own vision layer is on in this scene. Tap to switch it off (Smoke & Spectre as before)"
+      f.on ? "Our own vision layer is on in this scene. Tap to switch it off (the scene's own fog fill comes back)"
         : "Our own vision layer (not for game night until rehearsed): party sight, walls and doors on every screen; the fog goes on in the scene's own colour",
       () => toggleFog(!f.on)));
     el.fog.append(box);
@@ -382,9 +382,13 @@ export function startLighting(OBR, el, { build = "", ask = null } = {}) {
       p.textContent = text;
       el.fog.append(p);
     };
-    if (!f.on) return line("dim", "Off: Smoke & Spectre draws vision as before.");
-    if (fogMod.smokeVision(sceneMeta, items).on) {
-      line("warn", "⚠ Smoke & Spectre's vision is on in this scene too, so both draw fog: switch on “Disable Vision” in Smoke's settings.");
+    if (!f.on) return line("dim", "Off: our fog draws nothing in this scene (the scene's own fog fill shows as it is).");
+    // Smoke & Spectre RUNNING on this screen with its vision on: this screen's fog.js looks at Smoke's
+    // own local items (its leftover sceneId or a token's hasVision never count; its local leftovers
+    // after a switch-off may, until the tab reloads: fog.js SMOKE_LEFTOVERS).
+    if (fogStatus?.smoke?.on) {
+      line("warn", "⚠ Smoke & Spectre is running here with its vision on, so both draw fog: switch on “Disable Vision” in Smoke's settings, or switch Smoke off."
+        + ` ${fogMod.SMOKE_LEFTOVERS || ""}`);
     }
     const s = fogStatus;
     if (!s) return line("dim", "This screen: waiting for the extension's status…");
@@ -428,9 +432,9 @@ export function startLighting(OBR, el, { build = "", ask = null } = {}) {
     if (fogAsked) clearTimeout(fogAsked.timer);
     fogAsked = null;
     try {
-      await fogMod.writeSwitch(OBR, on, Date.now());
+      const res = await fogMod.writeSwitch(OBR, on, Date.now());
       say(on ? "🌫 Our fog is on: the fog's fill is on, every screen draws the party's sight, walls and doors"
-        : "🌫 Our fog is off: the fog's own fill is back, Smoke & Spectre as before");
+        : `🌫 Our fog is off: ${fogMod.offWords(res?.filled ?? null)}`);
     } catch (e) {
       say(`🌫 The switch failed: ${e?.error?.message || e?.message || e}`, "bad");
     }
@@ -619,8 +623,8 @@ export function startLighting(OBR, el, { build = "", ask = null } = {}) {
     }
   }
 
-  import("./fog/fog.js?v=69dedbd").then((m) => { fogMod = m; render(); }, (e) => { fogErr = String(e?.message || e); renderFog(); });
-  import("./fog/mapui.js?v=69dedbd").then((m) => { mapUi = m; render(); }, (e) => console.warn("dnd-npc: 🌫 map controls", e));
+  import("./fog/fog.js?v=7f44662").then((m) => { fogMod = m; render(); }, (e) => { fogErr = String(e?.message || e); renderFog(); });
+  import("./fog/mapui.js?v=7f44662").then((m) => { mapUi = m; render(); }, (e) => console.warn("dnd-npc: 🌫 map controls", e));
   OBR.scene.items.onChange(() => refresh());
   OBR.scene.onMetadataChange?.(() => refresh());
   OBR.scene.onReadyChange?.(() => refresh());

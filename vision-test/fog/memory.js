@@ -39,10 +39,10 @@
 // giving one, read on every sync: the dim layer's opacity, default DIM_OPACITY). api: {OBR, buildImage, buildShape, buildPath,
 // buildLight, buildWall}.
 
-import { FOG_LOCAL_KEY, SEEN_KEY } from "../keys.js?v=69dedbd";
-import { getBit } from "./bitset.js?v=69dedbd";
-import { edgeLine } from "./lines.js?v=69dedbd";
-import { seenOf } from "./maps.js?v=69dedbd";
+import { FOG_LOCAL_KEY, SEEN_KEY } from "../keys.js?v=7f44662";
+import { getBit } from "./bitset.js?v=7f44662";
+import { edgeLine } from "./lines.js?v=7f44662";
+import { seenOf } from "./maps.js?v=7f44662";
 
 export const MEMORY_LAYER = "FOG";
 export const MEMORY_IMAGE_Z = -3; // (a) the map's own picture

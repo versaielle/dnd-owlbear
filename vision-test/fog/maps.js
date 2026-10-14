@@ -31,9 +31,9 @@
 //                        unless "auto" (else null). auto: the mode without the override. mode: the one
 //                        drawn. hidden: the DM hid the map image (visible false): nothing drawn for it
 
-import { MAP_DARKNESS_KEY, MAP_FOG_KEY, MAP_INFO_KEY, MEMORY_KEY, SCENE_LIGHTING_KEY, SEEN_KEY } from "../keys.js?v=69dedbd";
-import { MODES, fogMode, resolveDarkness } from "./mode.js?v=69dedbd";
-import { createBits, encode, load } from "./bitset.js?v=69dedbd";
+import { MAP_DARKNESS_KEY, MAP_FOG_KEY, MAP_INFO_KEY, MEMORY_KEY, SCENE_LIGHTING_KEY, SEEN_KEY } from "../keys.js?v=7f44662";
+import { MODES, fogMode, resolveDarkness } from "./mode.js?v=7f44662";
+import { createBits, encode, load } from "./bitset.js?v=7f44662";
 
 export const FOG_MODES = ["auto", ...MODES];
 export const MAP_KINDS = ["interior", "outdoor"];
