@@ -100,11 +100,12 @@ export const FOG_KEY = "dnd-npc/fog";
 // too; on a line that has both formats, this key wins. A secret door nobody has found is a plain
 // "wall": nothing in the scene says it's special (every player screen can read it).
 export const WALL_KEY = "dnd-npc/wall";
-// On every LOCAL item the vision layer adds on a screen: {kind: "sight" | "wall" | "handle", key,
-// sig, host} (key: what it was made for, a PC token's id, a line's id or "edge:<map id>"; sig:
-// what it was made from; host: "local" | "pages", so each copy on the Dell's tab sweeps only its
-// own). A door handle also carries {line, open, locked}: the door it works and how that door
-// stands, for the right-click menu's filters.
+// On every LOCAL item the vision layer adds on a screen: {kind: "sight" | "wall" | "handle" |
+// "memory", key, sig, host} (key: what it was made for, a PC token's id, a line's id, "edge:<map
+// id>" or "<part>:<map id>"; sig: what it was made from; host: "local" | "pages", so each copy on
+// the Dell's tab sweeps only its own). A door handle also carries {line, open, locked}: the door it
+// works and how that door stands, for the right-click menu's filters. A memory item (fog/memory.js,
+// docs/vision-layer-b4.md) also carries {map, part: "image" | "dim" | "cut" | "light" | "edge"}.
 export const FOG_LOCAL_KEY = "dnd-npc/fog-local";
 // Door requests, broadcast through bus.js send/on: a player's screen -> the answering GM screen
 // (fog/doors.js: the lowest connection among the GM screens that announced our fog), {req, op:
@@ -124,3 +125,24 @@ export const FOG_HELLO_CH = "dnd-npc/fog/hello";
 // popover's LOCAL_ASK "log" or a new line): {host, lines: [{kind, text}] (newest first), error}.
 export const FOG_LOG_CH = "dnd-npc/fog/log";
 export const FOG_LOG_LOCAL_CH = "dnd-npc/local/fog-log";
+// Explored memory (docs/vision-layer-spec.md section 6; the builders' contract is
+// docs/vision-layer-b4.md). All three sit on a MAP-layer image, are read by every screen, and are
+// always written WHOLE with explicit values (a fresh object assigned to the key; never a deleted
+// key, never one field patched on its own). Numbers, flags and words only: no names.
+// SEEN_KEY: the squares the party has seen on that map, {v: 1, cols, rows, bits} (fog/bitset.js
+// encode; the grid is fog/maps.js mapGrid: scene-grid squares over the map's rectangle). Tracked on
+// every map whatever its mode. Written by ONE GM screen (the doors' answerer, fog/seen.js): the
+// draft's own value united with the new squares, at most once every 5 s per map, only when it
+// grew. "Forget explored" (the GM screen tapped) writes the empty set of the same size. A value
+// that isn't one of the map's current size reads as empty (the map was resized: it starts again).
+export const SEEN_KEY = "dnd-npc/seen";
+// MAP_FOG_KEY: the DM's choices for that map, {mode: "auto" | "fog" | "dim" | "lit" | "clear",
+// kind: "interior" | "outdoor" | null}. mode "auto" (or missing) = fog/mode.js fogMode decides;
+// kind null (or missing) = 🏘 Set up interiors decides (a building floor is an interior; the town,
+// and any map nobody painted, outdoor). Written by the GM screen whose 🔥 Lighting chip was tapped.
+export const MAP_FOG_KEY = "dnd-npc/fog-map";
+// MEMORY_KEY: {remembered: true | false}, on every map image of one building (the image's name
+// before " - ": "The Inn - Ground floor" -> "The Inn"), all in one write, by the GM
+// screen whose "Remember building" / "Forget building" was tapped. A building is remembered while
+// any of its maps says true. (After Thursday, the panel's 2 visits + 10 active minutes write it too.)
+export const MEMORY_KEY = "dnd-npc/memory";

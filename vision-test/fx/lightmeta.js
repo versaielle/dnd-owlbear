@@ -25,9 +25,9 @@
 // strings. A missing visionDark leaves a stale ring in Smoke: we write "0", never delete it while
 // the token is ours.
 
-import { BUBBLES_NAME_KEY, CARRIER_KEY, LIGHT_BASE_KEY, LIGHT_KEY, SMOKE, SPELL_LIGHT_KEY, VISION_KEY } from "../keys.js?v=a84ca95";
-import { SOURCES } from "./lights.js?v=a84ca95";
-import { farLight, regionAt } from "./darkness.js?v=a84ca95";
+import { BUBBLES_NAME_KEY, CARRIER_KEY, LIGHT_BASE_KEY, LIGHT_KEY, SMOKE, SPELL_LIGHT_KEY, VISION_KEY } from "../keys.js?v=69dedbd";
+import { SOURCES } from "./lights.js?v=69dedbd";
+import { farLight, regionAt } from "./darkness.js?v=69dedbd";
 
 const K = (name) => `${SMOKE}/${name}`;
 // The Smoke keys we write (and so may have to remove), by their short names.

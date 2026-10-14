@@ -2,7 +2,7 @@
 // docs/vision-layer-b2b3.md sections 4, 6 and 9): a door icon at the middle of every door, the
 // right-click menus that work it, the GM screens' door writes, and the players' requests.
 //
-//   DOOR_REACH_FT, REPLY_WAIT_MS, RETRY_AFTER_MS, HELLO_EVERY_MS, HELLO_STALE_MS, HOLD_MS, PLAYER_OPS,
+//   DOOR_REACH_FT, REPLY_WAIT_MS, RETRY_AFTER_MS, HELLO_EVERY_MS, HELLO_STALE_MS, HOLD_MS, ANSWERER_SETTLE_MS, PLAYER_OPS,
 //   GM_OPS, HANDLE_LAYER, HANDLE_SIZE, ICON_PX, ICON_URL, MENU, menuIds(host) (the ids a copy uses)
 //   iconOf(door, {gm})   the icon a screen shows for a door: "open" | "closed" | "locked" (a player's
 //                        screen shows a lock only once the party has found it)
@@ -25,7 +25,13 @@
 //                        itself too), lowest connection first: the first answers players' requests
 //   answerHow(msg, {pool, me, heard, answered})  should this GM screen answer: "now" | "hold" | "again" | "no"
 //   menuIcons(host, icon)  the menus' icons and filters, by MENU id
-//   createDoors(api, ctx)  -> {start(), stop(), sync(snap), clear(), status(), ask(op, line, via), act(op, line, via)}
+//   createDoors(api, ctx)  -> {start(), stop(), sync(snap), clear(), status(), ask(op, line, via), act(op, line, via),
+//                        isAnswerer(), isSeenWriter()}: isAnswerer is true on the one GM screen that answers
+//                        the players' doors (the lowest connection it knows), once its doors have run
+//                        ANSWERER_SETTLE_MS; isSeenWriter the same among the GM screens whose hello says
+//                        seen: SEEN_CAP (a B4 build), so an older build's tab (no fog/seen.js) that wins
+//                        the doors never leaves the explored squares unwritten (review of B4). fog.js hands
+//                        isSeenWriter to the other parts as ctx.isAnswerer() (fog/seen.js writes only there)
 //
 // Every screen, while 🌫 Our fog is on: a small LOCAL door icon (an image: owlbear/icons/door-*.svg,
 // 0.6 squares) at each door's middle, on the PROP layer, under the fog (the fog hides the icons nobody
@@ -64,11 +70,11 @@
 // Syncs and clears run one at a time, so a clear can't slip in while a sync's add is on its way.
 // Every request, answer, write and error is a line in the 🪵 Live log (ctx.log(text, kind)).
 
-import { FOG_DOOR_CH, FOG_DOOR_REPLY_CH, FOG_HELLO_CH, FOG_LOCAL_KEY, WALL_KEY } from "../keys.js?v=a84ca95";
-import { forMe, here, newId, on, send } from "../bus.js?v=a84ca95";
-import { centreOf } from "../views.js?v=a84ca95";
-import { canSee, sightBlockers } from "./los.js?v=a84ca95";
-import { SMOKE_LINE, doorAfter, doorEdit, edgeWalls, midpointAlong, nearestOnLine, readLine, segmentsOf } from "./lines.js?v=a84ca95";
+import { FOG_DOOR_CH, FOG_DOOR_REPLY_CH, FOG_HELLO_CH, FOG_LOCAL_KEY, WALL_KEY } from "../keys.js?v=69dedbd";
+import { forMe, here, newId, on, send } from "../bus.js?v=69dedbd";
+import { centreOf } from "../views.js?v=69dedbd";
+import { canSee, sightBlockers } from "./los.js?v=69dedbd";
+import { SMOKE_LINE, doorAfter, doorEdit, edgeWalls, midpointAlong, nearestOnLine, readLine, segmentsOf } from "./lines.js?v=69dedbd";
 
 export const DOOR_REACH_FT = 5; // from the PC's middle to the nearest point of the door line
 export const REPLY_WAIT_MS = 4000; // no answer by then: "No DM screen answered"
@@ -76,6 +82,8 @@ export const RETRY_AFTER_MS = 1500; // no answer by then: asked once more, of an
 export const HELLO_EVERY_MS = 10000; // a GM screen drawing our fog says so this often...
 export const HELLO_STALE_MS = 25000; // ...and is forgotten when unheard this long
 export const HOLD_MS = 300; // a GM screen not asked by name waits up to this (at random) before it answers
+export const ANSWERER_SETTLE_MS = 2000; // isAnswerer() stays false this long after start: the others' hellos come in
+export const SEEN_CAP = 1; // a GM hello's `seen`: this build writes the explored squares (fog/seen.js, B4)
 export const PLAYER_OPS = ["open", "close"];
 export const GM_OPS = ["open", "close", "lock", "unlock"];
 export const HANDLE_LAYER = "PROP"; // under the fog
@@ -320,13 +328,14 @@ export function createDoors(api, ctx) {
   let readBack = true; // read our handles back on the next sync (first, after a clear, after a failure)
   let error = null;
   let started = false;
+  let startedAt = null; // when start() ran (T.now()): isAnswerer waits ANSWERER_SETTLE_MS from it
   let menusOn = false;
   const offs = []; // listeners to remove on stop()
   const pending = new Map(); // req -> {msg, to, retryT, failT}: this player's requests waiting for an answer
   const answered = new Map(); // req -> the answer this GM screen gave
   const heardBy = new Map(); // req -> Set of connections heard answering it
   const gms = new Map(); // conn -> {at, name, build}: other GM screens heard announcing our fog
-  let helloT = null, lastAnswerer;
+  let helloT = null, lastAnswerer, lastSeenWriter;
   let queue = Promise.resolve(); // a GM screen's door writes, one at a time
   let lastSel = "";
   let snapTimer = null;
@@ -522,21 +531,37 @@ export function createDoors(api, ctx) {
 
   const pool = () => gmPool(gms, { now: T.now(), self: isGm() && started ? me() : null });
   const answerer = () => pool()[0] ?? null;
+  // The seen writer: the lowest GM screen whose hello says it writes the explored squares (this one does).
+  const seenPool = () => gmPool(new Map([...gms].filter(([, g]) => g?.seen === SEEN_CAP)),
+    { now: T.now(), self: isGm() && started ? me() : null });
+  const seenWriter = () => seenPool()[0] ?? null;
   const nameOf = (conn) => (conn == null ? "nobody" : conn === me() ? `${ctx?.name || "this screen"} (this screen)`
     : gms.get(conn)?.name ? `${gms.get(conn).name} (${short(conn)})` : `GM screen ${short(conn)}`);
 
   function noteAnswerer() {
     const a = answerer();
-    if (a === lastAnswerer) return;
+    const w = seenWriter();
+    if (a === lastAnswerer && w === lastSeenWriter) return;
+    const aChanged = a !== lastAnswerer;
     lastAnswerer = a;
+    lastSeenWriter = w;
     const n = pool().length;
-    log(a ? `answerer: ${nameOf(a)}, the lowest of ${n} GM screen${n === 1 ? "" : "s"} with our fog`
-      : "answerer: no GM screen with our fog heard yet", "answerer");
+    if (aChanged) {
+      log(a ? `answerer: ${nameOf(a)}, the lowest of ${n} GM screen${n === 1 ? "" : "s"} with our fog`
+        : "answerer: no GM screen with our fog heard yet", "answerer");
+    }
+    // An older build's GM tab answers the doors but can't write the explored squares: say so (on GM
+    // screens: the DM reloads that tab), and who writes them instead.
+    if (isGm() && a && a !== me() && gms.get(a)?.seen !== SEEN_CAP) {
+      const b = gms.get(a)?.build || "an older build";
+      log(`✖ ${nameOf(a)} answers the doors but runs ${b} (this screen: ${ctx?.build || "?"}), without the explored squares:`
+        + ` reload that tab. ${w ? `${nameOf(w)} writes them meanwhile` : "Nobody writes them"}`, "answerer");
+    }
   }
 
   function hello({ bye = false, ask = false } = {}) {
     send(api, FOG_HELLO_CH, { conn: me(), role: "GM", build: String(ctx?.build ?? ""), name: String(ctx?.name || ""),
-                              ...(bye ? { bye: true } : {}), ...(ask ? { ask: true } : {}) }, "ALL");
+                              seen: SEEN_CAP, ...(bye ? { bye: true } : {}), ...(ask ? { ask: true } : {}) }, "ALL");
   }
 
   function helloLoop() {
@@ -556,7 +581,7 @@ export function createDoors(api, ctx) {
     const conn = ev?.local || !ev?.connectionId ? msg.conn : ev.connectionId;
     if (msg.role === "GM" && conn && conn !== me()) {
       if (msg.bye) gms.delete(conn);
-      else gms.set(conn, { at: T.now(), name: String(msg.name || ""), build: String(msg.build || "") });
+      else gms.set(conn, { at: T.now(), name: String(msg.name || ""), build: String(msg.build || ""), seen: msg.seen === SEEN_CAP ? SEEN_CAP : 0 });
       noteAnswerer();
     }
     // Someone just started and asks who's there: a GM screen says so at once (a screen asks only when
@@ -778,6 +803,7 @@ export function createDoors(api, ctx) {
   async function start() {
     if (started) return;
     started = true;
+    startedAt = T.now();
     const O = OBR();
     offs.push(on(api, FOG_DOOR_REPLY_CH, onReply), on(api, FOG_HELLO_CH, onHello));
     if (isGm()) offs.push(on(api, FOG_DOOR_CH, onRequest));
@@ -811,6 +837,7 @@ export function createDoors(api, ctx) {
   async function stop() {
     if (!started) return;
     started = false;
+    startedAt = null;
     while (offs.length) {
       const off = offs.pop();
       try { if (typeof off === "function") off(); } catch { /* gone */ }
@@ -826,6 +853,7 @@ export function createDoors(api, ctx) {
     answered.clear();
     heardBy.clear();
     lastAnswerer = undefined;
+    lastSeenWriter = undefined;
     if (snapTimer) { T.clearTimeout(snapTimer); snapTimer = null; }
     lastSel = "";
     if (menusOn) {
@@ -837,9 +865,28 @@ export function createDoors(api, ctx) {
 
   function status() {
     const a = started ? answerer() : null;
+    const w = started ? seenWriter() : null;
     return { handles: drawn.size, pending: pending.size, menus: menusOn, error, gms: started ? pool().length : 0,
-             answerer: a ? { conn: a, name: nameOf(a), here: a === me() } : null };
+             answerer: a ? { conn: a, name: nameOf(a), here: a === me(), seen: a === me() || gms.get(a)?.seen === SEEN_CAP } : null,
+             seen_writer: w ? { conn: w, name: nameOf(w), here: w === me() } : null };
   }
 
-  return { start, stop, sync, clear, status, ask, act };
+  // Is this screen the one GM screen that answers the players' doors? A GM screen whose doors have
+  // run ANSWERER_SETTLE_MS (the other GM screens' hellos are in by then) and that is the lowest
+  // connection it knows. False on a player's screen, before start, after stop.
+  function isAnswerer() {
+    if (!started || !isGm() || startedAt == null || T.now() - startedAt < ANSWERER_SETTLE_MS) return false;
+    const a = answerer();
+    return a != null && a === me();
+  }
+
+  // ...and the one that writes the explored squares: the same, among the GM screens that can (their
+  // hello says seen: SEEN_CAP). Usually the same screen; an older build's tab answers doors only.
+  function isSeenWriter() {
+    if (!started || !isGm() || startedAt == null || T.now() - startedAt < ANSWERER_SETTLE_MS) return false;
+    const w = seenWriter();
+    return w != null && w === me();
+  }
+
+  return { start, stop, sync, clear, status, ask, act, isAnswerer, isSeenWriter };
 }

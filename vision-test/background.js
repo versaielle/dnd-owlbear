@@ -18,14 +18,14 @@
 // and a player's view follows their PC after a portal trip. Those load with import() and may fail
 // on their own: the map jobs, rings and HP keep working without them.
 import OBR, { buildCurve, buildEffect, buildImage, buildLabel, buildLight, buildPath, buildShape, buildText, buildWall, Math2,
-  MathM } from "./obr-sdk.js?v=a84ca95";
-import { contains, isRoom, size } from "./areas.js?v=a84ca95";
-import { checkPortals, describe, panelLog, setUpInteriors } from "./interiors.js?v=a84ca95";
-import { cleanParty, placeTownsfolk, rememberParty } from "./gather.js?v=a84ca95";
-import { isPcToken, nameKey, pcName, tokenLabel } from "./fx/pcs.js?v=a84ca95";
-import { BADGE_KEY, BADGE_URL, BUBBLES_KEY, BUBBLES_NAME_KEY, COND_KEY, CONDITIONS, DOWN_COLOR, FOG_LOG_LOCAL_CH, GRIMOIRE_KEY, MARK_PREFIX, PARTY_KEY, PARTY_SENSES_KEY, PLACE_KEY, RING_KEY, TARGET_COLOR, WHO_KEY } from "./keys.js?v=a84ca95";
+  MathM } from "./obr-sdk.js?v=69dedbd";
+import { contains, isRoom, size } from "./areas.js?v=69dedbd";
+import { checkPortals, describe, panelLog, setUpInteriors } from "./interiors.js?v=69dedbd";
+import { cleanParty, placeTownsfolk, rememberParty } from "./gather.js?v=69dedbd";
+import { isPcToken, nameKey, pcName, tokenLabel } from "./fx/pcs.js?v=69dedbd";
+import { BADGE_KEY, BADGE_URL, BUBBLES_KEY, BUBBLES_NAME_KEY, COND_KEY, CONDITIONS, DOWN_COLOR, FOG_LOG_LOCAL_CH, GRIMOIRE_KEY, MARK_PREFIX, PARTY_KEY, PARTY_SENSES_KEY, PLACE_KEY, RING_KEY, TARGET_COLOR, WHO_KEY } from "./keys.js?v=69dedbd";
 import { CH, DEFAULT_SETTINGS, LS, buildOf, forMe, here, isLocalOrigin, kindOf, lsGet, on as busOn, send as busSend,
-  setConnection, setSceneWrite, startSceneReader, tierOf } from "./bus.js?v=a84ca95";
+  setConnection, setSceneWrite, startSceneReader, tierOf } from "./bus.js?v=69dedbd";
 
 const HEARTBEAT_MS = 10000;
 const DEBOUNCE_MS = 250;
@@ -629,18 +629,18 @@ const JOBS = {
 // The parts that load on their own (R4): a broken one is left out and the rest carry on.
 // Literal paths, so the publisher can stamp each with the build.
 const MODULES = {
-  bridge: () => import("./bridge.js?v=a84ca95"),
-  fx: () => import("./fx/engine.js?v=a84ca95"),
-  samples: () => import("./fx/samples.js?v=a84ca95"),
-  aim: () => import("./aim/tool.js?v=a84ca95"),
-  geometry: () => import("./aim/geometry.js?v=a84ca95"),
-  rings: () => import("./aim/rings.js?v=a84ca95"),
-  player: () => import("./player/state.js?v=a84ca95"),
-  lights: () => import("./fx/lighting.js?v=a84ca95"),
-  lightjobs: () => import("./fx/lightjobs.js?v=a84ca95"),
-  lightwriter: () => import("./fx/lightwriter.js?v=a84ca95"),
-  views: () => import("./views.js?v=a84ca95"),
-  fog: () => import("./fog/fog.js?v=a84ca95"),
+  bridge: () => import("./bridge.js?v=69dedbd"),
+  fx: () => import("./fx/engine.js?v=69dedbd"),
+  samples: () => import("./fx/samples.js?v=69dedbd"),
+  aim: () => import("./aim/tool.js?v=69dedbd"),
+  geometry: () => import("./aim/geometry.js?v=69dedbd"),
+  rings: () => import("./aim/rings.js?v=69dedbd"),
+  player: () => import("./player/state.js?v=69dedbd"),
+  lights: () => import("./fx/lighting.js?v=69dedbd"),
+  lightjobs: () => import("./fx/lightjobs.js?v=69dedbd"),
+  lightwriter: () => import("./fx/lightwriter.js?v=69dedbd"),
+  views: () => import("./views.js?v=69dedbd"),
+  fog: () => import("./fog/fog.js?v=69dedbd"),
 };
 
 const HELLO_MS = 30000; // each screen says hello this often, so the panel's screens list stays fresh
@@ -667,6 +667,12 @@ const sdk = { OBR, buildCurve, buildEffect, buildImage, buildLabel, buildLight, 
 const FOG_GM_PASS_LS = "dnd-npc/fog-gm-pass";
 const FOG_DOOR_TAP_LS = "dnd-npc/fog-door-tap";
 const FOG_HANDLE_LOCK_LS = "dnd-npc/fog-handle-lock";
+// The explored memory (docs/vision-layer-b4.md section 9): "0" = this GM screen draws no memory
+// items (if the DM's own view turns out blocked by them with Fog Preview off; players and the
+// projector always draw them), and a number from 0 to 1 = the "dim" layer's opacity on this device
+// (fog/memory.js DIM_OPACITY by default; read on every pass, so a GM can try a value and nudge a token).
+const FOG_MEMORY_GM_LS = "dnd-npc/fog-memory-gm";
+const FOG_DIM_LS = "dnd-npc/fog-dim";
 const LOCAL_LOG_MAX_BYTES = 12000; // the 🪵 Live log to this device's GM box, under bus.js MAX_BYTES
 
 async function gridOf(O) {
@@ -813,6 +819,12 @@ export async function boot(api = sdk, opts = {}) {
       gmPass: lsGet(FOG_GM_PASS_LS) === "A" ? "A" : "B",
       doorTap: lsGet(FOG_DOOR_TAP_LS) === "1",
       lockHandles: lsGet(FOG_HANDLE_LOCK_LS) === "1",
+      memoryOnGm: lsGet(FOG_MEMORY_GM_LS) !== "0",
+      dimOpacity: () => {
+        const raw = lsGet(FOG_DIM_LS);
+        const v = raw == null || raw === "" ? NaN : Number(raw);
+        return Number.isFinite(v) && v >= 0 && v <= 1 ? v : undefined; // anything else: fog/memory.js DIM_OPACITY
+      },
     }) : null;
   } catch (e) {
     errors.fog = String(e?.message || e);
@@ -1218,6 +1230,9 @@ export async function boot(api = sdk, opts = {}) {
       else if (msg.need === "force") await bridge?.force();
       else if (msg.need === "test") note = await playTest();
       else if (msg.need === "fog-switch") await fogSwitch(msg); // 🌫 Our fog, tapped in this device's GM box
+      else if (msg.need === "fog-log") { // a fog chip tapped in this device's GM box (fog/mapui.js): its line in the 🪵 Live log
+        try { fog?.log?.(String(msg.kind || "map").slice(0, 20), String(msg.text ?? "").slice(0, 220)); } catch { /* the log is optional */ }
+      }
       else if (msg.need === "refresh") {
         applySettings(ctx.settings);
         if (sceneFallback()) startSceneReader(api, conn);

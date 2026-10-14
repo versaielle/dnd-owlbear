@@ -23,7 +23,7 @@
 //   🌒 dim          outdoor                       dim
 //   ☀ lit           outdoor                       lit
 
-import { codeOf } from "../fx/darkness.js?v=a84ca95";
+import { codeOf } from "../fx/darkness.js?v=69dedbd";
 
 export const MODES = ["fog", "dim", "lit", "clear"];
 
