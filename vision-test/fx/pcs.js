@@ -21,7 +21,7 @@
 // member; a hidden monster named after a PC would count as a PC (public), so don't.
 // (No party member's name in this file: it's published, R9.)
 // No aliases: party.yaml has none, and the room only keeps the names (PARTY_KEY).
-import { BUBBLES_NAME_KEY, WHO_KEY } from "../keys.js?v=7f44662";
+import { BUBBLES_NAME_KEY, WHO_KEY } from "../keys.js?v=222aeb9";
 
 const EXT = /\.(png|jpe?g|webp|gif|avif|svg)$/i;
 const WORD = /[\p{L}\p{N}'’-]+/gu; // letters, digits, apostrophes and hyphens; anything else splits

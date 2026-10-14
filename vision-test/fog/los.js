@@ -12,8 +12,11 @@
 //   moveBlockers(segments)    what a drag stops at: the same, and windows
 //   rectWalls(rect)           four walls round {x0, y0, x1, y1}: a map's edge, so a PC's sight
 //                             never spills onto the maps laid out beside it
-//   visibilityPolygon(origin, blockers, reach)   what a point sees within `reach` scene units:
-//                             [{x, y}...] in order of angle, [] when it sees nothing
+//   visibilityPolygon(origin, blockers, reach, {arcSteps})   what a point sees within `reach` scene
+//                             units: [{x, y}...] in order of angle, [] when it sees nothing. arcSteps:
+//                             the reach circle's points per whole turn (default ARC_STEPS; the explored
+//                             memory passes fog/shapes.js arcSteps(reach) for arcs within 1 px), rounded
+//                             up and held to ARC_STEPS_MIN..ARC_STEPS_MAX; anything else is the default
 //   canSee(from, to, blockers, {ignore, reach})  one sight line, true when nothing is in the way
 //                             (ignore: segments to skip, such as the door being checked)
 //   pointInPolygon(point, polygon)
@@ -26,6 +29,8 @@
 
 const TAU = 2 * Math.PI;
 export const ARC_STEPS = 48; // the reach circle as a 48-gon: its edges stay within 0.22% of reach of the circle
+export const ARC_STEPS_MIN = 8; // visibilityPolygon's arcSteps option is held to these
+export const ARC_STEPS_MAX = 1024;
 const ANG_EPS = 1e-8; // radians: segment ends this close in angle are one corner (rounding in the line data)
 const EPS = 1e-9; // relative: ties, segments seen edge-on, straight runs
 const MAX_SPLITS = 8; // a gap between two corners is split at most this deep where segments cross inside it
@@ -109,14 +114,19 @@ function crossing(s, t) {
   return { x: s.ax + u * s.ex, y: s.ay + u * s.ey };
 }
 
-export function visibilityPolygon(origin, blockers, reach) {
+// The arcSteps option made safe: a finite number, rounded up and held to ARC_STEPS_MIN..ARC_STEPS_MAX;
+// anything else (missing, junk) is ARC_STEPS.
+const stepsOf = (x) => (finite(x) ? Math.min(ARC_STEPS_MAX, Math.max(ARC_STEPS_MIN, Math.ceil(x - EPS))) : ARC_STEPS);
+
+export function visibilityPolygon(origin, blockers, reach, opts = {}) {
   if (!isPt(origin) || !finite(reach) || !(reach > 0)) return [];
+  const steps = stepsOf(opts?.arcSteps); // opts may be null or junk: the default
   const segs = prepare(origin, blockers, reach);
   const tol = reach * EPS;
   const pts = [];
   const emit = (x, y) => pts.push({ x: origin.x + x, y: origin.y + y });
-  const arc = (t0, t1) => { // the reach circle from angle t0 to t1, at least one vertex per ARC_STEPS of a turn
-    const n = Math.max(1, Math.ceil((t1 - t0) / (TAU / ARC_STEPS) - EPS));
+  const arc = (t0, t1) => { // the reach circle from angle t0 to t1, at least one vertex per `steps`-th of a turn
+    const n = Math.max(1, Math.ceil((t1 - t0) / (TAU / steps) - EPS));
     for (let j = 0; j <= n; j++) { const t = t0 + ((t1 - t0) * j) / n; emit(Math.cos(t) * reach, Math.sin(t) * reach); }
   };
 

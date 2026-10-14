@@ -97,11 +97,11 @@
 // "🌫 Our fog": the switch for our own vision layer (fog/fog.js), off unless the DM turns it on (this
 // device's background writes it). Right under it, "🪵 Live log": every screen's fog and door lines,
 // as this copy's background collects them (keys.js FOG_LOG_LOCAL_CH), with a Copy button.
-import OBR from "./obr-sdk.js?v=7f44662";
-import { CH, LS, QUALITIES, ask, isLocalOrigin, lsGet, lsSet, on, send } from "./bus.js?v=7f44662";
-import { goToPc, pcLabel, scenePcs } from "./goto.js?v=7f44662";
-import { noPcsText } from "./gather.js?v=7f44662";
-import { FOG_LOG_LOCAL_CH, PROJECTOR_KEY } from "./keys.js?v=7f44662";
+import OBR from "./obr-sdk.js?v=222aeb9";
+import { CH, LS, QUALITIES, ask, isLocalOrigin, lsGet, lsSet, on, send } from "./bus.js?v=222aeb9";
+import { goToPc, pcLabel, scenePcs } from "./goto.js?v=222aeb9";
+import { noPcsText } from "./gather.js?v=222aeb9";
+import { FOG_LOG_LOCAL_CH, PROJECTOR_KEY } from "./keys.js?v=222aeb9";
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
@@ -292,7 +292,7 @@ OBR.onReady(async () => {
     else logWaiting = m;
   });
   // 📺 Projector: loaded on its own too.
-  import("./views.js?v=7f44662").then((m) => {
+  import("./views.js?v=222aeb9").then((m) => {
     views = m;
     projectorBox();
   }).catch((e) => {
@@ -300,7 +300,7 @@ OBR.onReady(async () => {
     $("pj-view").hidden = true;
   });
   // 🔥 Lighting: loaded on its own, so the rest of this box works whatever happens to it.
-  import("./lightpanel.js?v=7f44662").then((m) => {
+  import("./lightpanel.js?v=222aeb9").then((m) => {
     const css = document.createElement("style");
     css.textContent = m.LIGHTING_CSS;
     document.head.append(css);

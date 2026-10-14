@@ -2,7 +2,7 @@
 // of selection works. Pure: no Owlbear import, so the offline checks load it too.
 //
 //   clickedHandle(prev, next, handleOf, {gm, doorTap})  the one door icon a selection change works:
-//                        {id, via: "ctrl-click" | "tap"} | null. prev, next: the selection before and
+//                        {id, via: "ctrl/double-click" | "tap"} | null. prev, next: the selection before and
 //                        after it (item ids); handleOf(id): this copy's door icon with that id
 //                        ({held}: drawn as a locked item), or null; gm: a GM screen; doorTap: ctx.doorTap
 //   clickedLine(prev, next, isDoorLine, {gm})  on a GM screen, the one door LINE a selection change
@@ -18,8 +18,9 @@
 // and a selection that takes one of them is the DM's gesture. The rule:
 //   - exactly one item newly selected, and it is one of this copy's door icons: several at once (a box,
 //     a select-all) work nothing, and neither does a selection that only shrinks or stays the same;
-//   - on a GM screen, an icon drawn locked: "ctrl-click"; with ctx.doorTap (a live-check flag), any
-//     select of an icon on any screen: "tap".
+//   - on a GM screen, an icon drawn locked: "ctrl/double-click" (a Ctrl+click and a double-click both
+//     select a locked item, and a selection change can't tell which: the plan's decision 78); with
+//     ctx.doorTap (a live-check flag), any select of an icon on any screen: "tap".
 // A player's icon (unlocked) is otherwise left alone: a right-click or a long-press selects it too, and
 // the menu that opens is the player's way to work a door.
 //
@@ -54,7 +55,7 @@ export function clickedHandle(prev, next, handleOf, opts = {}) {
   if (added.length !== 1) return null;
   const h = typeof handleOf === "function" ? handleOf(added[0]) : null;
   if (!h) return null;
-  if (gm && h.held === true) return { id: added[0], via: "ctrl-click" };
+  if (gm && h.held === true) return { id: added[0], via: "ctrl/double-click" };
   if (doorTap) return { id: added[0], via: "tap" };
   return null;
 }

@@ -25,12 +25,12 @@
 // bridge (LOCAL on the Dell's own tab, sealed for this device only elsewhere: bus.js rpc()).
 // Also "🧭 Bring PCs here" (kind=bring): All PCs, or one PC, in one tap; tick several for "Bring these".
 // And "🎯 Go to PC" (kind=goto): one tap pans the DM's view to that PC's token.
-import OBR from "./obr-sdk.js?v=7f44662";
-import { isRoom } from "./areas.js?v=7f44662";
-import { bringPcs, findPcs, noPcsText, partyNames, rememberParty } from "./gather.js?v=7f44662";
-import { goToPc, pcLabel, scenePcs } from "./goto.js?v=7f44662";
-import { PLACE_KEY, WHO_KEY } from "./keys.js?v=7f44662";
-import { ask } from "./bus.js?v=7f44662";
+import OBR from "./obr-sdk.js?v=222aeb9";
+import { isRoom } from "./areas.js?v=222aeb9";
+import { bringPcs, findPcs, noPcsText, partyNames, rememberParty } from "./gather.js?v=222aeb9";
+import { goToPc, pcLabel, scenePcs } from "./goto.js?v=222aeb9";
+import { PLACE_KEY, WHO_KEY } from "./keys.js?v=222aeb9";
+import { ask } from "./bus.js?v=222aeb9";
 
 const kind = new URLSearchParams(location.search).get("kind");
 const app = document.getElementById("app");
@@ -54,6 +54,13 @@ async function done(message) {
   await OBR.popover.close("dnd-npc/menu");
 }
 
+// "✕" writes an explicit null, never a deleted key: an Owlbear JSON-patch "remove" of a key
+// another screen's copy already lacks throws OPERATION_PATH_UNRESOLVABLE there and knocks that
+// screen out of step until reload (live, 2026-10-12), and game night has two DM browsers. Only
+// where the key holds a value (a token that never had one isn't touched); every reader takes null
+// as missing (background.js's map report, fx/pcs.js markOf, gather.js, the lights writer, below).
+const clearKey = (d, key) => { if (d.metadata[key] !== undefined && d.metadata[key] !== null) d.metadata[key] = null; };
+
 async function setPlace(rooms, place) {
   await OBR.scene.items.updateItems(rooms.map((r) => r.id), (drafts) => {
     for (const d of drafts) {
@@ -61,7 +68,7 @@ async function setPlace(rooms, place) {
         d.metadata[PLACE_KEY] = place.key;
         d.name = place.name;
       } else {
-        delete d.metadata[PLACE_KEY];
+        clearKey(d, PLACE_KEY);
       }
     }
   });
@@ -72,7 +79,7 @@ async function setWho(tokens, who, name) {
   await OBR.scene.items.updateItems(tokens.map((t) => t.id), (drafts) => {
     for (const d of drafts) {
       if (who) d.metadata[WHO_KEY] = who;
-      else delete d.metadata[WHO_KEY];
+      else clearKey(d, WHO_KEY);
     }
   });
   await done(who ? `🗺 This is ${name}` : "🗺 Matched by its name again");

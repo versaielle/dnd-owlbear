@@ -53,13 +53,16 @@ export const LIGHT_BASE_KEY = "dnd-npc/light-base";
 export const LIGHT_FX_KEY = "dnd-npc/fx-light";
 // Lights redo (docs/lights-redo-spec.md). LIGHT_KEY {kind: "none"} is the DM's tombstone: put out
 // (stops an auto or adopted light; a spell light still shows). VISION_KEY on a token:
-// {dm: {sight?, dark?, seer?}, out: {<Smoke key short name>: value}}: the DM's overrides, and the
+// {dm: {sight?, dark?, seer?, blind?, truesight?}, out: {<Smoke key short name>: value}}: the DM's
+// overrides (blind and truesight in feet, or null = use the party file; docs/vision-layer-2024.md), and the
 // Smoke keys we last wrote (to tell a DM's Smoke edit from ours, and what to remove).
 // CARRIER_KEY {of: <parent id>} on the invisible child item that carries a lit NPC's torchlight.
 // SCENE_LIGHTING_KEY on the scene: {darkness: "lit"|"dim"|"dark", auto: bool, managed: bool}
 // (missing = lit, auto, managed). managed false = "Release lights to Smoke": no Smoke key writes
 // in that scene (our own keys still); any 🔥 Lighting control that changes inputs sets it true.
-// PARTY_SENSES_KEY on the room: {<nameKey(name)>: {dark: feet}} (numbers only), from party.yaml.
+// PARTY_SENSES_KEY on the room: {<nameKey(name)>: {dark, blind, truesight, tremor}} (feet 0-1000, numbers
+// only; all four always written; an older value with {dark} only reads the rest as 0: rules2024.js
+// sensesOf), from party.yaml.
 export const VISION_KEY = "dnd-npc/vision";
 export const CARRIER_KEY = "dnd-npc/carrier";
 export const SCENE_LIGHTING_KEY = "dnd-npc/lighting";
@@ -140,9 +143,36 @@ export const SEEN_KEY = "dnd-npc/seen";
 // kind: "interior" | "outdoor" | null}. mode "auto" (or missing) = fog/mode.js fogMode decides;
 // kind null (or missing) = 🏘 Set up interiors decides (a building floor is an interior; the town,
 // and any map nobody painted, outdoor). Written by the GM screen whose 🔥 Lighting chip was tapped.
+// From Phase 1 (docs/vision-layer-2024.md) the chips write "auto", "fog", "dim" (shown as
+// "remembered") or "clear"; a stored "lit" is still read, as "dim". SEEN_KEY is still written, never drawn.
 export const MAP_FOG_KEY = "dnd-npc/fog-map";
 // MEMORY_KEY: {remembered: true | false}, on every map image of one building (the image's name
 // before " - ": "The Inn - Ground floor" -> "The Inn"), all in one write, by the GM
 // screen whose "Remember building" / "Forget building" was tapped. A building is remembered while
 // any of its maps says true. (After Thursday, the panel's 2 visits + 10 active minutes write it too.)
 export const MEMORY_KEY = "dnd-npc/memory";
+// ---- Phase 1 (the fog fixes) and Phase 2 (the 2024 rules): the contract is docs/vision-layer-2024.md ----
+// Every value below is written WHOLE, with every field present (a fresh object assigned to the key):
+// never a deleted key ("off" and "none" are values), a null reads as missing, and a second identical
+// write changes nothing. Numbers, flags and words only: every screen can read them.
+// EXPLORED_KEY, on each MAP-layer image: the smooth explored memory, {v: 1, w, h, n, a, rings}. w, h:
+// the map rectangle's size in whole scene px when written; n: the point count; a: the explored share
+// of the rectangle in thousandths (0-1000); rings: base64 of the rings (outer and hole rings in whole
+// scene px from the rectangle's top-left, each a point count then zigzag-varint steps), "" for none.
+// fog/shapes.js reads and encodes it. Written by the seen writer (fog/seen.js) with SEEN_KEY in the same
+// draft; "Forget explored" (fog/mapui.js) writes its empty value and SEEN_KEY's empty in one draft.
+export const EXPLORED_KEY = "dnd-npc/explored";
+// FOG_LOOK_KEY, on the SCENE: {v: 1, shade}, shade 0.55 | 0.65 | 0.75: the dim layer's opacity over
+// remembered ground and "clear" maps (missing or junk reads as 0.65). The "Memory shade" row's tap.
+export const FOG_LOOK_KEY = "dnd-npc/fog-look";
+// RULES_KEY, on the SCENE: the 2024 switches, {v: 1, dim, cones, darkvision, zones, weather, senses,
+// pierce}, all seven true/false (rules2024.js rulesOf; missing = DEFAULT_RULES, all off). A GM's tap
+// in the 🔥 Lighting list.
+export const RULES_KEY = "dnd-npc/rules-2024";
+// WEATHER_KEY, on the SCENE: {v: 1, kind, fog_ft}; kind "clear" | "rain" | "heavy_rain" | "snow" |
+// "heavy_snow" | "fog"; fog_ft 100 | 200 | 300 when kind is "fog", else 0 (rules2024.js weatherOf).
+export const WEATHER_KEY = "dnd-npc/weather";
+// OBSCURE_KEY, on a drawn shape or an authored zone item: {v: 1, level, magic, what, src}; level
+// "none" | "light" | "heavy"; magic true/false; what "fog" | "foliage" | "smoke" | "dark" | "dust" |
+// "other"; src "drawn" | "map" (rules2024.js obscureOf). The right-click items; 🏘 Set up interiors.
+export const OBSCURE_KEY = "dnd-npc/obscure";

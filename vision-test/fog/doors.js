@@ -2,7 +2,8 @@
 // docs/vision-layer-b2b3.md sections 4, 6 and 9): a door icon at the middle of every door, the
 // right-click menus that work it, the GM screens' door writes, and the players' requests.
 //
-//   DOOR_REACH_FT, REPLY_WAIT_MS, RETRY_AFTER_MS, HELLO_EVERY_MS, HELLO_STALE_MS, HOLD_MS, ANSWERER_SETTLE_MS, PLAYER_OPS,
+//   DOOR_REACH_FT, REPLY_WAIT_MS, RETRY_AFTER_MS, HELLO_EVERY_MS, HELLO_STALE_MS, HOLD_MS, ANSWERER_SETTLE_MS, SEEN_CAP,
+//   SHAPES_CAP, PLAYER_OPS,
 //   GM_OPS, HANDLE_LAYER, HANDLE_SIZE, ICON_PX, ICON_URL, MENU, menuIds(host) (the ids a copy uses)
 //   iconOf(door, {gm})   the icon a screen shows for a door: "open" | "closed" | "locked" (a player's
 //                        screen shows a lock only once the party has found it)
@@ -29,9 +30,15 @@
 //                        isAnswerer(), isSeenWriter()}: isAnswerer is true on the one GM screen that answers
 //                        the players' doors (the lowest connection it knows), once its doors have run
 //                        ANSWERER_SETTLE_MS; isSeenWriter the same among the GM screens whose hello says
-//                        seen: SEEN_CAP (a B4 build), so an older build's tab (no fog/seen.js) that wins
-//                        the doors never leaves the explored squares unwritten (review of B4). fog.js hands
-//                        isSeenWriter to the other parts as ctx.isAnswerer() (fog/seen.js writes only there)
+//                        seen: SEEN_CAP and shapes: SHAPES_CAP (a build that writes the smooth explored
+//                        memory, docs/vision-layer-2024.md), so an older build's tab that wins the doors
+//                        never leaves the explored memory unwritten (review of B4). fog.js hands
+//                        isSeenWriter to the other parts as ctx.isAnswerer() (fog/seen.js writes only there).
+//                        With the two DM browsers of game night either can be the writer (the lower
+//                        connection); the other only draws, and takes over once the writer's hello has gone
+//                        unheard for HELLO_STALE_MS. An older tab's own pick (seen only) still counts this
+//                        screen, so both may write the squares for a moment: idempotent unions. Only a
+//                        screen whose hello says shapes writes the shapes
 //
 // Every screen, while 🌫 Our fog is on: a small LOCAL door icon (an image: owlbear/icons/door-*.svg,
 // 0.6 squares) at each door's middle, on the PROP layer, under the fog (the fog hides the icons nobody
@@ -72,12 +79,12 @@
 // Syncs and clears run one at a time, so a clear can't slip in while a sync's add is on its way.
 // Every request, answer, write and error is a line in the 🪵 Live log (ctx.log(text, kind)).
 
-import { FOG_DOOR_CH, FOG_DOOR_REPLY_CH, FOG_HELLO_CH, FOG_LOCAL_KEY, WALL_KEY } from "../keys.js?v=7f44662";
-import { forMe, here, newId, on, send } from "../bus.js?v=7f44662";
-import { centreOf } from "../views.js?v=7f44662";
-import { canSee, sightBlockers } from "./los.js?v=7f44662";
-import { SMOKE_LINE, doorAfter, doorEdit, edgeWalls, midpointAlong, nearestOnLine, readLine, segmentsOf } from "./lines.js?v=7f44662";
-import { LINE_PICKED, clickedHandle, clickedLine } from "./doorclick.js?v=7f44662";
+import { FOG_DOOR_CH, FOG_DOOR_REPLY_CH, FOG_HELLO_CH, FOG_LOCAL_KEY, WALL_KEY } from "../keys.js?v=222aeb9";
+import { forMe, here, newId, on, send } from "../bus.js?v=222aeb9";
+import { centreOf } from "../views.js?v=222aeb9";
+import { canSee, sightBlockers } from "./los.js?v=222aeb9";
+import { SMOKE_LINE, doorAfter, doorEdit, edgeWalls, midpointAlong, nearestOnLine, readLine, segmentsOf } from "./lines.js?v=222aeb9";
+import { LINE_PICKED, clickedHandle, clickedLine } from "./doorclick.js?v=222aeb9";
 
 export const DOOR_REACH_FT = 5; // from the PC's middle to the nearest point of the door line
 export const REPLY_WAIT_MS = 4000; // no answer by then: "No DM screen answered"
@@ -86,7 +93,8 @@ export const HELLO_EVERY_MS = 10000; // a GM screen drawing our fog says so this
 export const HELLO_STALE_MS = 25000; // ...and is forgotten when unheard this long
 export const HOLD_MS = 300; // a GM screen not asked by name waits up to this (at random) before it answers
 export const ANSWERER_SETTLE_MS = 2000; // isAnswerer() stays false this long after start: the others' hellos come in
-export const SEEN_CAP = 1; // a GM hello's `seen`: this build writes the explored squares (fog/seen.js, B4)
+export const SEEN_CAP = 1; // a GM hello's `seen`: this build writes the explored memory (fog/seen.js, B4)
+export const SHAPES_CAP = 1; // ...and `shapes`: it writes the smooth memory's shapes too (EXPLORED_KEY)
 export const PLAYER_OPS = ["open", "close"];
 export const GM_OPS = ["open", "close", "lock", "unlock"];
 export const HANDLE_LAYER = "PROP"; // under the fog
@@ -538,12 +546,22 @@ export function createDoors(api, ctx) {
 
   const pool = () => gmPool(gms, { now: T.now(), self: isGm() && started ? me() : null });
   const answerer = () => pool()[0] ?? null;
-  // The seen writer: the lowest GM screen whose hello says it writes the explored squares (this one does).
-  const seenPool = () => gmPool(new Map([...gms].filter(([, g]) => g?.seen === SEEN_CAP)),
+  // The seen writer: the lowest GM screen whose hello says it writes the explored memory, shapes and all
+  // (this one does).
+  const seenPool = () => gmPool(new Map([...gms].filter(([, g]) => g?.seen === SEEN_CAP && g?.shapes === SHAPES_CAP)),
     { now: T.now(), self: isGm() && started ? me() : null });
   const seenWriter = () => seenPool()[0] ?? null;
-  const nameOf = (conn) => (conn == null ? "nobody" : conn === me() ? `${ctx?.name || "this screen"} (this screen)`
-    : gms.get(conn)?.name ? `${gms.get(conn).name} (${short(conn)})` : `GM screen ${short(conn)}`);
+  // F8 (the plan's decision 78): both DM browsers are named "GM", so on a GM screen another GM screen is
+  // "the other GM screen (GM, ab12)" ("another" with three or more); a player's screen names it as before.
+  const nameOf = (conn) => {
+    if (conn == null) return "nobody";
+    if (conn === me()) return `${ctx?.name || "this screen"} (this screen)`;
+    const name = gms.get(conn)?.name;
+    if (!isGm()) return name ? `${name} (${short(conn)})` : `GM screen ${short(conn)}`;
+    const others = pool().filter((c) => c !== me()).length;
+    return `${others > 1 ? "another" : "the other"} GM screen (${name ? `${name}, ` : ""}${short(conn)})`;
+  };
+  const selfName = () => `${ctx?.name || "GM"}, ${short(me())}`;
 
   function noteAnswerer() {
     const a = answerer();
@@ -554,21 +572,25 @@ export function createDoors(api, ctx) {
     lastSeenWriter = w;
     const n = pool().length;
     if (aChanged) {
+      // On a GM screen that isn't the answerer the line names this screen too (its short id), so the two
+      // DM browsers' logs can be told apart (F8).
       log(a ? `answerer: ${nameOf(a)}, the lowest of ${n} GM screen${n === 1 ? "" : "s"} with our fog`
+        + (isGm() && a !== me() ? ` (this screen: ${selfName()})` : "")
         : "answerer: no GM screen with our fog heard yet", "answerer");
     }
-    // An older build's GM tab answers the doors but can't write the explored squares: say so (on GM
-    // screens: the DM reloads that tab), and who writes them instead.
-    if (isGm() && a && a !== me() && gms.get(a)?.seen !== SEEN_CAP) {
+    // An older build's GM tab answers the doors but can't write the smooth explored memory: say so (on GM
+    // screens: the DM reloads that tab), and who writes it instead.
+    if (isGm() && a && a !== me() && (gms.get(a)?.seen !== SEEN_CAP || gms.get(a)?.shapes !== SHAPES_CAP)) {
       const b = gms.get(a)?.build || "an older build";
-      log(`✖ ${nameOf(a)} answers the doors but runs ${b} (this screen: ${ctx?.build || "?"}), without the explored squares:`
-        + ` reload that tab. ${w ? `${nameOf(w)} writes them meanwhile` : "Nobody writes them"}`, "answerer");
+      log(`✖ ${nameOf(a)} answers the doors but runs ${b} (this screen: ${ctx?.build || "?"}), without the smooth explored`
+        + ` memory: reload that tab. ${w ? `${nameOf(w)} writes it meanwhile` : "Nobody writes it"}`, "answerer");
     }
   }
 
   function hello({ bye = false, ask = false } = {}) {
     send(api, FOG_HELLO_CH, { conn: me(), role: "GM", build: String(ctx?.build ?? ""), name: String(ctx?.name || ""),
-                              seen: SEEN_CAP, ...(bye ? { bye: true } : {}), ...(ask ? { ask: true } : {}) }, "ALL");
+                              seen: SEEN_CAP, shapes: SHAPES_CAP, ...(bye ? { bye: true } : {}), ...(ask ? { ask: true } : {}) },
+         "ALL");
   }
 
   function helloLoop() {
@@ -588,7 +610,10 @@ export function createDoors(api, ctx) {
     const conn = ev?.local || !ev?.connectionId ? msg.conn : ev.connectionId;
     if (msg.role === "GM" && conn && conn !== me()) {
       if (msg.bye) gms.delete(conn);
-      else gms.set(conn, { at: T.now(), name: String(msg.name || ""), build: String(msg.build || ""), seen: msg.seen === SEEN_CAP ? SEEN_CAP : 0 });
+      else {
+        gms.set(conn, { at: T.now(), name: String(msg.name || ""), build: String(msg.build || ""),
+                        seen: msg.seen === SEEN_CAP ? SEEN_CAP : 0, shapes: msg.shapes === SHAPES_CAP ? SHAPES_CAP : 0 });
+      }
       noteAnswerer();
     }
     // Someone just started and asks who's there: a GM screen says so at once (a screen asks only when
@@ -887,7 +912,8 @@ export function createDoors(api, ctx) {
     const a = started ? answerer() : null;
     const w = started ? seenWriter() : null;
     return { handles: drawn.size, pending: pending.size, menus: menusOn, error, gms: started ? pool().length : 0,
-             answerer: a ? { conn: a, name: nameOf(a), here: a === me(), seen: a === me() || gms.get(a)?.seen === SEEN_CAP } : null,
+             answerer: a ? { conn: a, name: nameOf(a), here: a === me(), seen: a === me() || gms.get(a)?.seen === SEEN_CAP,
+                             shapes: a === me() || gms.get(a)?.shapes === SHAPES_CAP } : null,
              seen_writer: w ? { conn: w, name: nameOf(w), here: w === me() } : null };
   }
 
@@ -900,8 +926,9 @@ export function createDoors(api, ctx) {
     return a != null && a === me();
   }
 
-  // ...and the one that writes the explored squares: the same, among the GM screens that can (their
-  // hello says seen: SEEN_CAP). Usually the same screen; an older build's tab answers doors only.
+  // ...and the one that writes the explored memory: the same, among the GM screens that can write its
+  // shapes (their hello says seen: SEEN_CAP and shapes: SHAPES_CAP). Usually the same screen; an older
+  // build's tab answers doors only.
   function isSeenWriter() {
     if (!started || !isGm() || startedAt == null || T.now() - startedAt < ANSWERER_SETTLE_MS) return false;
     const w = seenWriter();

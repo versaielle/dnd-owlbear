@@ -1,10 +1,12 @@
 // Each map image's explored-memory facts for the vision layer (docs/vision-layer-spec.md section 6;
-// the builders' contract is docs/vision-layer-b4.md): its square grid, its building, interior or
-// outdoor, whether its building is remembered, the DM's choices (MAP_FOG_KEY), and the mode that
-// follows (fog/mode.js fogMode). The one place fog/seen.js (the writer), fog/memory.js (the drawing)
-// and the 🔥 Lighting list's map rows read them from, so all three agree. Pure: no Owlbear import.
+// the builders' contracts are docs/vision-layer-b4.md and, from Phase 1, docs/vision-layer-2024.md):
+// its square grid, its building, interior or outdoor, whether its building is remembered, the DM's
+// choices (MAP_FOG_KEY), the mode that follows (fog/mode.js fogMode), and its smooth explored memory
+// (EXPLORED_KEY). The one place fog/seen.js (the writer), fog/memory.js (the drawing) and the 🔥
+// Lighting list's map rows read them from, so all three agree. Pure: no Owlbear import.
 //
-//   FOG_MODES            "auto" and fog/mode.js MODES: what MAP_FOG_KEY.mode may say
+//   FOG_MODES            "auto" and fog/mode.js MODES: what MAP_FOG_KEY.mode may say (a stored "lit"
+//                        still validates; it reads as "dim")
 //   MAP_KINDS            "interior" | "outdoor": what MAP_FOG_KEY.kind may say (or null: as painted)
 //   normName(s)          a map's name made comparable: no file extension, one kind of dash, one space
 //   buildingOf(item)     {name, key} of the map image's building: its name before " - " (all of it
@@ -12,7 +14,9 @@
 //   paintedKind(item)    "interior" when 🏘 Set up interiors laid it out as a building floor (its
 //                        MAP_INFO_KEY has an entry or stairs), "outdoor" when it laid it out as the
 //                        town (both null), null when it never touched this image
-//   mapFogOf(meta)       MAP_FOG_KEY made safe: {mode: FOG_MODES, kind: MAP_KINDS | null}
+//   mapFogOf(meta)       MAP_FOG_KEY made safe: {mode: FOG_MODES, kind: MAP_KINDS | null}; a stored
+//                        "lit" (B4's) reads as "dim" (remembered ground is always dimmed from Phase 1),
+//                        nothing rewritten
 //   memoryOf(meta)       MEMORY_KEY made safe: {remembered: true | false}
 //   mapGrid(rect, dpi)   the squares over a map's rectangle (views.js mapRects): {x0, y0, cell, cols,
 //                        rows}, fog/los.js seenCells's grid. cell = the scene grid's dpi (scene px per
@@ -22,18 +26,24 @@
 //                        squares keeps the same cols and rows, so its memory moves with it
 //   seenOf(item, grid)   the map's seen squares (fog/bitset.js load: empty when missing or not this size)
 //   emptySeen(grid)      the SEEN_KEY value of nothing seen ("Forget explored")
+//   exploredFor(state)   a mapStates entry's smooth explored memory: fog/shapes.js readExplored of its
+//                        image for its rectangle, {valid, rings, n, a} (empty when missing, junk or of
+//                        another size). Read only when needed (the drawing's input changed, the
+//                        Lighting list's rows): never in every pass's snapshot
 //   mapStates({items, rects, grid, sceneMeta})   one entry per map image in rects (topmost first):
 //                        {id, item, rect, grid, name, building, buildingKey, kind, painted, remembered,
 //                        darkness, override, mode, auto, hidden}. kind: the DM's MAP_FOG_KEY.kind, else
 //                        paintedKind, else "outdoor". remembered: any map of the same building (by
 //                        key) says MEMORY_KEY.remembered true. darkness: fog/mode.js resolveDarkness of
 //                        the map's own MAP_DARKNESS_KEY and the scene's. override: MAP_FOG_KEY.mode
-//                        unless "auto" (else null). auto: the mode without the override. mode: the one
-//                        drawn. hidden: the DM hid the map image (visible false): nothing drawn for it
+//                        unless "auto" (else null; never "lit"). auto: the mode without the override.
+//                        mode: the one drawn. hidden: the DM hid the map image (visible false): nothing
+//                        drawn for it
 
-import { MAP_DARKNESS_KEY, MAP_FOG_KEY, MAP_INFO_KEY, MEMORY_KEY, SCENE_LIGHTING_KEY, SEEN_KEY } from "../keys.js?v=7f44662";
-import { MODES, fogMode, resolveDarkness } from "./mode.js?v=7f44662";
-import { createBits, encode, load } from "./bitset.js?v=7f44662";
+import { MAP_DARKNESS_KEY, MAP_FOG_KEY, MAP_INFO_KEY, MEMORY_KEY, SCENE_LIGHTING_KEY, SEEN_KEY } from "../keys.js?v=222aeb9";
+import { MODES, drawnMode, fogMode, resolveDarkness } from "./mode.js?v=222aeb9";
+import { createBits, encode, load } from "./bitset.js?v=222aeb9";
+import { readExplored } from "./shapes.js?v=222aeb9";
 
 export const FOG_MODES = ["auto", ...MODES];
 export const MAP_KINDS = ["interior", "outdoor"];
@@ -66,7 +76,7 @@ export function paintedKind(item) {
 export function mapFogOf(meta) {
   const v = isObj(meta) ? meta[MAP_FOG_KEY] : null;
   const o = isObj(v) ? v : {};
-  return { mode: FOG_MODES.includes(o.mode) ? o.mode : "auto", kind: MAP_KINDS.includes(o.kind) ? o.kind : null };
+  return { mode: FOG_MODES.includes(o.mode) ? drawnMode(o.mode) : "auto", kind: MAP_KINDS.includes(o.kind) ? o.kind : null };
 }
 
 export function memoryOf(meta) {
@@ -87,6 +97,8 @@ export function mapGrid(rect, dpi) {
 export const seenOf = (item, grid) => (grid ? load(item?.metadata?.[SEEN_KEY], grid.cols, grid.rows) : null);
 
 export const emptySeen = (grid) => (grid ? encode(createBits(grid.cols, grid.rows)) : null);
+
+export const exploredFor = (state) => readExplored(state?.item, state?.rect);
 
 const mapDarknessOf = (item) => item?.metadata?.[MAP_DARKNESS_KEY] ?? null;
 const sceneDarknessOf = (sceneMeta) => (isObj(sceneMeta) && isObj(sceneMeta[SCENE_LIGHTING_KEY]) ? sceneMeta[SCENE_LIGHTING_KEY].darkness : null);

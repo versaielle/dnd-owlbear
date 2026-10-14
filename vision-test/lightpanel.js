@@ -7,10 +7,11 @@
 //                "Maps here": each MAP-layer image ☀/🌒/🌑/as scene (MAP_DARKNESS_KEY on it;
 //                docs/lights-darkness-spec.md: darkness comes from light, per point); while 🌫 Our
 //                fog is on, also its explored-memory controls (fog/mapui.js, docs/vision-layer-b4.md
-//                section 6): the mode (auto (→ what auto is now) / fog / dim / lit / clear), 🏠 / 🌳
-//                for a map nobody painted, "Forget explored (N)" (two taps), and for an interior
-//                "Remember building" / "Forget building". Each tap writes a whole value from this GM
-//                screen and goes to the 🪵 Live log (this device's background, LOCAL_ASK "fog-log")
+//                section 6, docs/vision-layer-2024.md section 6): the mode (auto (→ what auto is
+//                now) / fog / remembered / clear; "remembered" writes "dim"), 🏠 / 🌳, "Forget
+//                explored (40%)" (the explored share; two taps), and for an interior "Remember
+//                building" / "Forget building". Each tap writes a whole value from this GM screen
+//                and goes to the 🪵 Live log (this device's background, LOCAL_ASK "fog-log")
 //   PCs          each PC token in the scene: its sight limit (blank = none: fog, mist), its
 //                darkvision (blank = the sheet's, shown greyed), its light (chips)
 //   Lit objects  everything else with a light (incl. the ones lit by their name: "auto"), chips + None
@@ -19,6 +20,8 @@
 //   🌫 Our fog    (at the top) the scene switch for our own vision layer (fog/fog.js: FOG_KEY.on; two
 //                taps to switch on, one off), with a warning while Smoke & Spectre's vision is on in
 //                the same scene, and what this GM screen draws for it (the background's fog status).
+//                While on, the "Memory shade" row (lighter 0.55 / medium 0.65 / darker 0.75): how
+//                dark remembered ground and "clear" maps are on every screen (FOG_LOOK_KEY, whole).
 //                A tap asks this device's background to write the whole switch (fog.js setOn: the
 //                fill, prev, Smoke's door state) at once; with no answer in SWITCH_WAIT_MS this box
 //                writes it itself (fog.js writeSwitch)
@@ -29,13 +32,13 @@
 // with the lights writer's own ctx, in one write (fx/lightwriter.js writeNow): the writer's next
 // pass plans nothing more. Any control here that changes an input takes a scene released to
 // Smoke back (SCENE_LIGHTING_KEY.managed true); "Release lights to Smoke" sets it false.
-import { FOG_KEY, MAP_DARKNESS_KEY, PARTY_KEY, SCENE_LIGHTING_KEY } from "./keys.js?v=7f44662";
-import { SOURCES } from "./fx/lights.js?v=7f44662";
-import { isMap, mapDarkness, readGrid, sceneDarkness } from "./fx/darkness.js?v=7f44662";
-import { writeNow } from "./fx/lightwriter.js?v=7f44662";
-import { cleanParty } from "./gather.js?v=7f44662";
+import { FOG_KEY, MAP_DARKNESS_KEY, PARTY_KEY, SCENE_LIGHTING_KEY } from "./keys.js?v=222aeb9";
+import { SOURCES } from "./fx/lights.js?v=222aeb9";
+import { isMap, mapDarkness, readGrid, sceneDarkness } from "./fx/darkness.js?v=222aeb9";
+import { writeNow } from "./fx/lightwriter.js?v=222aeb9";
+import { cleanParty } from "./gather.js?v=222aeb9";
 import { DARKNESS, applyMeta, autoKind, carriers, describe, editFor, lightingOf, lightingRows, managed, releaseItem,
-         screenLine, screenWarnings, uiCtx } from "./lightui.js?v=7f44662";
+         screenLine, screenWarnings, uiCtx } from "./lightui.js?v=222aeb9";
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 const COMMON = ["candle", "torch", "lamp", "hooded_lantern", "brazier"].filter((k) => SOURCES[k]);
@@ -241,7 +244,8 @@ export function startLighting(OBR, el, { build = "", ask = null } = {}) {
   const fogIsOn = () => !!fogMod && fogMod.fogOn(sceneMeta);
   const mapRowsNow = () => (ready && mapUi && fogIsOn() ? mapUi.mapRows({ items, grid: sceneGrid, sceneMeta }) : []);
   const rowOf = (id) => mapRowsNow().find((r) => r.id === id) || null;
-  const modeSaid = (r) => (!r ? "" : r.override ? `${r.override} (set by you)` : `auto → ${r.auto}`);
+  const word = (mode) => (mapUi?.modeWord ? mapUi.modeWord(mode) : mode); // "dim" is said "remembered"
+  const modeSaid = (r) => (!r ? "" : r.override ? `${word(r.override)} (set by you)` : `auto → ${word(r.auto)}`);
   // What a fog tap did: the box's one line, and the 🪵 Live log (this device's background logs it
   // with this screen's name, so every GM screen's log shows it).
   function note(text, cls = "ok") {
@@ -263,7 +267,7 @@ export function startLighting(OBR, el, { build = "", ask = null } = {}) {
   const setFogMode = (row, mode) => fogWrite(async () => {
     const r = await mapUi.setMapFog(OBR, row.id, { mode });
     await load();
-    note(`${row.name || "Map"}: fog mode ${mode}${r.wrote ? "" : " (already so)"} · now ${modeSaid(rowOf(row.id))}`);
+    note(`${row.name || "Map"}: fog mode ${word(mode)}${r.wrote ? "" : " (already so)"} · now ${modeSaid(rowOf(row.id))}`);
   });
   const setFogKind = (row, kind) => fogWrite(async () => {
     const r = await mapUi.setMapFog(OBR, row.id, { kind });
@@ -272,9 +276,11 @@ export function startLighting(OBR, el, { build = "", ask = null } = {}) {
     note(`${row.name || "Map"}: ${kind === null ? `as painted (${now?.kind || "outdoor"})` : kind === "interior" ? "🏠 interior" : "🌳 outdoor"}`
       + `${r.wrote ? "" : " (already so)"} · now ${modeSaid(now)}`);
   });
+  // The explored share as the chip says it ("40%"), from the smooth memory (never the old squares).
+  const shareSaid = (r) => (mapUi?.sharePct ? mapUi.sharePct(r?.explored) : "");
   const forgetMap = (row) => fogWrite(async () => {
     const cur = rowOf(row.id);
-    if (!cur?.seen) return say(`${row.name || "Map"}: nothing explored to forget`, "dim");
+    if (!cur?.explored) return say(`${row.name || "Map"}: nothing explored to forget`, "dim");
     if (!forgetArmed || forgetArmed.id !== row.id || Date.now() - forgetArmed.at > mapUi.FORGET_ARM_MS) {
       forgetArmed = { id: row.id, at: Date.now() };
       setTimeout(() => {
@@ -283,12 +289,17 @@ export function startLighting(OBR, el, { build = "", ask = null } = {}) {
           render();
         }
       }, mapUi.FORGET_ARM_MS + 100);
-      return say(`${row.name || "Map"}: tap again to forget its ${cur.seen} explored square(s)`, "warn");
+      return say(`${row.name || "Map"}: tap again to forget its explored memory (${shareSaid(cur)})`, "warn");
     }
     forgetArmed = null;
     const r = await mapUi.forgetExplored(OBR, row.id, sceneGrid?.dpi || 150);
-    note(r.wrote ? `${row.name || "Map"}: ${cur.seen} explored square(s) forgotten · what the party sees now comes back within 5 s`
+    note(r.wrote ? `${row.name || "Map"}: explored memory (${shareSaid(cur)}) forgotten · what the party sees now comes back within 5 s`
       : `${row.name || "Map"}: nothing to forget (already so)`);
+  });
+  // The memory shade, for the whole scene (FOG_LOOK_KEY whole; every screen redraws at once).
+  const setShade = (c) => fogWrite(async () => {
+    const r = await mapUi.setShade(OBR, c.shade);
+    note(`Memory shade: ${c.label} (${c.shade})${r.wrote ? "" : " (already so)"} · remembered ground and "clear" maps on every screen in this scene`);
   });
   const setBuilding = (row, on) => fogWrite(async () => {
     const r = await mapUi.setRemembered(OBR, row.buildingKey, on);
@@ -308,7 +319,7 @@ export function startLighting(OBR, el, { build = "", ask = null } = {}) {
     more.className = "chips fm";
     for (const k of c.kinds) more.append(chip(k.label, k.on, k.title, () => setFogKind(row, k.kind)));
     const armed = forgetArmed?.id === row.id && Date.now() - forgetArmed.at < mapUi.FORGET_ARM_MS;
-    const f = chip(armed ? `Tap again: forget ${c.forget.n}` : c.forget.label, false, c.forget.title, () => forgetMap(row));
+    const f = chip(armed ? `Tap again: forget explored (${c.forget.pct})` : c.forget.label, false, c.forget.title, () => forgetMap(row));
     if (armed) f.className += " arm";
     f.disabled = c.forget.disabled;
     more.append(f);
@@ -376,13 +387,26 @@ export function startLighting(OBR, el, { build = "", ask = null } = {}) {
         : "Our own vision layer (not for game night until rehearsed): party sight, walls and doors on every screen; the fog goes on in the scene's own colour",
       () => toggleFog(!f.on)));
     el.fog.append(box);
-    const line = (cls, text) => {
+    const line = (cls, text, title = "") => {
       const p = document.createElement("p");
       p.className = `small ${cls}`;
       p.textContent = text;
+      if (title) p.title = title;
       el.fog.append(p);
+      return p;
     };
     if (!f.on) return line("dim", "Off: our fog draws nothing in this scene (the scene's own fog fill shows as it is).");
+    // The memory shade (fog/mapui.js shadeChips; FOG_LOOK_KEY): one value for the whole scene.
+    if (mapUi?.shadeChips) {
+      const head = document.createElement("div");
+      head.className = "small dim";
+      head.textContent = "Memory shade";
+      head.title = "How dark remembered ground and \"clear\" maps are drawn, on every screen in this scene (the projector too)";
+      const shades = document.createElement("div");
+      shades.className = "chips fm";
+      for (const c of mapUi.shadeChips(sceneMeta)) shades.append(chip(c.label, c.on, c.title, () => setShade(c)));
+      el.fog.append(head, shades);
+    }
     // Smoke & Spectre RUNNING on this screen with its vision on: this screen's fog.js looks at Smoke's
     // own local items (its leftover sceneId or a token's hasVision never count; its local leftovers
     // after a switch-off may, until the tab reloads: fog.js SMOKE_LEFTOVERS).
@@ -395,12 +419,22 @@ export function startLighting(OBR, el, { build = "", ask = null } = {}) {
     if (!s.running) return line("warn", "This copy doesn't draw here (the other copy on this tab does, or it didn't start).");
     const n = (x, k) => Number(x?.[k]) || 0;
     const a = s.answerer;
+    // F4 (decision 79): door handles go only on the maps a PC stands on (fog/doors.js), so the count
+    // is of the party's maps, never the scene's doors.
     line(s.error ? "warn" : "dim", `This screen: ${n(s.sight, "lights")} sight light(s) · ${n(s.walls, "walls")} wall(s)`
-      + ` on ${(s.walls?.maps || []).length} map(s) · ${n(s.doors, "handles")} door(s)`
+      + ` on ${(s.walls?.maps || []).length} map(s) · ${n(s.doors, "handles")} door handle(s) on the party's map(s)`
       + `${a ? (a.here ? " · this screen answers the players' doors" : ` · players' doors: ${a.name}`) : ""}`
       + ` · explored memory drawn on ${n(s.memory, "maps")} map(s)`
-      + `${s.seen?.writer ? ` · this screen writes the explored squares (${n(s.seen, "writes")} write(s))` : ""}`
-      + `${s.error ? ` · ⚠ ${s.error}` : ""}`);
+      + `${s.seen?.writer ? ` · this screen writes the explored memory (${n(s.seen, "writes")} write(s))` : ""}`
+      + `${s.error ? ` · ⚠ ${s.error}` : ""}`,
+    "Door handles go only on maps a PC stands on, so doors on the other maps aren't counted (or clickable) until a PC is there");
+    // This device's "dnd-npc/fog-dim" test flag beats the scene's shade here (only here: the table's
+    // screens follow the shade), so the DM isn't misled when a shade tap changes nothing on this screen.
+    const flag = s.memory?.flag;
+    if (typeof flag === "number") {
+      line("warn", `This screen draws remembered ground at its own test shade ${flag} (the dnd-npc/fog-dim flag on this device),`
+        + " not the scene's memory shade; the table's screens follow the shade above.");
+    }
   }
 
   // On takes two taps (it changes every screen at once); off takes one. This device's background
@@ -623,8 +657,8 @@ export function startLighting(OBR, el, { build = "", ask = null } = {}) {
     }
   }
 
-  import("./fog/fog.js?v=7f44662").then((m) => { fogMod = m; render(); }, (e) => { fogErr = String(e?.message || e); renderFog(); });
-  import("./fog/mapui.js?v=7f44662").then((m) => { mapUi = m; render(); }, (e) => console.warn("dnd-npc: 🌫 map controls", e));
+  import("./fog/fog.js?v=222aeb9").then((m) => { fogMod = m; render(); }, (e) => { fogErr = String(e?.message || e); renderFog(); });
+  import("./fog/mapui.js?v=222aeb9").then((m) => { mapUi = m; render(); }, (e) => console.warn("dnd-npc: 🌫 map controls", e));
   OBR.scene.items.onChange(() => refresh());
   OBR.scene.onMetadataChange?.(() => refresh());
   OBR.scene.onReadyChange?.(() => refresh());

@@ -16,9 +16,9 @@
 //                                    scene px and feet), pxPerFt}
 // `grid`: {dpi, ftPerCell} (or a dpi number); missing = Owlbear's default 150 dpi, 5 ft.
 
-import { CARRIER_KEY, MAP_DARKNESS_KEY, SCENE_LIGHTING_KEY, SMOKE } from "../keys.js?v=7f44662";
-import * as LM from "./lightmeta.js?v=7f44662";
-import { finite, footprint, gridOf } from "./place.js?v=7f44662";
+import { CARRIER_KEY, MAP_DARKNESS_KEY, SCENE_LIGHTING_KEY, SMOKE } from "../keys.js?v=222aeb9";
+import * as LM from "./lightmeta.js?v=222aeb9";
+import { finite, footprint, gridOf } from "./place.js?v=222aeb9";
 
 export const CODES = ["lit", "dim", "dark"];
 export const codeOf = (v) => (CODES.includes(v) ? v : null);

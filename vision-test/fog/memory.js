@@ -1,71 +1,87 @@
 // Explored memory, drawn (docs/vision-layer-spec.md section 6, "Drawing it", Plan A from spike S2;
-// the builders' contract is docs/vision-layer-b4.md section 5): on EVERY screen, while 🌫 Our fog
-// is on, a few LOCAL items on the FOG layer per map whose mode (fog/maps.js mapStates: fog/mode.js
-// fogMode from its darkness, kind, remembered building and the DM's override) keeps what the party
-// has seen. The spike found FOG-layer local items opaque to players: they act as fog, hide the
-// tokens under them, and the party's PRIMARY lights (zIndex 0) cut through them, so live sight
-// shows the real map and its creatures while the remembered parts show only the picture.
+// B4's contract is docs/vision-layer-b4.md section 5, and from Phase 1 docs/vision-layer-2024.md
+// section 6, the smooth memory and its look): on EVERY screen, while 🌫 Our fog is on, a few LOCAL
+// items on the FOG layer per map whose mode (fog/maps.js mapStates: fog/mode.js fogMode from its
+// darkness, kind, remembered building and the DM's override) keeps what the party has seen. The
+// spike found FOG-layer local items opaque to players: they act as fog, hide the tokens under them,
+// and the party's PRIMARY lights (zIndex 0) cut through them, so live sight shows the real map and
+// its creatures while the remembered parts show only the picture, dimmed.
 //
 //   "fog"    nothing (the scene's own fog, cut by the party's lights)
-//   "dim"    (a) the map's picture, (b) a dark layer over it, (c) the scene's fog colour over every
-//            square not yet seen
-//   "lit"    (a) and (c)
-//   "clear"  a light over the whole map above every wall, held to the map by its own edge ring
-//   a map with no seen square (dim or lit), or one the DM hid: nothing
+//   "dim"    (a) the map's picture, (b) a dim layer over the map's WHOLE rectangle, in the scene's
+//            fog colour at the memory shade, (c) the scene's fog colour over everything not yet
+//            explored: the map's rectangle with the explored memory's rings (EXPLORED_KEY, the
+//            exact sight shapes, fog/shapes.js) cut out, even-odd. The chip calls it "remembered".
+//            A stored "lit" (B4's) draws exactly the same (decision 69)
+//   "clear"  (a) and (b) only: the whole map shown, dimmed; no cut, no light, no edge ring
+//            (decision 72): creatures show only where a PC's sight light reaches
+//   a "dim" map with no explored memory yet, or a map the DM hid: nothing. Squares (SEEN_KEY) are
+//   never drawn: a map explored only under B4's squares shows no memory until it's seen again
 //
-//   holeRects(bits, grid, rect)    the seen squares as rectangles: each row's runs, a run merged
-//                        downward while the rows below have the same run; clipped to rect; never
-//                        overlapping
-//   cutPath(rect, holes)  {position, commands}: rect's outline, then each hole's, as Path commands
-//                        relative to position (MOVE 0, LINE 1, CLOSE 5), for fillRule "evenodd"
+//   SHADES, DEFAULT_SHADE   the memory shade's three values (0.55 lighter, 0.65 medium, 0.75 darker)
+//                        and the one a scene starts at
+//   shadeOf(sceneMeta)   FOG_LOOK_KEY.shade when it's one of SHADES, else DEFAULT_SHADE. The shade's
+//                        one reader (the 🔥 Lighting list's row reads it from here too)
+//   cutPath(rect, holes) {position, commands}: rect's outline, then each hole ring's (fog/shapes.js
+//                        holeRings: [{x, y}, ...] in scene px), as Path commands relative to position
+//                        (MOVE 0, LINE 1, CLOSE 5), for fillRule "evenodd": a hole inside a hole
+//                        fills again (an unseen pillar's shadow inside a seen room)
 //   memoryInputSig(snap, {fogColor})   what the plan depends on: per map its id, mode, hidden,
-//                        rectangle, grid, transform, image and (dim/lit only) its SEEN_KEY bits;
-//                        and the fog colour. Unchanged: no plan is built, Owlbear is asked nothing
-//   memoryPlan(snap, {fogColor, gm, memoryOnGm})   the item specs (pure): [{key, map, part, make,
-//                        sig, ...the part's own}]. key "<part>:<map id>": at most 3 per map
+//                        rectangle, transform, image and ("dim" only) its EXPLORED_KEY value; the
+//                        memory shade and the fog colour. Unchanged: no plan is built, Owlbear is
+//                        asked nothing
+//   memoryPlan(snap, {fogColor, gm, memoryOnGm, dimOpacity})   the item specs (pure): [{key, map,
+//                        part, make, sig, ...the part's own}]. key "<part>:<map id>": at most 3 per
+//                        map. dimOpacity: this device's flag (a number 0-1) or nothing (the shade)
 //   createMemory(api, ctx) -> {sync(snap), clear(), forget(), status()}
 //
 // A spec's `make` is what the item can't change without being made again (the picture's file and
-// size, the edge's points); `sig` is everything it's drawn from. A part whose make holds and whose
-// sig changed is one update (the cut's holes or colour, the light's place or reach, the picture's
-// place, the dim layer's size), never a delete and an add. Each sync makes at most one deleteItems,
-// one addItems and one updateItems, and none at all when the input or the plan is unchanged. It
-// reads its own items back (tagged FOG_LOCAL_KEY {kind: "memory", key, sig, make, host, map,
-// part}) only on its first sync, after clear(), forget() or a failed write; fog.js retries a
-// failure. Local items only: nothing here writes the scene.
+// size); `sig` is everything it's drawn from. A part whose make holds and whose sig changed is one
+// update (the cut's holes or colour, the picture's place, the dim layer's size, colour or shade),
+// never a delete and an add. Each sync makes at most one deleteItems, one addItems and one
+// updateItems, and none at all when the input or the plan is unchanged. It reads its own items back
+// (tagged FOG_LOCAL_KEY {kind: "memory", key, sig, make, host, map, part}) only on its first sync,
+// after clear(), forget() or a failed write; fog.js retries a failure. Local items only: nothing
+// here writes the scene.
 //
 // ctx (fog.js partCtx): host, isGm, log(text, kind), memoryOnGm (false: this GM screen draws no
-// memory, the live-check flag of section 9), optionally dimOpacity (a number 0-1, or a function
-// giving one, read on every sync: the dim layer's opacity, default DIM_OPACITY). api: {OBR, buildImage, buildShape, buildPath,
-// buildLight, buildWall}.
+// memory, the live-check flag of b4 section 9), optionally dimOpacity (a number 0-1, or a function
+// giving one, read on every sync: this device's "dnd-npc/fog-dim" flag, which beats the scene's
+// shade on a GM screen only, for testing; a player's screen and the projector always follow the
+// shade; anything else: the scene's shade). api: {OBR, buildImage, buildShape, buildPath}.
 
-import { FOG_LOCAL_KEY, SEEN_KEY } from "../keys.js?v=7f44662";
-import { getBit } from "./bitset.js?v=7f44662";
-import { edgeLine } from "./lines.js?v=7f44662";
-import { seenOf } from "./maps.js?v=7f44662";
+import { EXPLORED_KEY, FOG_LOCAL_KEY, FOG_LOOK_KEY } from "../keys.js?v=222aeb9";
+import { exploredFor } from "./maps.js?v=222aeb9";
+import { drawnMode } from "./mode.js?v=222aeb9";
+import { holeRings } from "./shapes.js?v=222aeb9";
 
 export const MEMORY_LAYER = "FOG";
 export const MEMORY_IMAGE_Z = -3; // (a) the map's own picture
-export const MEMORY_DIM_Z = -2; // (b) "dim" only: the darkening over it
-export const MEMORY_CUT_Z = -1; // (c) the fog over everything not yet seen
-export const CLEAR_Z = 1; // "clear": a light above every wall (fog/walls.js WALL_Z 0), stopped only by its own edge ring
-export const DIM_COLOR = "#000000";
-export const DIM_OPACITY = 0.45; // tune live (the lights redo's table band is about 0.55; 🌒 may stack too dark)
+export const MEMORY_DIM_Z = -2; // (b) the dim layer over it
+export const MEMORY_CUT_Z = -1; // (c) the fog over everything not yet explored ("dim" only)
+export const SHADES = [0.55, 0.65, 0.75]; // the "Memory shade" row: lighter, medium, darker
+export const DEFAULT_SHADE = 0.65;
 export const DEFAULT_FOG_COLOR = "#000000";
 
 const KIND = "memory";
 const NAME = "dnd-npc memory";
 const MOVE = 0, LINE = 1, CLOSE = 5; // Path commands (as aim/tool.js)
-const DRAWS = new Set(["dim", "lit", "clear"]);
+const SAID = { dim: "remembered", clear: "clear" }; // the chips' words, for the live log
 
+const isObj = (x) => !!x && typeof x === "object" && !Array.isArray(x);
 const finite = (...xs) => xs.every((x) => typeof x === "number" && Number.isFinite(x));
 const r2 = (x) => Math.round(x * 100) / 100 + 0; // + 0: no -0
 const isPt = (p) => !!p && finite(p.x, p.y);
 const pt = (p) => (isPt(p) ? { x: r2(p.x), y: r2(p.y) } : { x: 0, y: 0 });
 const rectOk = (r) => !!r && finite(r.x0, r.y0, r.x1, r.y1) && r.x1 > r.x0 && r.y1 > r.y0;
-const gridOk = (g) => !!g && finite(g.x0, g.y0, g.cell, g.cols, g.rows) && g.cell > 0 && g.cols > 0 && g.rows > 0;
-const opacityOf = (x) => (finite(x) && x >= 0 && x <= 1 ? r2(x) : DIM_OPACITY);
+const flagOf = (x) => (finite(x) && x >= 0 && x <= 1 ? r2(x) : null); // the device flag, or null
 const colourOf = (c) => (typeof c === "string" && c.trim() ? c.trim() : DEFAULT_FOG_COLOR);
+const drawsMemory = (mode) => mode === "dim" || mode === "clear";
+
+export function shadeOf(sceneMeta) {
+  const v = isObj(sceneMeta) ? sceneMeta[FOG_LOOK_KEY] : null;
+  return isObj(v) && SHADES.includes(v.shade) ? v.shade : DEFAULT_SHADE;
+}
 
 // A short fingerprint of a long string (FNV-1a, 32 bits, with the length): the cut's commands in a sig.
 function hash(s) {
@@ -74,53 +90,22 @@ function hash(s) {
   return `${(h >>> 0).toString(36)}.${s.length}`;
 }
 
-// ---- the holes (pure) ----
+// ---- the cut (pure) ----
 
-// The seen squares (a fog/bitset.js set of the grid's size) as rectangles in scene px: each row's
-// runs of seen squares, a run carried down while the next row has exactly the same run (so a room
-// seen whole is one rectangle), clipped to rect. No two overlap: each square is in one run of its
-// row, and each run in one rectangle.
-export function holeRects(bits, grid, rect) {
-  if (!bits || !gridOk(grid) || !rectOk(rect) || bits.cols !== grid.cols || bits.rows !== grid.rows) return [];
-  const { x0, y0, cell, cols, rows } = grid;
-  const out = [];
-  let open = new Map(); // "c0,c1" -> the row it started on
-  const close = (key, r0, r1) => {
-    const [c0, c1] = key.split(",").map(Number);
-    const h = {
-      x0: r2(Math.max(rect.x0, x0 + c0 * cell)), y0: r2(Math.max(rect.y0, y0 + r0 * cell)),
-      x1: r2(Math.min(rect.x1, x0 + c1 * cell)), y1: r2(Math.min(rect.y1, y0 + r1 * cell)),
-    };
-    if (h.x1 > h.x0 && h.y1 > h.y0) out.push(h);
-  };
-  for (let r = 0; r <= rows; r++) {
-    const here = new Map();
-    if (r < rows) {
-      let c = 0;
-      while (c < cols) {
-        if (!getBit(bits, r * cols + c)) { c++; continue; }
-        const c0 = c;
-        while (c < cols && getBit(bits, r * cols + c)) c++;
-        const key = `${c0},${c}`;
-        here.set(key, open.has(key) ? open.get(key) : r);
-      }
-    }
-    for (const [key, r0] of open) if (!here.has(key)) close(key, r0, r);
-    open = here;
-  }
-  return out.sort((a, b) => a.y0 - b.y0 || a.x0 - b.x0);
-}
-
-// rect's outline, then each hole's, relative to rect's top-left corner (the Path's position).
-// With fillRule "evenodd" every hole is cut out of the fill.
+// rect's outline, then each hole ring's, relative to rect's top-left corner (the Path's position).
+// With fillRule "evenodd" every hole is cut out of the fill, and a ring inside a hole fills again.
+// A hole that isn't a ring of at least 3 points is skipped.
 export function cutPath(rect, holes = []) {
   if (!rectOk(rect)) return null;
   const ox = r2(rect.x0), oy = r2(rect.y0);
-  const box = (x0, y0, x1, y1) => [[MOVE, x0, y0], [LINE, x1, y0], [LINE, x1, y1], [LINE, x0, y1], [CLOSE]];
-  const commands = box(0, 0, r2(rect.x1 - ox), r2(rect.y1 - oy));
-  for (const h of Array.isArray(holes) ? holes : []) {
-    if (!rectOk(h)) continue;
-    commands.push(...box(r2(h.x0 - ox), r2(h.y0 - oy), r2(h.x1 - ox), r2(h.y1 - oy)));
+  const w = r2(rect.x1 - ox), h = r2(rect.y1 - oy);
+  const commands = [[MOVE, 0, 0], [LINE, w, 0], [LINE, w, h], [LINE, 0, h], [CLOSE]];
+  for (const ring of Array.isArray(holes) ? holes : []) {
+    if (!Array.isArray(ring)) continue;
+    const pts = ring.filter(isPt);
+    if (pts.length < 3) continue;
+    pts.forEach((p, k) => commands.push([k ? LINE : MOVE, r2(p.x - ox), r2(p.y - oy)]));
+    commands.push([CLOSE]);
   }
   return { position: { x: ox, y: oy }, commands };
 }
@@ -128,22 +113,25 @@ export function cutPath(rect, holes = []) {
 // ---- the plan (pure) ----
 
 const mapsOf = (snap) => (Array.isArray(snap?.maps) ? snap.maps : []);
-const dpiOf = (snap) => (finite(snap?.grid?.dpi) && snap.grid.dpi > 0 ? snap.grid.dpi : 150);
 const rectSig = (r) => (rectOk(r) ? `${r2(r.x0)},${r2(r.y0)},${r2(r.x1)},${r2(r.y1)}` : "-");
-const gridSig = (g) => (gridOk(g) ? `${g.x0},${g.y0},${g.cell},${g.cols}x${g.rows}` : "-");
 function itemSig(i) {
   const p = pt(i?.position), s = isPt(i?.scale) ? i.scale : { x: 1, y: 1 };
   const im = i?.image || {}, g = i?.grid || {}, off = isPt(g.offset) ? g.offset : { x: 0, y: 0 };
   return `${p.x},${p.y}|${r2(finite(i?.rotation) ? i.rotation : 0)}|${s.x},${s.y}|${im.url ?? ""}|${im.width}x${im.height}|${im.mime ?? ""}|${g.dpi}|${off.x},${off.y}`;
 }
+// EXPLORED_KEY's raw value, whole (the rings text too: a new union is a new sig, exactly).
+function exploredSig(raw) {
+  if (!isObj(raw)) return raw == null ? "" : "?";
+  return `${raw.v}|${raw.w}x${raw.h}|${raw.n}|${raw.a}|${typeof raw.rings === "string" ? raw.rings : "?"}`;
+}
 
 export function memoryInputSig(snap, { fogColor = snap?.fogColor } = {}) {
   const parts = mapsOf(snap).map((m) => {
-    const raw = DRAWS.has(m?.mode) && m.mode !== "clear" ? m?.item?.metadata?.[SEEN_KEY] : null;
-    const seen = raw && typeof raw === "object" ? `${raw.v}|${raw.cols}x${raw.rows}|${raw.bits}` : "";
-    return [m?.id, m?.mode, m?.hidden ? 1 : 0, rectSig(m?.rect), gridSig(m?.grid), itemSig(m?.item), seen].join("|");
+    const mode = drawnMode(m?.mode);
+    const ex = mode === "dim" ? exploredSig(m?.item?.metadata?.[EXPLORED_KEY]) : "";
+    return [m?.id, mode, m?.hidden ? 1 : 0, rectSig(m?.rect), itemSig(m?.item), ex].join("|");
   });
-  return `${dpiOf(snap)}|fog=${colourOf(fogColor)}||${parts.join(";")}`;
+  return `shade=${shadeOf(snap?.sceneMeta)}|fog=${colourOf(fogColor)}||${parts.join(";")}`;
 }
 
 // The map image's own picture, as buildImage takes it.
@@ -160,59 +148,51 @@ function imageOf(item) {
   };
 }
 
-function specsFor(m, { fogColor, dpi, dimOpacity }) {
+function specsFor(m, { fogColor, opacity }) {
   const id = String(m.id);
   const spec = (part, own) => ({ key: `${part}:${id}`, map: id, part, ...own });
   const rect = m.rect;
-  if (!rectOk(rect)) return [];
-  if (m.mode === "clear") {
-    const cell = gridOk(m.grid) ? m.grid.cell : dpi;
-    const position = { x: r2((rect.x0 + rect.x1) / 2), y: r2((rect.y0 + rect.y1) / 2) };
-    const attenuation = r2(Math.hypot(rect.x1 - rect.x0, rect.y1 - rect.y0) / 2 + cell);
-    const out = [spec("light", { position, attenuation, make: "light", sig: `${position.x},${position.y}|${attenuation}` })];
-    const edge = edgeLine(m.item, dpi) || edgeLine(rect, dpi);
-    if (edge) {
-      const points = edge.points.map(pt);
-      const s = points.map((p) => `${p.x},${p.y}`).join(" ");
-      out.push(spec("edge", { points, make: s, sig: s }));
-    }
-    return out;
+  const mode = drawnMode(m.mode);
+  if (!drawsMemory(mode) || !rectOk(rect)) return [];
+  let holes = null;
+  if (mode === "dim") {
+    holes = holeRings(exploredFor(m).rings, rect);
+    if (!holes.length) return []; // nothing explored yet: the scene's own fog, as "fog"
   }
-  if (m.mode !== "dim" && m.mode !== "lit") return [];
-  const seen = seenOf(m.item, m.grid);
-  const holes = holeRects(seen, m.grid, rect);
-  if (!holes.length) return [];
-  const out = [];
   const img = imageOf(m.item);
+  if (!img && mode === "clear") return []; // no picture to show
+  const out = [];
   if (img) {
     const make = `${img.image.url}|${img.image.width}x${img.image.height}|${img.image.mime}|${img.grid.dpi}|${img.grid.offset.x},${img.grid.offset.y}`;
     out.push(spec("image", { ...img, make,
       sig: `${make}|${img.position.x},${img.position.y}|${r2(img.rotation)}|${img.scale.x},${img.scale.y}` }));
   }
-  if (m.mode === "dim") {
-    const position = { x: r2(rect.x0), y: r2(rect.y0) }, width = r2(rect.x1 - rect.x0), height = r2(rect.y1 - rect.y0);
-    out.push(spec("dim", { position, width, height, color: DIM_COLOR, opacity: dimOpacity, make: "dim",
-      sig: `${position.x},${position.y}|${width}x${height}|${DIM_COLOR}|${dimOpacity}` }));
-  }
-  const cut = cutPath(rect, holes);
+  // The dim layer: the map's whole rectangle (decision 71: never just the explored shapes, which
+  // would leave a hairline of undimmed picture where two meet; the cut hides it wherever the party
+  // hasn't been), in the scene's fog colour, so a see-through margin over the fog fill reads as fog.
   const color = colourOf(fogColor);
-  out.push(spec("cut", { position: cut.position, commands: cut.commands, color, holes: holes.length, make: "cut",
-    sig: `${cut.position.x},${cut.position.y}|${hash(JSON.stringify(cut.commands))}|${color}` }));
+  const position = { x: r2(rect.x0), y: r2(rect.y0) }, width = r2(rect.x1 - rect.x0), height = r2(rect.y1 - rect.y0);
+  out.push(spec("dim", { position, width, height, color, opacity, make: "dim",
+    sig: `${position.x},${position.y}|${width}x${height}|${color}|${opacity}` }));
+  if (mode === "dim") {
+    const cut = cutPath(rect, holes);
+    out.push(spec("cut", { position: cut.position, commands: cut.commands, color, holes: holes.length, make: "cut",
+      sig: `${cut.position.x},${cut.position.y}|${hash(JSON.stringify(cut.commands))}|${color}` }));
+  }
   return out;
 }
 
 // Per map that isn't hidden, what this screen draws for it (contract section 5). A GM screen with
 // memoryOnGm false draws nothing at all.
-export function memoryPlan(snap, { fogColor = snap?.fogColor, gm = false, memoryOnGm = true, dimOpacity = DIM_OPACITY } = {}) {
+export function memoryPlan(snap, { fogColor = snap?.fogColor, gm = false, memoryOnGm = true, dimOpacity = null } = {}) {
   if (gm && memoryOnGm === false) return [];
-  const dpi = dpiOf(snap);
-  dimOpacity = opacityOf(dimOpacity);
+  const opacity = flagOf(dimOpacity) ?? shadeOf(snap?.sceneMeta);
   const out = [];
   const done = new Set();
   for (const m of mapsOf(snap)) {
-    if (!m || m.id == null || m.hidden || !DRAWS.has(m.mode) || done.has(String(m.id))) continue;
+    if (!m || m.id == null || m.hidden || !drawsMemory(drawnMode(m.mode)) || done.has(String(m.id))) continue;
     done.add(String(m.id));
-    out.push(...specsFor(m, { fogColor, dpi, dimOpacity }));
+    out.push(...specsFor(m, { fogColor, opacity }));
   }
   return out;
 }
@@ -230,12 +210,12 @@ export function createMemory(api = {}, ctx = {}) {
     return t && typeof t === "object" ? t : null;
   };
   const ours = (i) => tagOf(i)?.kind === KIND && tagOf(i)?.host === host;
-  // A live-tuning knob (contract section 9, check 2): ctx.dimOpacity, a number or a function giving
-  // one, read on every sync; missing or junk = DIM_OPACITY.
-  const dimOpacityNow = () => {
+  // This device's flag (b4 section 9, check 2): ctx.dimOpacity, a number or a function giving one,
+  // read on every sync; missing or junk = null (the scene's shade).
+  const flagNow = () => {
     let v = ctx.dimOpacity;
     if (typeof v === "function") { try { v = v(); } catch { v = null; } }
-    return opacityOf(v);
+    return flagOf(v);
   };
 
   let drawn = new Map(); // key -> {id, make, sig, part, map}
@@ -244,6 +224,7 @@ export function createMemory(api = {}, ctx = {}) {
   let sweep = true; // read our items back before the next write
   let lastError = null;
   let saidMaps = ""; // the maps (and modes) the live log last heard about
+  let shade = DEFAULT_SHADE, flag = null; // the scene's shade and this device's flag, at the last sync
 
   const tag = (s) => ({ kind: KIND, key: s.key, sig: s.sig, make: s.make, host, map: s.map, part: s.part });
   const opt = (b, method, v) => (typeof b?.[method] === "function" ? b[method](v) : b);
@@ -263,12 +244,6 @@ export function createMemory(api = {}, ctx = {}) {
         return finish(api.buildPath().commands(s.commands).position(s.position).fillRule("evenodd")
           .fillColor(s.color).fillOpacity(1).strokeColor(s.color).strokeOpacity(0).strokeWidth(0)
           .layer(MEMORY_LAYER), s, MEMORY_CUT_Z);
-      case "light":
-        return finish(api.buildLight().position(s.position).attenuationRadius(s.attenuation).sourceRadius(0)
-          .falloff(0).lightType("PRIMARY"), s, CLEAR_Z);
-      case "edge":
-        return finish(api.buildWall().points(s.points).position({ x: 0, y: 0 }).doubleSided(true).blocking(false)
-          .visible(true), s, CLEAR_Z);
       default:
         throw new Error(`no such memory part: ${s.part}`);
     }
@@ -285,15 +260,12 @@ export function createMemory(api = {}, ctx = {}) {
       d.position = { ...s.position };
       d.width = s.width;
       d.height = s.height;
-      style({ fillColor: s.color, fillOpacity: s.opacity });
+      style({ fillColor: s.color, fillOpacity: s.opacity, strokeColor: s.color });
     } else if (s.part === "cut") {
       d.position = { ...s.position };
       d.commands = s.commands.map((c) => [...c]);
       d.fillRule = "evenodd";
-      style({ fillColor: s.color, fillOpacity: 1 });
-    } else if (s.part === "light") {
-      d.position = { ...s.position };
-      d.attenuationRadius = s.attenuation;
+      style({ fillColor: s.color, fillOpacity: 1, strokeColor: s.color });
     }
     d.metadata = { ...(d.metadata || {}), [FOG_LOCAL_KEY]: tag(s) };
   }
@@ -314,13 +286,14 @@ export function createMemory(api = {}, ctx = {}) {
     const ids = [...new Set(plan.map((s) => s.map))];
     const text = ids.map((id) => {
       const m = byId.get(id);
+      const mode = drawnMode(m?.mode);
       const cut = plan.find((s) => s.key === `cut:${id}`);
-      return `${m?.name || id} ${m?.mode}${cut ? ` (${cut.holes} hole${cut.holes === 1 ? "" : "s"})` : ""}`;
+      return `${m?.name || id} ${SAID[mode] || mode}${cut ? ` (${cut.holes} ring${cut.holes === 1 ? "" : "s"})` : ""}`;
     });
-    const key = ids.map((id) => `${id}:${byId.get(id)?.mode}`).join(",");
+    const key = ids.map((id) => `${id}:${drawnMode(byId.get(id)?.mode)}`).join(",");
     if (key === saidMaps) return;
     saidMaps = key;
-    log(text.length ? `drawing ${text.join(", ")}` : "nothing to draw");
+    log(text.length ? `drawing explored memory: ${text.join(", ")}` : "drawing no explored memory");
   }
 
   async function doSync(snap) {
@@ -329,10 +302,13 @@ export function createMemory(api = {}, ctx = {}) {
     const fogColor = snap.fogColor;
     const gm = !!ctx.isGm;
     const onGm = ctx.memoryOnGm !== false;
-    const dimOpacity = dimOpacityNow();
-    const inSig = `${gm ? "gm" : "pl"}|${onGm ? 1 : 0}|${dimOpacity}|${memoryInputSig(snap, { fogColor })}`;
+    // The device flag counts on a GM screen only (the contract): a player's window on the same browser
+    // profile as a GM tab shares its storage, and must still show the table's shade.
+    flag = gm ? flagNow() : null;
+    shade = shadeOf(snap.sceneMeta);
+    const inSig = `${gm ? "gm" : "pl"}|${onGm ? 1 : 0}|${flag ?? "-"}|${memoryInputSig(snap, { fogColor })}`;
     if (!sweep && inSig === appliedIn) return none;
-    const plan = memoryPlan(snap, { fogColor, gm, memoryOnGm: onGm, dimOpacity });
+    const plan = memoryPlan(snap, { fogColor, gm, memoryOnGm: onGm, dimOpacity: flag });
     const psig = planSig(plan);
     if (!sweep && psig === applied) { appliedIn = inSig; return none; }
     const del = [];
@@ -462,8 +438,10 @@ export function createMemory(api = {}, ctx = {}) {
     reset();
   }
 
+  // shade: the scene's memory shade; flag: this device's "dnd-npc/fog-dim" when it beats the shade
+  // here (the 🔥 Lighting list says so), else null.
   function status() {
-    return { maps: new Set([...drawn.values()].map((r) => r.map)).size, items: drawn.size, error: lastError };
+    return { maps: new Set([...drawn.values()].map((r) => r.map)).size, items: drawn.size, error: lastError, shade, flag };
   }
 
   return { sync, clear, forget, status };

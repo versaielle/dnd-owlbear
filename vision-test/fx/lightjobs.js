@@ -8,14 +8,16 @@
 // function the leader's writer (fx/lightwriter.js) and the 🔥 menu use, so they never fight: a
 // hidden token that isn't a PC gets its light but no Smoke keys (Smoke would show every player
 // where it stands), a lit goblin's light goes on a carrier the leader makes. The DM's own light
-// (LIGHT_KEY) is never touched here: a spell ending never puts out a torch.
+// (LIGHT_KEY) is never touched here: a spell ending never puts out a torch. A spell that ends
+// leaves SPELL_LIGHT_KEY as an explicit null (never a removed key: the bridge tab writes while
+// the other DM browser's lights writer runs too), and a null reads as no spell.
 
-import { SPELL_LIGHT_KEY } from "../keys.js?v=7f44662";
-import { lightChanges, planItem, reachOf, setSpellLight, stable, writeLightPart } from "./lightmeta.js?v=7f44662";
-import { planCtx } from "./lightwriter.js?v=7f44662";
-import { readGrid } from "./darkness.js?v=7f44662";
-import { SOURCES } from "./lights.js?v=7f44662";
-import { isPcToken } from "./pcs.js?v=7f44662";
+import { SPELL_LIGHT_KEY } from "../keys.js?v=222aeb9";
+import { lightChanges, planItem, reachOf, setSpellLight, stable, writeLightPart } from "./lightmeta.js?v=222aeb9";
+import { planCtx } from "./lightwriter.js?v=222aeb9";
+import { readGrid } from "./darkness.js?v=222aeb9";
+import { SOURCES } from "./lights.js?v=222aeb9";
+import { isPcToken } from "./pcs.js?v=222aeb9";
 
 // lightChanges() lives in lightmeta.js; still offered here for older importers.
 export { lightChanges };
@@ -111,7 +113,9 @@ export async function syncSpellLights(OBR, job, { stillBridge, isPc } = {}) {
   let set = 0, cleared = 0;
   for (const i of items) {
     const w = want.get(i.id);
-    if (!w && i.metadata?.[SPELL_LIGHT_KEY] === undefined) continue;
+    // No spell wanted and none held (missing, or the explicit null a cleared one leaves: never a
+    // deleted key, fx/lightmeta.js writeLightPart): not this job's token.
+    if (!w && i.metadata?.[SPELL_LIGHT_KEY] == null) continue;
     if (!planned(i, w, c)) continue;
     due.set(i.id, w);
     if (w) set++;

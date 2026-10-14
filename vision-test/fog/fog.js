@@ -54,8 +54,8 @@
 // in flight, which checks after every await that it still should draw, so a copy stepping aside
 // mid-pass never adds items after its own clean-up. Item changes settle for SETTLE_MS, but a long
 // drag still gets a pass every MAX_WAIT_MS. Scene and room metadata trigger a pass only when an
-// input changed (FOG_KEY, SCENE_LIGHTING_KEY, Smoke's Disable Vision; PARTY_SENSES_KEY,
-// PARTY_KEY). A grid change re-reads the grid. A scene closing forgets every
+// input changed (FOG_KEY, SCENE_LIGHTING_KEY, Smoke's Disable Vision, RULES_KEY, WEATHER_KEY,
+// FOG_LOOK_KEY; PARTY_SENSES_KEY, PARTY_KEY). A grid change re-reads the grid. A scene closing forgets every
 // record (Owlbear drops local items with it); a scene opening gets a pass that sweeps. A part whose
 // sync fails is synced again after RETRY_MS, doubling to RETRY_MAX_MS. Each part skips a sync whose
 // plan is unchanged, so a pass with nothing new asks nothing of Owlbear. The order in each pass is
@@ -76,18 +76,18 @@
 // the answerer watch, at most every SMOKE_CHECK_MS (one OBR.scene.local.getItems), never on a
 // player's screen. Smoke's leftover shared data (its sceneId, a token's hasVision) never counts.
 
-import { FOG_KEY, FOG_LOCAL_KEY, PARTY_KEY, PARTY_SENSES_KEY, SCENE_LIGHTING_KEY, SMOKE } from "../keys.js?v=7f44662";
-import { planCtx } from "../fx/lightwriter.js?v=7f44662";
-import { readGrid } from "../fx/darkness.js?v=7f44662";
-import { mapRects } from "../views.js?v=7f44662";
-import { doorEdit, drift, occupiedMaps, readLines } from "./lines.js?v=7f44662";
-import { mapStates } from "./maps.js?v=7f44662";
-import { createSight } from "./sight.js?v=7f44662";
-import { createWalls } from "./walls.js?v=7f44662";
-import { ANSWERER_SETTLE_MS, createDoors } from "./doors.js?v=7f44662";
-import { createSeen } from "./seen.js?v=7f44662";
-import { createMemory } from "./memory.js?v=7f44662";
-import { createLiveLog, lineText } from "./livelog.js?v=7f44662";
+import { FOG_KEY, FOG_LOCAL_KEY, FOG_LOOK_KEY, PARTY_KEY, PARTY_SENSES_KEY, RULES_KEY, SCENE_LIGHTING_KEY, SMOKE, WEATHER_KEY } from "../keys.js?v=222aeb9";
+import { planCtx } from "../fx/lightwriter.js?v=222aeb9";
+import { readGrid } from "../fx/darkness.js?v=222aeb9";
+import { mapRects } from "../views.js?v=222aeb9";
+import { doorEdit, drift, occupiedMaps, readLines } from "./lines.js?v=222aeb9";
+import { mapStates } from "./maps.js?v=222aeb9";
+import { createSight } from "./sight.js?v=222aeb9";
+import { createWalls } from "./walls.js?v=222aeb9";
+import { ANSWERER_SETTLE_MS, createDoors } from "./doors.js?v=222aeb9";
+import { createSeen } from "./seen.js?v=222aeb9";
+import { createMemory } from "./memory.js?v=222aeb9";
+import { createLiveLog, lineText } from "./livelog.js?v=222aeb9";
 
 export { lineText }; // a live-log line as text (background.js sends them to the GM box)
 
@@ -223,7 +223,11 @@ export function fogColorOf(f) {
 }
 
 const stable = (x) => JSON.stringify(x ?? null);
-export const inputSig = (m) => stable([m?.[FOG_KEY], m?.[SCENE_LIGHTING_KEY], m?.[SMOKE_VISION_OFF] === true]);
+// The 2024 switches (RULES_KEY), the weather (WEATHER_KEY) and the memory shade (FOG_LOOK_KEY) count
+// too (docs/vision-layer-2024.md): a tap on any of them is a pass on every screen. Raw values, like the
+// rest: an identical rewrite changes nothing, so it's no pass.
+export const inputSig = (m) => stable([m?.[FOG_KEY], m?.[SCENE_LIGHTING_KEY], m?.[SMOKE_VISION_OFF] === true,
+  m?.[RULES_KEY] ?? null, m?.[WEATHER_KEY] ?? null, m?.[FOG_LOOK_KEY] ?? null]);
 export const roomSig = (m) => stable([m?.[PARTY_SENSES_KEY], m?.[PARTY_KEY]]);
 
 // ---- the snapshot (pure) ----

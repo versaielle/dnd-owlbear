@@ -18,13 +18,13 @@
 // Also "👥 Place townsfolk" (GM only, on the town map): each NPC listed in interiors.json's
 // town.townsfolk goes to its own square in its room, next to its piece of furniture.
 // check_interiors.mjs tests the pure parts offline.
-import OBR, { MathM } from "./obr-sdk.js?v=7f44662";
-import { contains, isRoom, outline } from "./areas.js?v=7f44662";
-import { ask, directBase } from "./bus.js?v=7f44662";
-import { bounds, listed, loadInteriors, mapToScene, matchImages, normName, toScene } from "./interiors.js?v=7f44662";
-import { BUBBLES_NAME_KEY, INTERIOR_KEY, MAP_INFO_KEY, PARTY_KEY, PARTY_SENSES_KEY, WHO_KEY } from "./keys.js?v=7f44662";
-import { nameKey, pcName, tokenLabel } from "./fx/pcs.js?v=7f44662";
-import { readLine, toWorld } from "./fog/lineread.js?v=7f44662";
+import OBR, { MathM } from "./obr-sdk.js?v=222aeb9";
+import { contains, isRoom, outline } from "./areas.js?v=222aeb9";
+import { ask, directBase } from "./bus.js?v=222aeb9";
+import { bounds, listed, loadInteriors, mapToScene, matchImages, normName, toScene } from "./interiors.js?v=222aeb9";
+import { BUBBLES_NAME_KEY, INTERIOR_KEY, MAP_INFO_KEY, PARTY_KEY, PARTY_SENSES_KEY, WHO_KEY } from "./keys.js?v=222aeb9";
+import { nameKey, pcName, tokenLabel } from "./fx/pcs.js?v=222aeb9";
+import { readLine, toWorld } from "./fog/lineread.js?v=222aeb9";
 
 const RADIUS = 12; // squares around the spot that are tried
 

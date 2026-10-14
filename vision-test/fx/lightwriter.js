@@ -11,10 +11,10 @@
 // with CARRIER_KEY {of} and Smoke's torch keys; only while the goblin is lit, shown and doesn't
 // see by itself. Its id is CARRIER_PREFIX + the goblin's id, so every writer names it alike.
 
-import { CARRIER_KEY, PARTY_KEY, PARTY_SENSES_KEY, SCENE_LIGHTING_KEY, SMOKE, WHO_KEY } from "../keys.js?v=7f44662";
-import { LIGHT_PART, SMOKE_DEFAULT_KEYS, effectiveLight, isSecret, lightingOf, planItem, rangeDefaultOf, stable, visionOf, writeLightPart } from "./lightmeta.js?v=7f44662";
-import { isPcToken, nameKey, pcName, whoMarksFor } from "./pcs.js?v=7f44662";
-import { darknessCtx, readGrid } from "./darkness.js?v=7f44662";
+import { CARRIER_KEY, PARTY_KEY, PARTY_SENSES_KEY, SCENE_LIGHTING_KEY, SMOKE, WHO_KEY } from "../keys.js?v=222aeb9";
+import { LIGHT_PART, SMOKE_DEFAULT_KEYS, effectiveLight, isSecret, lightingOf, planItem, rangeDefaultOf, stable, visionOf, writeLightPart } from "./lightmeta.js?v=222aeb9";
+import { isPcToken, nameKey, pcName, whoMarksFor } from "./pcs.js?v=222aeb9";
+import { darknessCtx, readGrid } from "./darkness.js?v=222aeb9";
 
 const K = (name) => `${SMOKE}/${name}`;
 export const CARRIER_PREFIX = "dnd-npc-carrier-";
@@ -138,7 +138,8 @@ export function planScene(items, scene, room, ctx = {}) {
   for (const u of update) {
     const i = c.byId.get(u.id);
     if (!i || i.metadata?.[CARRIER_KEY] || c.isPc(i) || !c.isSecret(i) || !(i.layer === "CHARACTER" || hangsFromHiddenNpc(i, c))) continue;
-    if (SMOKE_KEYS.some((k) => i.metadata?.[k] !== undefined && u.metadata?.[k] === undefined)) r1.update.push(u.id);
+    // a Smoke key coming off (the plan drops it, or holds it as null): a null already there is off
+    if (SMOKE_KEYS.some((k) => i.metadata?.[k] != null && u.metadata?.[k] == null)) r1.update.push(u.id);
   }
   return { update, add, remove, notes, released: false, r1 };
 }
@@ -158,8 +159,9 @@ function hangsFromHiddenNpc(item, c) {
 
 // Only the R1 part of planScene's plan (no adds, no other updates): what every GM copy that may
 // write does whatever its gate says (blocked by an old build, waiting, standing by, backing
-// off), so a hidden goblin's light never shows through the fog. Removing is idempotent: two
-// tabs doing it at once remove the same keys/items, and then plan nothing.
+// off), so a hidden goblin's light never shows through the fog. Idempotent: two tabs doing it at
+// once (game night has two DM browsers) write the same explicit nulls (never a removed key:
+// fx/lightmeta.js writeLightPart) and delete the same carriers, and then plan nothing.
 export function planR1(items, scene, room, ctx = {}) {
   const p = planScene(items, scene, room, ctx);
   const u = new Set(p.r1.update), r = new Set(p.r1.remove);
@@ -336,7 +338,11 @@ export function createWriter(api, ctx, opts = {}) {
             const u = by.get(d.id);
             if (!u) continue;
             if (d.metadata?.[CARRIER_KEY]) {
-              Object.assign(d.metadata, u.metadata);
+              // Only the carrier's own keys, each only when it differs (never the read's copy of the
+              // rest, which another writer may have changed since; never a removed key).
+              for (const key of CARRIER_KEYS) {
+                if (u.metadata?.[key] !== undefined && stable(d.metadata[key]) !== stable(u.metadata[key])) d.metadata[key] = JSON.parse(JSON.stringify(u.metadata[key]));
+              }
               continue;
             }
             if (u.metadata?.[WHO_KEY] && !d.metadata?.[WHO_KEY]) d.metadata[WHO_KEY] = u.metadata[WHO_KEY];
