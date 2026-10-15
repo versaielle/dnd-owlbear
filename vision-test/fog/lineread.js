@@ -16,7 +16,7 @@
 // Every state is read by truthiness or `=== true`, so a key written as an explicit false (our door
 // writes never delete one, fog/lines.js doorEdit) reads as missing: shut, unlocked, not known.
 
-import { SMOKE, WALL_KEY } from "../keys.js?v=af4de9c";
+import { SMOKE, WALL_KEY } from "../keys.js?v=bb4ddf1";
 
 export const KINDS = ["wall", "door", "window"];
 const SK = (k) => `${SMOKE}/${k}`;

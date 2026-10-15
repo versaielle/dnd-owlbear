@@ -1,11 +1,15 @@
 // Our own vision layer's lifecycle (docs/vision-layer-spec.md sections 9-11; the builders' contract
 // is docs/vision-layer-b2b3.md, this file is its section 4 "fog.js", and docs/vision-layer-b4.md
 // section 7 for the explored memory): the scene switch "🌫 Our fog", one snapshot per pass for the
-// five parts (fog/walls.js: the local walls, fog/sight.js: a light per PC, fog/doors.js: the door
-// icons, their menus, the door writes and the players' requests, fog/seen.js: the explored squares,
-// written by the one GM screen that answers the doors, fog/memory.js: the explored memory drawn on
-// every screen), the scene's fog colour (snap.fogColor), the throttle, and the 🪵 Live log
-// (fog/livelog.js).
+// six parts (fog/cover.js: the dark covers, fog/walls.js: the local walls, fog/sight.js: a light per
+// PC, fog/doors.js: the door icons, their menus, the door writes and the players' requests,
+// fog/seen.js: the explored squares, written by the one GM screen that answers the doors,
+// fog/memory.js: the explored memory drawn on every screen), the scene's fog colour (snap.fogColor),
+// the throttle, and the 🪵 Live log (fog/livelog.js). The dark covers (docs/vision-layer-2024.md
+// section 12, fix C) black out, on players' screens and the projector only, every creature that
+// stands unseen on 🌑 ground with a PC on it (where a PC's sight light lifts the fog, and under the
+// fog too, so it is on before the fog lifts), its HP bar and badges too, only where our overlay
+// paints black.
 //
 //   SETTLE_MS, MAX_WAIT_MS, RETRY_MS, RETRY_MAX_MS
 //   SMOKE_VISION_OFF        Smoke & Spectre's own scene switch "Disable Vision" (its 5.0.4 MetadataKeys
@@ -59,9 +63,12 @@
 // record (Owlbear drops local items with it); a scene opening gets a pass that sweeps. A part whose
 // sync fails is synced again after RETRY_MS, doubling to RETRY_MAX_MS. Each part skips a sync whose
 // plan is unchanged, so a pass with nothing new asks nothing of Owlbear. The order in each pass is
-// walls, sight, doors, seen, memory: the walls go first, so a switch-on never shows a light before
-// the walls that stop it; seen works only on the answerer (fog/doors.js isAnswerer); memory goes
-// last, and a seen write echoes back as an item change, so the next pass draws it. The map images'
+// cover, walls, sight, doors, seen, memory: the dark covers first, so neither a door that opens (its
+// wall goes) nor a sight light that grows lifts the fog off an unseen creature before its cover is on
+// (and every unseen creature on a 🌑 map with a PC on it has one, under the fog too: fog/cover.js);
+// the walls before the lights, so a switch-on never shows a light before the walls that stop it; seen
+// works only on the answerer (fog/doors.js isAnswerer); memory goes last, and a seen write echoes back
+// as an item change, so the next pass draws it. The map images'
 // own metadata (SEEN_KEY, MAP_FOG_KEY, MEMORY_KEY, MAP_DARKNESS_KEY) arrive as item changes; the
 // scene's fog colour (OBR.scene.fog getColor/onChange, guarded) gives a pass when it changes. A GM
 // screen also looks every ANSWER_WATCH_MS whether it became (or stopped being) the answerer, and
@@ -76,18 +83,19 @@
 // the answerer watch, at most every SMOKE_CHECK_MS (one OBR.scene.local.getItems), never on a
 // player's screen. Smoke's leftover shared data (its sceneId, a token's hasVision) never counts.
 
-import { FOG_KEY, FOG_LOCAL_KEY, FOG_LOOK_KEY, PARTY_KEY, PARTY_SENSES_KEY, RULES_KEY, SCENE_LIGHTING_KEY, SMOKE, WEATHER_KEY } from "../keys.js?v=af4de9c";
-import { planCtx } from "../fx/lightwriter.js?v=af4de9c";
-import { readGrid } from "../fx/darkness.js?v=af4de9c";
-import { mapRects } from "../views.js?v=af4de9c";
-import { doorEdit, drift, occupiedMaps, readLines } from "./lines.js?v=af4de9c";
-import { mapStates } from "./maps.js?v=af4de9c";
-import { createSight } from "./sight.js?v=af4de9c";
-import { createWalls } from "./walls.js?v=af4de9c";
-import { ANSWERER_SETTLE_MS, createDoors } from "./doors.js?v=af4de9c";
-import { createSeen } from "./seen.js?v=af4de9c";
-import { createMemory } from "./memory.js?v=af4de9c";
-import { createLiveLog, lineText } from "./livelog.js?v=af4de9c";
+import { FOG_KEY, FOG_LOCAL_KEY, FOG_LOOK_KEY, PARTY_KEY, PARTY_SENSES_KEY, RULES_KEY, SCENE_LIGHTING_KEY, SMOKE, WEATHER_KEY } from "../keys.js?v=bb4ddf1";
+import { planCtx } from "../fx/lightwriter.js?v=bb4ddf1";
+import { readGrid } from "../fx/darkness.js?v=bb4ddf1";
+import { mapRects } from "../views.js?v=bb4ddf1";
+import { doorEdit, drift, occupiedMaps, readLines } from "./lines.js?v=bb4ddf1";
+import { mapStates } from "./maps.js?v=bb4ddf1";
+import { createSight } from "./sight.js?v=bb4ddf1";
+import { createWalls } from "./walls.js?v=bb4ddf1";
+import { ANSWERER_SETTLE_MS, createDoors } from "./doors.js?v=bb4ddf1";
+import { createSeen } from "./seen.js?v=bb4ddf1";
+import { createMemory } from "./memory.js?v=bb4ddf1";
+import { createCover } from "./cover.js?v=bb4ddf1";
+import { createLiveLog, lineText } from "./livelog.js?v=bb4ddf1";
 
 export { lineText }; // a live-log line as text (background.js sends them to the GM box)
 
@@ -96,7 +104,7 @@ export const MAX_WAIT_MS = 750; // ...but a long drag still gets a pass this oft
 export const RETRY_MS = 2000; // a failed sync is tried again after this, doubling...
 export const RETRY_MAX_MS = 30000; // ...up to this
 export const ANSWER_WATCH_MS = 5000; // a GM screen checks this often whether it became (or stopped being) the answerer
-export const PARTS = ["walls", "sight", "doors", "seen", "memory"]; // the sync order of each pass
+export const PARTS = ["cover", "walls", "sight", "doors", "seen", "memory"]; // the sync order of each pass
 export const SMOKE_VISION_OFF = `${SMOKE}/disableVision`;
 export const SMOKE_CHECK_MS = 5000; // a GM screen looks for Smoke's running local items at most this often
 // The Smoke warning's last words: Smoke's local lights and walls may outlive its switch-off on a tab
@@ -258,7 +266,7 @@ export function buildSnapshot(items, sceneMeta, roomMeta, grid, ctx = {}, at = 0
 // locked: a live-check flag), memoryOnGm (false: this GM screen draws no memory items, the live-check
 // flag "dnd-npc/fog-memory-gm"), dimOpacity (a number, or a function giving one: the dim layer's
 // opacity, a live-tuning knob), timers, random() (the checks'), liveLog: false (none), makers
-// ({sight, walls, doors, seen, memory}: the offline check's fakes)}.
+// ({sight, walls, doors, seen, memory, cover}: the offline check's fakes)}.
 export function createFog(api = {}, ctx = {}, opts = {}) {
   const O = api.OBR;
   const T = opts.timers || ctx.timers || {
@@ -267,7 +275,7 @@ export function createFog(api = {}, ctx = {}, opts = {}) {
   const host = ctx.host ?? "";
   const isGm = () => ctx.role === "GM";
   const makers = { sight: createSight, walls: createWalls, doors: createDoors, seen: createSeen, memory: createMemory,
-    ...(opts.makers || {}) };
+    cover: createCover, ...(opts.makers || {}) };
   // The 🪵 Live log: this screen's lines (and on a GM screen every screen's). Its echo is the console.
   const live = opts.liveLog === false ? null : createLiveLog(api, {
     timers: T,
@@ -284,7 +292,7 @@ export function createFog(api = {}, ctx = {}, opts = {}) {
   let items = null, sceneMeta = {}, roomMeta = {}, grid = null, gridStale = true;
   let metaSig = null, rSig = null;
   let snap = null;
-  let parts = null; // {walls, sight, doors, seen, memory}, made the first time the switch is seen on
+  let parts = null; // {walls, cover, sight, doors, seen, memory}, made the first time the switch is seen on
   let fogColor = null; // the scene's own fog colour (snap.fogColor), null until read
   let watchT = null, wasAnswerer = false; // the GM screen's answerer watch (ANSWER_WATCH_MS)
   const partErrors = {};
@@ -319,6 +327,7 @@ export function createFog(api = {}, ctx = {}, opts = {}) {
     get memoryOnGm() { return opts.memoryOnGm !== false; },
     get dimOpacity() { return opts.dimOpacity; },
     snapshot: () => snap,
+    kick: () => kick(), // a pass soon (fog/cover.js: its polygon library has loaded)
     timers: T,
     log: (t, kind = "fog") => say(kind, t),
   };
@@ -419,8 +428,9 @@ export function createFog(api = {}, ctx = {}, opts = {}) {
     wasAnswerer = partCtx.isAnswerer();
     await lookForSmoke(fog);
     if (!running || !drawing) return;
-    // The walls first: a light never shows before the walls that stop it. Then the explored squares
-    // (the answerer only) and, last, the memory drawn from them.
+    // The dark covers first (before a door's wall goes or a light grows), then the walls: a light
+    // never shows before the walls that stop it. Then the explored squares (the answerer only) and,
+    // last, the memory drawn from them.
     let failed = null;
     for (const name of PARTS) {
       if (!running || !drawing) return;
@@ -611,7 +621,7 @@ export function createFog(api = {}, ctx = {}, opts = {}) {
     if (!sceneReady) {
       // Owlbear dropped every local item with the scene: forget, write nothing.
       if (parts) {
-        for (const name of ["sight", "seen", "memory"]) {
+        for (const name of ["sight", "seen", "memory", "cover"]) {
           try { parts[name]?.forget?.(); } catch { /* fine */ }
         }
         for (const name of ["walls", "doors"]) {
@@ -688,6 +698,7 @@ export function createFog(api = {}, ctx = {}, opts = {}) {
       running, ready: sceneReady, on: fog.on, drawing, gm_pass: partCtx.gmPass, passes,
       answerer: drawing ? doors?.answerer ?? null : null, seen_writer: drawing ? doors?.seen_writer ?? null : null,
       smoke: fog.on ? smoke : null, sight: st("sight"), walls: st("walls"), doors, seen: st("seen"), memory: st("memory"),
+      cover: st("cover"),
       fog_color: drawing ? fogColor : null,
       errors: { ...partErrors }, error: lastError, log: live ? live.status() : null,
     };

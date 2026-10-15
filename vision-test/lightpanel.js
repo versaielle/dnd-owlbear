@@ -32,13 +32,13 @@
 // with the lights writer's own ctx, in one write (fx/lightwriter.js writeNow): the writer's next
 // pass plans nothing more. Any control here that changes an input takes a scene released to
 // Smoke back (SCENE_LIGHTING_KEY.managed true); "Release lights to Smoke" sets it false.
-import { FOG_KEY, MAP_DARKNESS_KEY, PARTY_KEY, SCENE_LIGHTING_KEY } from "./keys.js?v=af4de9c";
-import { SOURCES } from "./fx/lights.js?v=af4de9c";
-import { isMap, mapDarkness, readGrid, sceneDarkness } from "./fx/darkness.js?v=af4de9c";
-import { writeNow } from "./fx/lightwriter.js?v=af4de9c";
-import { cleanParty } from "./gather.js?v=af4de9c";
+import { FOG_KEY, MAP_DARKNESS_KEY, PARTY_KEY, SCENE_LIGHTING_KEY } from "./keys.js?v=bb4ddf1";
+import { SOURCES } from "./fx/lights.js?v=bb4ddf1";
+import { isMap, mapDarkness, readGrid, sceneDarkness } from "./fx/darkness.js?v=bb4ddf1";
+import { writeNow } from "./fx/lightwriter.js?v=bb4ddf1";
+import { cleanParty } from "./gather.js?v=bb4ddf1";
 import { DARKNESS, applyMeta, autoKind, carriers, describe, editFor, lightingOf, lightingRows, managed, releaseItem,
-         screenLine, screenWarnings, uiCtx } from "./lightui.js?v=af4de9c";
+         screenLine, screenWarnings, uiCtx } from "./lightui.js?v=bb4ddf1";
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 const COMMON = ["candle", "torch", "lamp", "hooded_lantern", "brazier"].filter((k) => SOURCES[k]);
@@ -48,11 +48,13 @@ export const SWITCH_WAIT_MS = 3000; // the background didn't answer the 🌫 tap
 const DARK_CHIPS = DARKNESS;
 // The PC rows' "sees N ft" on 🌑 ground (fx/lightmeta.js seerReachFt). The fog opens a whole circle
 // that far round the PC (ruling (a): lit ground in line of sight is seen from the dark), so the unlit
-// ground inside it is blacked by our overlay only, and what is drawn above the overlay (Stat Bubbles'
-// HP bars) still shows there (review of dark-fix, 2026-10-14: the tooltip must not promise more).
+// ground inside it is blacked by our overlay, and what is drawn above the overlay (Stat Bubbles' HP
+// bars, badges, rings) is covered by fog/cover.js on the players' screens and the projector only (fix
+// C, docs/vision-layer-2024.md section 12; never on a GM screen). The tooltip must not promise more
+// (review of dark-fix, 2026-10-14).
 export const DARK_SEES_TITLE = "On dark ground: how far the fog opens all round it (its darkvision, its own light, or the far edge of a light on its own map)."
-  + " Lights on other maps never count. Unlit ground inside that circle is blacked by our overlay only, so a creature standing there"
-  + " can still show its HP bar: hide it until a light or darkvision reaches it";
+  + " Lights on other maps never count. Unlit ground inside that circle is blacked by our overlay, and with 🌫 Our fog on, on the players' screens and the projector"
+  + " a creature standing there unseen is covered in black, HP bar and badges too, until a light or darkvision reaches it (your screen still shows it)";
 const short = (k) => (k === "hooded_lantern" ? "Lantern" : k === "brazier" ? "Brazier" : SOURCES[k]?.label || k);
 
 export const LIGHTING_CSS = `
@@ -701,8 +703,8 @@ export function startLighting(OBR, el, { build = "", ask = null } = {}) {
     }
   }
 
-  import("./fog/fog.js?v=af4de9c").then((m) => { fogMod = m; render(); }, (e) => { fogErr = String(e?.message || e); renderFog(); });
-  import("./fog/mapui.js?v=af4de9c").then((m) => { mapUi = m; render(); }, (e) => console.warn("dnd-npc: 🌫 map controls", e));
+  import("./fog/fog.js?v=bb4ddf1").then((m) => { fogMod = m; render(); }, (e) => { fogErr = String(e?.message || e); renderFog(); });
+  import("./fog/mapui.js?v=bb4ddf1").then((m) => { mapUi = m; render(); }, (e) => console.warn("dnd-npc: 🌫 map controls", e));
   OBR.scene.items.onChange(() => refresh());
   OBR.scene.onMetadataChange?.(() => refresh());
   OBR.scene.onReadyChange?.(() => refresh());

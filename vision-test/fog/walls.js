@@ -50,8 +50,8 @@
 // blocking flag is in every wall's sig (a change of gmPass is a delete and an add), and the first
 // sync sweeps whatever an earlier page of ours left.
 
-import { FOG_LOCAL_KEY } from "../keys.js?v=af4de9c";
-import { edgeLine } from "./lines.js?v=af4de9c";
+import { FOG_LOCAL_KEY } from "../keys.js?v=bb4ddf1";
+import { edgeLine } from "./lines.js?v=bb4ddf1";
 
 export const WALL_Z = 0; // on the FOG layer (buildWall's own); walls draw nothing, so the order doesn't show
 
