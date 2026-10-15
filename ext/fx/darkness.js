@@ -11,14 +11,21 @@
 //   regionAt(point, regions)         the code at a point, from darkRegions()
 //   darknessAt(point, items, scene, grid)  the same in one call
 //   farLight(token, lights, pxPerFt) the farthest a token could see a light: max(distance + reach), feet
+//   lightsFor(token, ctx)            the lights (ctx.lights) a token could ever see: only those on its own
+//                                    map (the topmost map image under its middle, as the fog decides it:
+//                                    views.js mapAt over mapRects). A light on another map is behind that
+//                                    map's edge wall (fog/walls.js), so it never counts for this token
+//   lightsOnMap(lights, mapId, maps), lightMapOf(light, maps)   the same by a map's id; a light's map
 //   darknessCtx(items, scene, {isPc, grid})  what fx/lightmeta.js visionOf/smokeFor read from a
-//                                    ctx: {regions, lights (the public ones: [{id, x, y, reach}],
-//                                    scene px and feet), pxPerFt}
+//                                    ctx: {regions, lights (the public ones: [{id, x, y, reach, mapId}],
+//                                    scene px and feet; mapId the map under the light's item, or null),
+//                                    pxPerFt, maps (views.js mapRects, topmost first), dpi}
 // `grid`: {dpi, ftPerCell} (or a dpi number); missing = Owlbear's default 150 dpi, 5 ft.
 
-import { CARRIER_KEY, MAP_DARKNESS_KEY, SCENE_LIGHTING_KEY, SMOKE } from "../keys.js?v=a466a74";
-import * as LM from "./lightmeta.js?v=a466a74";
-import { finite, footprint, gridOf } from "./place.js?v=a466a74";
+import { CARRIER_KEY, MAP_DARKNESS_KEY, SCENE_LIGHTING_KEY, SMOKE } from "../keys.js?v=ef5a062-d6f6ba6";
+import * as LM from "./lightmeta.js?v=ef5a062-d6f6ba6";
+import { finite, footprint, gridOf } from "./place.js?v=ef5a062-d6f6ba6";
+import { centreOf, mapAt, mapRects } from "../views.js?v=ef5a062-d6f6ba6";
 
 export const CODES = ["lit", "dim", "dark"];
 export const codeOf = (v) => (CODES.includes(v) ? v : null);
@@ -105,6 +112,40 @@ export function farLight(token, lights, pxPerFt = gridFrom().pxPerFt) {
   return Math.ceil(far);
 }
 
+// ---- which lights a token could see: only those on its own map ----
+// (live 2026-10-14: one torch-carrying NPC on another map stretched a dark PC's sight to 453 ft, so
+// Owlbear's fog lifted over every dark square in its line of sight and only our overlay blacked it:
+// the HP bars above the overlay showed through on a player's phone. Every map has an edge wall,
+// fog/walls.js, so a light on another map can never be seen.)
+
+// The map image a light is on: its own mapId when darknessCtx gave it one, else the topmost map under
+// its (x, y) (views.js mapAt over mapRects), null between the maps.
+export function lightMapOf(light, maps) {
+  if (light && light.mapId !== undefined) return light.mapId;
+  return light && finite(light.x, light.y) ? mapAt(light, maps) : null;
+}
+
+// The lights on map `mapId` (null: the ground between the maps). `maps`: views.js mapRects. No maps
+// at all (a scene with no map image, or a ctx without them): every light, as before.
+export function lightsOnMap(lights, mapId, maps) {
+  const list = Array.isArray(lights) ? lights : [];
+  if (!Array.isArray(maps) || !maps.length) return list;
+  const id = mapId ?? null;
+  return list.filter((l) => l && lightMapOf(l, maps) === id);
+}
+
+// The public lights (ctx.lights) a token could see by from where it stands: those on the map its
+// middle is on (views.js centreOf, as the fog decides which map a PC is on), wherever they are on it.
+// A token on no map has only the lights on no map (the fog caps its sight at its own square there
+// anyway: fog/sight.js sightPlan). ctx: darknessCtx's {lights, maps, dpi}; without maps, every light.
+export function lightsFor(token, ctx = {}) {
+  const c = ctx || {};
+  const lights = Array.isArray(c.lights) ? c.lights : [];
+  if (!Array.isArray(c.maps) || !c.maps.length) return lights;
+  const dpi = finite(c.dpi) && c.dpi > 0 ? c.dpi : gridFrom().dpi;
+  return lightsOnMap(lights, mapAt(centreOf(token, dpi), c.maps), c.maps);
+}
+
 // ---- the DM's ambient light ----
 
 // A hidden non-CHARACTER item that is a Smoke torch we never wrote: the DM's own invisible light
@@ -124,11 +165,15 @@ export function ambientReach(item, lighting) {
 // ---- the ctx planCtx gives visionOf / smokeFor ----
 
 // The PUBLIC lights (R1: not secret; a carrier child never: its NPC's own light counts) and the
-// DM's ambient lights, in scene px with reach in feet; the darkness regions; the grid.
+// DM's ambient lights, in scene px with reach in feet, each with the map its item's middle is on
+// (mapId: views.js mapAt over mapRects, null between the maps); the darkness regions; the grid; the
+// map rectangles (`maps`, topmost first) and the dpi they were worked out at, for lightsFor.
 // opts: {isPc(item), grid, lighting (SCENE_LIGHTING_KEY's value; else read off the scene)}.
 export function darknessCtx(items, scene, opts = {}) {
   const list = (Array.isArray(items) ? items : []).filter((i) => i?.id != null);
   const G = gridFrom(opts.grid);
+  const maps = mapRects(list, G.dpi);
+  const mapOf = (i) => mapAt(centreOf(i, G.dpi), maps);
   const byId = new Map(list.map((i) => [i.id, i]));
   const isPc = (i) => { try { return !!opts.isPc?.(i); } catch { return false; } };
   const lighting = opts.lighting ?? metaOf(scene)[SCENE_LIGHTING_KEY];
@@ -149,15 +194,15 @@ export function darknessCtx(items, scene, opts = {}) {
     if (i.metadata?.[CARRIER_KEY] || !finite(i.position?.x, i.position?.y)) continue;
     if (isAmbientLight(i, { lighting, byId, isPc, isSecret: secret })) {
       const reach = ambientReach(i, lighting);
-      if (reach) lights.push({ id: i.id, x: i.position.x, y: i.position.y, reach });
+      if (reach) lights.push({ id: i.id, x: i.position.x, y: i.position.y, reach, mapId: mapOf(i) });
       continue;
     }
     const l = LM.effectiveLight(i, lighting);
     if (!l || !(l.reach > 0)) continue;
     if (secret(i)) continue;
-    lights.push({ id: i.id, x: i.position.x, y: i.position.y, reach: l.reach });
+    lights.push({ id: i.id, x: i.position.x, y: i.position.y, reach: l.reach, mapId: mapOf(i) });
   }
-  return { regions: darkRegions(list, scene, G), lights, pxPerFt: G.pxPerFt };
+  return { regions: darkRegions(list, scene, G), lights, pxPerFt: G.pxPerFt, maps, dpi: G.dpi };
 }
 
 // The grid as darknessCtx wants it, read from Owlbear: {dpi, ftPerCell}.

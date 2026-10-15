@@ -18,12 +18,13 @@
 // Also "👥 Place townsfolk" (GM only, on the town map): each NPC listed in interiors.json's
 // town.townsfolk goes to its own square in its room, next to its piece of furniture.
 // check_interiors.mjs tests the pure parts offline.
-import OBR, { MathM } from "./obr-sdk.js?v=a466a74";
-import { contains, isRoom, outline } from "./areas.js?v=a466a74";
-import { ask, directBase } from "./bus.js?v=a466a74";
-import { bounds, listed, loadInteriors, mapToScene, matchImages, normName, toScene } from "./interiors.js?v=a466a74";
-import { BUBBLES_NAME_KEY, INTERIOR_KEY, MAP_INFO_KEY, PARTY_KEY, PARTY_SENSES_KEY, WHO_KEY } from "./keys.js?v=a466a74";
-import { nameKey, pcName, tokenLabel } from "./fx/pcs.js?v=a466a74";
+import OBR, { MathM } from "./obr-sdk.js?v=ef5a062-d6f6ba6";
+import { contains, isRoom, outline } from "./areas.js?v=ef5a062-d6f6ba6";
+import { ask, directBase } from "./bus.js?v=ef5a062-d6f6ba6";
+import { bounds, listed, loadInteriors, mapToScene, matchImages, normName, toScene } from "./interiors.js?v=ef5a062-d6f6ba6";
+import { BUBBLES_NAME_KEY, INTERIOR_KEY, MAP_INFO_KEY, PARTY_KEY, PARTY_SENSES_KEY, WHO_KEY } from "./keys.js?v=ef5a062-d6f6ba6";
+import { nameKey, pcName, tokenLabel } from "./fx/pcs.js?v=ef5a062-d6f6ba6";
+import { readLine, toWorld } from "./fog/lineread.js?v=ef5a062-d6f6ba6";
 
 const RADIUS = 12; // squares around the spot that are tried
 
@@ -215,19 +216,19 @@ export function cellCentre(p, dpi) {
   return { x: Math.floor(p.x / dpi) * dpi + dpi / 2, y: Math.floor(p.y / dpi) * dpi + dpi / 2 };
 }
 
-const SMOKE = "com.battle-system.smoke";
-const CLEAR = 0.45; // squares between a token's centre and any Smoke line (a token on a line gets stuck)
+const CLEAR = 0.45; // squares between a token's centre and any wall line (a token on a line gets stuck)
 
-// Every Smoke & Spectre line that blocks right now, as scene segments [[a, b], ...]: walls and
-// windows, and doors unless they're open. Ours and the DM's own alike.
+// Every wall line that blocks a move right now, as scene segments [[a, b], ...]: walls and
+// windows, and doors unless they're open; never a line the DM switched off. fog/lineread.js readLine
+// says what a line is, so our format (WALL_KEY) and Smoke & Spectre's both count, ours and the
+// DM's own alike; its points are turned, scaled and moved with their line by lineread.js toWorld (the
+// same as MathM, check_fog_lines.mjs), not rounded.
 export function wallSegments(items) {
   const out = [];
-  for (const i of items) {
-    const m = i.metadata || {};
-    if (!m[`${SMOKE}/isVisionLine`] || m[`${SMOKE}/disabled`] || (m[`${SMOKE}/isDoor`] && m[`${SMOKE}/doorOpen`])) continue;
-    if (i.type !== "CURVE" || !i.points?.length) continue;
-    const mx = MathM.fromItem(i);
-    const pts = i.points.map((p) => MathM.decompose(MathM.multiply(mx, MathM.fromPosition(p))).position);
+  for (const i of items || []) {
+    const line = readLine(i);
+    if (!line || line.disabled || (line.kind === "door" && line.open)) continue;
+    const pts = i.points.map((p) => toWorld(i, p));
     if (i.style?.closed && pts.length > 2) pts.push(pts[0]);
     for (let k = 1; k < pts.length; k++) out.push([pts[k - 1], pts[k]]);
   }
@@ -248,7 +249,7 @@ function crosses(p, q, [a, b]) {
 }
 
 // n square centres around the spot, nearest first: never on a portal or an `avoid` box (the
-// target token, other tokens), never within CLEAR of a Smoke line, and only squares reachable
+// target token, other tokens), never within CLEAR of a wall line, and only squares reachable
 // from the spot without crossing one (so nobody lands on the wrong side of a wall). Inside
 // `allowed` (the room, the map) while there's room enough there, then wherever is nearest.
 export function arrange(n, { point, anchor, dpi, allowed = () => true, avoid = [], walls = [], radius = RADIUS }) {
@@ -362,7 +363,7 @@ export function townsfolkSpot(map, image, entry, sceneDpi) {
 
 // The whole placing, without touching Owlbear: {moves: [{id, token, room, cell, position}],
 // notFound: [token names], noMap: [map names], noRoom: ["map · room"]}. Each NPC gets one square
-// in its room, reachable from its spot without crossing a Smoke line and clear of them, off
+// in its room, reachable from its spot without crossing a wall line and clear of them, off
 // portals, furniture, every other token and the squares given to the NPCs before it.
 export function townsfolkPlan(json, items, sceneDpi) {
   const entries = json?.town?.townsfolk || [];

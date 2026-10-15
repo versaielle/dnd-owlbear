@@ -33,11 +33,12 @@
 // fog, so the fog hides it wherever nobody sees. A flame is never drawn for the invisible child
 // item that carries a lit NPC's torchlight for Smoke (CARRIER_KEY): the NPC's own light is.
 //
-// A flame stops at walls: the Smoke & Spectre lines that block (walls, closed doors; not windows,
-// not open doors) within its reach go into its uniforms (WALL_SLOTS of them, the nearest), as
-// segments in the flame's own square, so its glow doesn't spill into the next room. They're
-// measured from where the light stands, so a carried torch gets them again (one uniforms update)
-// once it has moved a quarter of a square, or when a wall near it changes (a door opens).
+// A flame stops at walls: the wall lines that block (ours or Smoke & Spectre's, read by
+// fog/lines.js: walls, closed doors; not windows, not open doors) within its reach go into its
+// uniforms (WALL_SLOTS of them, the nearest), as segments in the flame's own square, so its glow
+// doesn't spill into the next room. They're measured from where the light stands, so a carried
+// torch gets them again (one uniforms update) once it has moved a quarter of a square, or when a
+// wall near it changes (a door opens).
 // Flames that overlap never add up (brighter, or a stacked flicker): each draws only where it's
 // the strongest light (its neighbours are in its uniforms), so five torches together light more
 // of the map, never more brightly, and each pixel flickers with one light only.
@@ -62,14 +63,15 @@
 // Their uniforms are worked out again on EVERY item change, at once (cheap arithmetic, one
 // local update): a carried torch's colour moves with the drag; the flames and walls wait for the
 // scene to settle.
-import { CARRIER_KEY, LIGHT_FX_KEY, PARTY_SENSES_KEY, SCENE_LIGHTING_KEY, SMOKE } from "../keys.js?v=a466a74";
+import { CARRIER_KEY, LIGHT_FX_KEY, PARTY_SENSES_KEY, SCENE_LIGHTING_KEY } from "../keys.js?v=ef5a062-d6f6ba6";
 import { DV_DARK_BLEND, DV_GREY, DV_SOFT_FT, FLAME_BLEND, WALL_SLOTS, darknessPlan, darkvisionShader, dimFor,
-  flameShader, flameUniforms } from "./lights.js?v=a466a74";
-import { ambientReach, darkRegions, isAmbientLight, mapsExtent, sceneDarkness } from "./darkness.js?v=a466a74";
-import { DEFAULT_LIGHTING, effectiveLight, lightingOf, rangeDefaultOf, visionOf } from "./lightmeta.js?v=a466a74";
-import { nameKey, pcName, tokenLabel } from "./pcs.js?v=a466a74";
-import { finite, footprint, gridOf } from "./place.js?v=a466a74";
-import { customUniforms, fillUniforms } from "./shaders.js?v=a466a74";
+  flameShader, flameUniforms } from "./lights.js?v=ef5a062-d6f6ba6";
+import { ambientReach, darkRegions, isAmbientLight, mapsExtent, sceneDarkness } from "./darkness.js?v=ef5a062-d6f6ba6";
+import { DEFAULT_LIGHTING, effectiveLight, lightingOf, rangeDefaultOf, visionOf } from "./lightmeta.js?v=ef5a062-d6f6ba6";
+import { nameKey, pcName, tokenLabel } from "./pcs.js?v=ef5a062-d6f6ba6";
+import { finite, footprint, gridOf } from "./place.js?v=ef5a062-d6f6ba6";
+import { readLine, toWorld } from "../fog/lineread.js?v=ef5a062-d6f6ba6";
+import { customUniforms, fillUniforms } from "./shaders.js?v=ef5a062-d6f6ba6";
 
 export const MAX_FLAMES = 12; // flames per screen: each full one makes Owlbear redraw every frame
 export const LIGHT_Z = 1; // on ATTACHMENT: above the tokens, under rings and badges (auto z-indexes are timestamps)
@@ -79,8 +81,6 @@ const RETRY_MS = 2000; // a local write that failed is tried again after this (t
 const MAX_PX = 40000;
 const WALL_MOVE = 0.05; // squares a carried light moves before its walls are measured again (shadows stay within 3 in.)
 const TIERS = ["full", "lite", "off"];
-const SK = (name) => `${SMOKE}/${name}`;
-const LINE_KEY = SK("isVisionLine"); // on a Smoke & Spectre line (wall, door, window) in the scene
 // A flame follows its item; nothing of the item's own visibility, size or turn carries over.
 const DETACHED = ["VISIBLE", "SCALE", "ROTATION", "COPY"];
 
@@ -95,24 +95,18 @@ const sceneLighting = (sceneMeta) => lightingOf(sceneMeta?.[SCENE_LIGHTING_KEY])
 
 // ---- walls ----
 
-// Every Smoke & Spectre line that stops light right now, as scene segments [x1, y1, x2, y2]:
-// walls, and doors unless they're open. Never a window (light goes through it) or a line the
-// DM switched off. The points are turned, scaled and moved with their line the way gather.js
-// wallSegments() does it (not imported: gather.js brings the panel's interiors code with it).
-export function lightWalls(items, MathM) {
+// Every wall line that stops light right now, as scene segments [x1, y1, x2, y2]: walls, and
+// doors unless they're open. Never a window (light goes through it) or a line the DM switched
+// off. fog/lineread.js readLine says what a line is, so our format (WALL_KEY) counts as well as
+// Smoke & Spectre's; its points are turned, scaled and moved with their line by lineread.js toWorld
+// (the same as the SDK's MathM, check_fog_lines.mjs), not rounded. (No MathM needed any more: a
+// caller that still passes one is fine.)
+export function lightWalls(items) {
   const out = [];
-  if (!MathM) return out;
   for (const i of items || []) {
-    const m = i?.metadata;
-    if (!m || !m[LINE_KEY] || m[SK("disabled")] || m[SK("isWindow")] || (m[SK("isDoor")] && m[SK("doorOpen")])) continue;
-    if (i.type !== "CURVE" || !Array.isArray(i.points) || !i.points.length) continue;
-    let pts;
-    try {
-      const mx = MathM.fromItem(i);
-      pts = i.points.map((p) => MathM.decompose(MathM.multiply(mx, MathM.fromPosition(p))).position);
-    } catch (e) {
-      continue; // a line with no usable place: it blocks nothing here
-    }
+    const line = readLine(i);
+    if (!line || line.disabled || line.kind === "window" || (line.kind === "door" && line.open)) continue;
+    const pts = i.points.map((p) => toWorld(i, p));
     if (i.style?.closed && pts.length > 2) pts.push(pts[0]);
     for (let k = 1; k < pts.length; k++) {
       const a = pts[k - 1], b = pts[k];
@@ -314,7 +308,7 @@ export function createLights(api = {}, ctx = {}) {
   let full = null;
   const loading = (async () => {
     if (api.OBR && typeof api.buildEffect === "function") return api;
-    const sdk = await import("../obr-sdk.js?v=a466a74");
+    const sdk = await import("../obr-sdk.js?v=ef5a062-d6f6ba6");
     return { OBR: sdk.default, buildEffect: sdk.buildEffect, MathM: sdk.MathM, ...api };
   })().then((a) => {
     full = a;
@@ -572,8 +566,7 @@ export function createLights(api = {}, ctx = {}) {
           w.nkey = nb.map((n) => `${n.id}:${n.kind}:${Math.round(n.dx * 10)},${Math.round(n.dy * 10)}`).sort().join(";");
         }
         // ...and each stops at the walls within its reach
-        if (drawn.length && !a.MathM) warn("lights: no MathM here, so flames ignore walls");
-        const segs = drawn.length ? lightWalls(all, a.MathM) : [];
+        const segs = drawn.length ? lightWalls(all) : [];
         for (const w of drawn) {
           const fw = flameWalls(w.item.position, w.S / 2, segs);
           w.walls = fw.walls;

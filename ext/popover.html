@@ -42,12 +42,19 @@
 <div id="buttons"></div>
 
 <div id="lighting"><h4>🔥 Lighting</h4>
+<div id="lt-fog"></div>
 <div id="lt-scene"><p class="dim small">Loading…</p></div>
 <h5>PCs</h5><div id="lt-pcs"></div>
 <h5>Lit objects</h5><div id="lt-lit"></div>
 <div id="lt-said" class="small"></div>
 <h5>Screens heard</h5><div id="lt-screens"></div>
 <button id="lt-release" title="Gives every token our lights manage back to plain Smoke &amp; Spectre (sight and darkvision back in Smoke's own panel)">Release lights to Smoke</button>
+</div>
+
+<div id="livelog"><h4>🪵 Live log</h4>
+<p class="small dim">🌫 Our fog and its doors, on every screen (newest first).</p>
+<button id="ll-copy" title="Copy every line shown here">Copy</button> <span id="ll-said" class="small"></span>
+<div id="ll-lines"><p class="dim small">Loading…</p></div>
 </div>
 
 <h4>This device</h4>
@@ -86,12 +93,15 @@
 // Then "📺 Projector" (views.js): whether the projector holds the view you locked (the table
 // screens report it), and 📺 Show my view / 🔓 Unlock. Right-click → 📺 Projector here aims it too.
 // Then "🔥 Lighting" (lightpanel.js): the scene's darkness, each PC's sight, darkvision and light,
-// the lit objects, the screens heard, and "Release lights to Smoke". It needs no panel.
-import OBR from "./obr-sdk.js?v=a466a74";
-import { CH, LS, QUALITIES, ask, isLocalOrigin, lsGet, lsSet, on, send } from "./bus.js?v=a466a74";
-import { goToPc, pcLabel, scenePcs } from "./goto.js?v=a466a74";
-import { noPcsText } from "./gather.js?v=a466a74";
-import { PROJECTOR_KEY } from "./keys.js?v=a466a74";
+// the lit objects, the screens heard, and "Release lights to Smoke". It needs no panel. At its top,
+// "🌫 Our fog": the switch for our own vision layer (fog/fog.js), off unless the DM turns it on (this
+// device's background writes it). Right under it, "🪵 Live log": every screen's fog and door lines,
+// as this copy's background collects them (keys.js FOG_LOG_LOCAL_CH), with a Copy button.
+import OBR from "./obr-sdk.js?v=ef5a062-d6f6ba6";
+import { CH, LS, QUALITIES, ask, isLocalOrigin, lsGet, lsSet, on, send } from "./bus.js?v=ef5a062-d6f6ba6";
+import { goToPc, pcLabel, scenePcs } from "./goto.js?v=ef5a062-d6f6ba6";
+import { noPcsText } from "./gather.js?v=ef5a062-d6f6ba6";
+import { FOG_LOG_LOCAL_CH, PROJECTOR_KEY } from "./keys.js?v=ef5a062-d6f6ba6";
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
@@ -100,6 +110,8 @@ const local = isLocalOrigin(location.origin);
 const HOST = local ? "local" : "pages";
 let heard = false;
 let lighting = null; // lightpanel.js once loaded
+let liveLog = null; // its 🪵 Live log
+let logWaiting = null; // the live log's last lines, when they came before lightpanel.js
 let views = null; // views.js once loaded (📺 Projector)
 let lastState = null;
 
@@ -273,8 +285,14 @@ OBR.onReady(async () => {
     try { lighting?.state(s); } catch (e) { console.warn("dnd-npc: 🔥 Lighting", e); }
     projectorBox(s).catch((e) => console.warn("dnd-npc: 📺 Projector", e));
   });
+  // 🪵 Live log: this copy's background sends its lines (on open, and when there are new ones).
+  on(OBR, FOG_LOG_LOCAL_CH, (m) => {
+    if (m?.host !== HOST) return;
+    if (liveLog) liveLog.show(m.lines, m.error);
+    else logWaiting = m;
+  });
   // 📺 Projector: loaded on its own too.
-  import("./views.js?v=a466a74").then((m) => {
+  import("./views.js?v=ef5a062-d6f6ba6").then((m) => {
     views = m;
     projectorBox();
   }).catch((e) => {
@@ -282,16 +300,22 @@ OBR.onReady(async () => {
     $("pj-view").hidden = true;
   });
   // 🔥 Lighting: loaded on its own, so the rest of this box works whatever happens to it.
-  import("./lightpanel.js?v=a466a74").then((m) => {
+  import("./lightpanel.js?v=ef5a062-d6f6ba6").then((m) => {
     const css = document.createElement("style");
     css.textContent = m.LIGHTING_CSS;
     document.head.append(css);
     lighting = m.startLighting(OBR, { scene: $("lt-scene"), pcs: $("lt-pcs"), lit: $("lt-lit"), screens: $("lt-screens"),
-                                      said: $("lt-said"), release: $("lt-release") });
+                                      said: $("lt-said"), release: $("lt-release"), fog: $("lt-fog") },
+                               { ask: (need, extra) => send(OBR, CH.LOCAL_ASK, { need, host: HOST, ...extra }, "LOCAL") });
+    liveLog = m.startLiveLog({ lines: $("ll-lines"), copy: $("ll-copy"), said: $("ll-said") });
+    if (logWaiting) liveLog.show(logWaiting.lines, logWaiting.error);
+    askBg("log");
   }).catch((e) => {
     $("lt-scene").innerHTML = `<p class="bad small">🔥 Lighting didn't load: ${esc(e?.message || e)}. Reload the room.</p>`;
+    $("ll-lines").innerHTML = `<p class="bad small">🪵 The live log didn't load: ${esc(e?.message || e)}.</p>`;
   });
   askBg("state");
+  askBg("log");
   setInterval(() => askBg("state"), 2000);
   pcButtons().catch((e) => console.warn("dnd-npc go-to list failed", e));
   setTimeout(() => {

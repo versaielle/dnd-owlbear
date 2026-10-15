@@ -26,7 +26,7 @@ export const CH = {
   LOCAL_AIM: "dnd-npc/local/aim",       // popover → background (LOCAL): {spec}
   LOCAL_HUD: "dnd-npc/local/hud",       // HUD ↔ background (LOCAL): {cmd} / {state}
   LOCAL_STATE: "dnd-npc/local/state",   // background → popovers (LOCAL): snapshot
-  LOCAL_ASK: "dnd-npc/local/ask",       // popover → background (LOCAL): {need:"state"|"find-panel"|"test"}
+  LOCAL_ASK: "dnd-npc/local/ask",       // popover → background (LOCAL): {need:"state"|"find-panel"|"test"|"log"|"fog-switch"}
 };
 export const MAX_BYTES = 15000;         // send() refuses anything larger (logs, returns false)
 

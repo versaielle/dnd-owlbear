@@ -12,7 +12,7 @@
 //                             Lighting list, or adopted from an edit in Smoke's own panel);
 //                             out: the Smoke keys we last wrote, and their values. `out` is the
 //                             ONLY history: it tells a DM's edit in Smoke from our own write,
-//                             and which keys are ours to remove.
+//                             and which keys are ours to take off (written as null: below).
 //   + is it a PC (fx/pcs.js, one rule), is it secret (hidden, not a PC), the party's darkvision
 //     (room PARTY_SENSES_KEY), the scene's lighting (SCENE_LIGHTING_KEY), Smoke's default range.
 // The OUTPUT: Smoke & Spectre's keys, a pure function of the inputs (smokeFor):
@@ -24,10 +24,26 @@
 // Smoke reads ranges as strings ("40") in the grid's units (feet on a 5 ft grid); compare them as
 // strings. A missing visionDark leaves a stale ring in Smoke: we write "0", never delete it while
 // the token is ours.
+//
+// NO DELETED KEYS on a shared write (two DM browsers on game night, docs/vision-layer-2024.md
+// section 1): an Owlbear JSON-patch "remove" of a key another screen's copy already lacks throws
+// OPERATION_PATH_UNRESOLVABLE there and knocks that screen out of step until reload (live,
+// 2026-10-12), and every GM copy runs the R1 pass, so two copies take the same key off at once.
+// So a key a plan drops reaches an Owlbear draft only through writeLightPart(), as an explicit
+// null where the draft holds a value. Every reader takes null as missing: this file (`== null`,
+// isObj, num, norm), fx/pcs.js, fx/darkness.js, lightui.js, and Smoke & Spectre 5.0.4's own
+// drawing (read from its bundle, 2026-10-14: hasVision by truthiness, isTorch `=== true`, the
+// ranges through `?? default` or parseInt, visionDark by truthiness or parseInt). Only Smoke's
+// own Enable Vision / Enable Torchlight menu items test `=== undefined`, so on a token left with a
+// null there Smoke's toggle takes one extra click (Smoke is off in the game room). Smoke has no
+// "off" value that reads better: `false` has the same menu catch, and a false range breaks its
+// `?? default`.
+// The deletes below (migrate, adoptInto, planItem, release) all work on COPIES (`clone`), which
+// reach a draft only through writeLightPart (or lightui.js applyMeta, which writes the same nulls).
 
-import { BUBBLES_NAME_KEY, CARRIER_KEY, LIGHT_BASE_KEY, LIGHT_KEY, SMOKE, SPELL_LIGHT_KEY, VISION_KEY } from "../keys.js?v=a466a74";
-import { SOURCES } from "./lights.js?v=a466a74";
-import { farLight, regionAt } from "./darkness.js?v=a466a74";
+import { BUBBLES_NAME_KEY, CARRIER_KEY, LIGHT_BASE_KEY, LIGHT_KEY, SMOKE, SPELL_LIGHT_KEY, VISION_KEY } from "../keys.js?v=ef5a062-d6f6ba6";
+import { SOURCES } from "./lights.js?v=ef5a062-d6f6ba6";
+import { farLight, lightsFor, regionAt } from "./darkness.js?v=ef5a062-d6f6ba6";
 
 const K = (name) => `${SMOKE}/${name}`;
 // The Smoke keys we write (and so may have to remove), by their short names.
@@ -135,9 +151,10 @@ function underHiddenCharacter(item, ctx = {}) {
 // Smoke range, which Smoke's own controls change. ctx: planCtx's (lighting, byId, isPc).
 export function isNativeTorch(item, ctx = {}) {
   const meta = item?.metadata;
-  if (!isObj(meta) || meta[CARRIER_KEY] || !smokeTorch(meta) || meta[LIGHT_BASE_KEY] !== undefined) return false;
+  if (!isObj(meta) || meta[CARRIER_KEY] || !smokeTorch(meta) || meta[LIGHT_BASE_KEY] != null) return false;
   if (!VISION_LAYERS.includes(item.layer) || item.layer === "CHARACTER") return false;
-  if (meta[LIGHT_KEY] !== undefined || meta[SPELL_LIGHT_KEY] !== undefined || meta[VISION_KEY]?.dm?.seer === true) return false;
+  // (a null light or spell light, written where a plan dropped it, is no light: as missing)
+  if (meta[LIGHT_KEY] != null || meta[SPELL_LIGHT_KEY] != null || meta[VISION_KEY]?.dm?.seer === true) return false;
   // A darkvision on it (a preset, the slider): Smoke's ring on a torch depends on the order each
   // screen saw the keys in; ours then (visionDark "0").
   if (num(meta[K("visionDark")])) return false;
@@ -213,8 +230,24 @@ export function visionOf(item, ctx = {}) {
   return { seer: pc || dm.seer === true, sight, dark, pc, where };
 }
 
-// The Smoke keys this token should have (short names); a key left out = absent (removed if we
-// wrote it). ctx as visionOf, plus isSecret(item) (hidden, itself or through what it hangs
+// How far a seer sees, in feet. On ☀/🌒 where it stands: by line of sight (visionOf's sight: its
+// limit, if any). On 🌑: as far as its darkvision, its own light, or the far edge of the farthest
+// public light ON ITS OWN MAP (ctx.lights through fx/darkness.js lightsFor: a light on another map is
+// behind that map's edge wall, so it never counts), at most LIT_SIGHT. Our overlay blacks out the
+// dark gap in between. Never under SELF_SIGHT there: Smoke's fog would hide the PC's own mini, which
+// our overlay leaves clear. smokeFor's visionRange for a seer and the 🔥 Lighting list's "sees" (fog/
+// sight.js sightReachFt is the same number for a PC). `v`: visionOf(item, ctx), when the caller has it.
+export function seerReachFt(item, ctx = {}, v = null) {
+  const c = ctx || {};
+  const vv = v || visionOf(item, c);
+  if (vv.where !== "dark") return vv.sight;
+  const light = safe(() => effectiveLight(item, c.lighting));
+  const reach = light && light.reach > 0 ? light.reach : 0;
+  return Math.min(LIT_SIGHT, Math.max(SELF_SIGHT, vv.dark, reach, farLight(item, lightsFor(item, c), c.pxPerFt)));
+}
+
+// The Smoke keys this token should have (short names); a key left out = absent (taken off, as a
+// null, if we wrote it). ctx as visionOf, plus isSecret(item) (hidden, itself or through what it hangs
 // from, and not a PC: fx/lightmeta.js isSecret()).
 export function smokeFor(item, ctx = {}) {
   if (!item || !isObj(item.metadata) || item.metadata[CARRIER_KEY] || !VISION_LAYERS.includes(item.layer)) return {};
@@ -224,16 +257,9 @@ export function smokeFor(item, ctx = {}) {
   if (!v.pc && safe(() => ctx.isSecret?.(item), false)) return {};
   const light = effectiveLight(item, ctx.lighting);
   const reach = light ? light.reach : 0;
-  // A seer on ☀/🌒 sees by line of sight (its limit, if any); on 🌑 as far as its darkvision, its
-  // own light, or the far edge of the farthest public light (ctx.lights: fx/darkness.js
-  // darknessCtx), at most LIT_SIGHT. Our overlay blacks out the dark gap in between. Never under
-  // SELF_SIGHT there: Smoke's fog would hide the PC's own mini, which our overlay leaves clear.
-  if (v.seer) {
-    const range = v.where === "dark"
-      ? Math.min(LIT_SIGHT, Math.max(SELF_SIGHT, v.dark, reach, farLight(item, ctx.lights, ctx.pxPerFt)))
-      : v.sight;
-    return { hasVision: true, visionRange: String(range), visionDark: "0" };
-  }
+  // A seer: seerReachFt (its line of sight on ☀/🌒; on 🌑 its darkvision, its own light or the far
+  // edge of the farthest public light on its own map).
+  if (v.seer) return { hasVision: true, visionRange: String(seerReachFt(item, ctx, v)), visionDark: "0" };
   if (light && item.layer !== "CHARACTER") return { hasVision: true, isTorch: true, visionRange: String(reach), visionDark: "0" };
   return {};
 }
@@ -243,7 +269,7 @@ export function smokeFor(item, ctx = {}) {
 // Is this a token we look after? Ours already, a PC, lit (or put out), or given vision in Smoke.
 function managed(item, meta, ctx) {
   if (!VISION_LAYERS.includes(item?.layer) || meta[CARRIER_KEY]) return false;
-  return isObj(meta[VISION_KEY]) || meta[LIGHT_KEY] !== undefined || meta[SPELL_LIGHT_KEY] !== undefined
+  return isObj(meta[VISION_KEY]) || meta[LIGHT_KEY] != null || meta[SPELL_LIGHT_KEY] != null
     || !!meta[K("hasVision")] || callPc(ctx, { ...item, metadata: meta })
     || !!effectiveLight({ ...item, metadata: meta }, ctx?.lighting);
 }
@@ -251,7 +277,7 @@ function managed(item, meta, ctx) {
 // LIGHT_BASE_KEY (the first build, 2.305.0) -> VISION_KEY, once (handoff §3g). A token that
 // already has a profile only loses the old key: its Smoke range is our own max() by now.
 function migrate(meta, ctx) {
-  if (meta[LIGHT_BASE_KEY] === undefined) return false;
+  if (meta[LIGHT_BASE_KEY] == null) return false; // missing, or released (lightui.js applyMeta's explicit null): nothing to migrate
   const base = meta[LIGHT_BASE_KEY];
   delete meta[LIGHT_BASE_KEY];
   if (isObj(meta[VISION_KEY]) || !isObj(base)) return true;
@@ -303,7 +329,8 @@ function adoptInto(meta, item, ctx, notes) {
       // else a torch; a 🔥 light it already has stays.
       const hand = meta[LIGHT_KEY];
       if (!isObj(hand) || !known(hand.kind)) {
-        if (lightingOf(ctx?.lighting).auto && autoKind(view)) delete meta[LIGHT_KEY];
+        // (the copy; a null stays null: it already reads as no light of ours)
+        if (lightingOf(ctx?.lighting).auto && autoKind(view)) { if (meta[LIGHT_KEY] != null) delete meta[LIGHT_KEY]; }
         else meta[LIGHT_KEY] = { kind: autoKind(view) || "torch" }; // the look by its name
       }
       out.isTorch = meta[K("isTorch")];
@@ -333,7 +360,7 @@ function adoptInto(meta, item, ctx, notes) {
     else if (n !== null && (field === "sight" || n > 0)) dm[field] = n;
     out[k] = v;
   }
-  if (meta[K("isTorch")] === undefined) delete out.isTorch;
+  if (meta[K("isTorch")] == null) delete out.isTorch; // missing, or an explicit null (released): the same
   else if (out.isTorch === undefined) out.isTorch = meta[K("isTorch")]; // ours from now (never on a token)
   meta[VISION_KEY] = { dm, out };
 }
@@ -364,11 +391,19 @@ export const LIGHT_PART = [LIGHT_KEY, SPELL_LIGHT_KEY, LIGHT_BASE_KEY, VISION_KE
   ...ENABLE_DEFAULTS.map(([k]) => K(k))];
 
 // Copy the light part of `next` (planItem's answer) onto `meta` (an Owlbear draft's metadata), so
-// the other keys on the draft (Stat Bubbles' HP, a WHO mark) stay as they are now.
+// the other keys on the draft (Stat Bubbles' HP, a WHO mark) stay as they are now. Every writer
+// that reaches a draft calls this: fx/lightwriter.js writeNow and the leader pass (R1 on every GM
+// copy), and fx/lightjobs.js. NEVER a deleted key (see the top of this file): a key `next` drops
+// (missing or null) is written as an explicit null, and only where the draft holds a value now,
+// so a token that never had the key is untouched; a key whose value is already the same is left
+// alone (Owlbear is asked for nothing). A second pass over its own result changes nothing.
 export function writeLightPart(meta, next) {
+  if (!isObj(meta)) return meta;
   for (const k of LIGHT_PART) {
-    if (next?.[k] === undefined) delete meta[k];
-    else meta[k] = clone(next[k]);
+    const v = next?.[k];
+    if (v === undefined || v === null) {
+      if (meta[k] !== undefined && meta[k] !== null) meta[k] = null;
+    } else if (stable(meta[k]) !== stable(v)) meta[k] = clone(v);
   }
   return meta;
 }
@@ -408,6 +443,7 @@ export function planItem(item, ctx = {}, notes = null) {
   }
   const keep = canonDm(dm, view, ctx);
   if (Object.keys(keep).length || Object.keys(out).length) meta[VISION_KEY] = { dm: keep, out };
+  else if (item.metadata[VISION_KEY] === null) meta[VISION_KEY] = null; // released: null is no profile, kept (never a removed key)
   else delete meta[VISION_KEY];
   return stable(item.metadata) === stable(meta) ? null : meta;
 }
@@ -421,12 +457,20 @@ export function adoptEdits(item, ctx = {}, notes = null) {
   adoptInto(meta, item, ctx, notes);
   if (isObj(meta[VISION_KEY])) {
     const p = profileOf(meta);
-    if (!Object.keys(p.dm).length && !Object.keys(p.out).length && !isObj(item.metadata[VISION_KEY])) delete meta[VISION_KEY];
+    if (!Object.keys(p.dm).length && !Object.keys(p.out).length && !isObj(item.metadata[VISION_KEY])) {
+      if (item.metadata[VISION_KEY] === null) meta[VISION_KEY] = null; // released: kept null, as planItem
+      else delete meta[VISION_KEY];
+    }
   }
   return stable(item.metadata) === stable(meta) ? null : meta;
 }
 
 // ---- the UI's only ways to change the inputs (mutate and return `meta`, an Owlbear draft's) ----
+
+// A cleared key: an explicit null where it holds a value, never a deleted key, so these setters
+// are safe on a draft too (the callers give them copies today: writeNow's plan, lightjobs.js
+// planned, lightui.js planWrite). A token that never had the key is left as it is.
+const clearKey = (meta, k) => { if (meta[k] !== undefined && meta[k] !== null) meta[k] = null; };
 
 // The DM's light: a SOURCES kind, "none" (put out: a tombstone), or null (back to the prop's own
 // light, or none). Unknown kinds count as null.
@@ -434,7 +478,7 @@ export function setLight(meta, kind) {
   if (!isObj(meta)) return meta;
   if (kind === "none") meta[LIGHT_KEY] = { kind: "none" };
   else if (known(kind)) meta[LIGHT_KEY] = { kind };
-  else delete meta[LIGHT_KEY];
+  else clearKey(meta, LIGHT_KEY);
   return meta;
 }
 
@@ -442,7 +486,7 @@ export function setLight(meta, kind) {
 export function setSpellLight(meta, spell) {
   if (!isObj(meta)) return meta;
   if (isObj(spell) && known(spell.kind)) meta[SPELL_LIGHT_KEY] = { kind: spell.kind, magic: spell.magic ?? null };
-  else delete meta[SPELL_LIGHT_KEY];
+  else clearKey(meta, SPELL_LIGHT_KEY);
   return meta;
 }
 
@@ -514,13 +558,14 @@ export function applyLight(meta, change = {}, { pc = false, secret = false, laye
   return meta;
 }
 
-// Would applyLight() change this token's metadata? (An empty change: never.)
+// Would applyLight() change this token's metadata? (An empty change: never.) A null key reads as
+// missing, before and after.
 export function lightChanges(meta, change, opts) {
   if (!isObj(change) || (change.hand === undefined && change.spell === undefined)) return false;
-  const now = {};
-  for (const k of LIGHT_PART) if (meta?.[k] !== undefined) now[k] = meta[k];
+  const held = (m) => Object.fromEntries(LIGHT_PART.filter((k) => m?.[k] !== undefined && m[k] !== null).map((k) => [k, m[k]]));
+  const now = held(meta);
   const after = applyLight(clone(now), change, opts);
-  return stable(now) !== stable(after);
+  return stable(now) !== stable(held(after));
 }
 
 // ---- is a token secret? ----
