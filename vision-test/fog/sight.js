@@ -38,10 +38,10 @@
 // FOG_LOCAL_KEY {kind: "sight", key, sig, host}) only on its first sync after a clear(), a
 // forget() (the scene closed: Owlbear dropped them) or a failed write; fog.js retries a failure.
 
-import { FOG_LOCAL_KEY } from "../keys.js?v=222aeb9";
-import { LIT_SIGHT, SELF_SIGHT, effectiveLight, visionOf } from "../fx/lightmeta.js?v=222aeb9";
-import { farLight } from "../fx/darkness.js?v=222aeb9";
-import { centreOf, mapAt } from "../views.js?v=222aeb9";
+import { FOG_LOCAL_KEY } from "../keys.js?v=af4de9c";
+import { LIT_SIGHT, SELF_SIGHT, effectiveLight, visionOf } from "../fx/lightmeta.js?v=af4de9c";
+import { farLight, lightsFor } from "../fx/darkness.js?v=af4de9c";
+import { centreOf, mapAt } from "../views.js?v=af4de9c";
 
 export const SIGHT_Z = 0;
 // A hard edge: Smoke's default for a seer (BSConstants FALLOFFDEFAULT "0"). buildLight's own
@@ -61,14 +61,16 @@ const safe = (f, dflt = null) => { try { return f(); } catch { return dflt; } };
 
 // How far this PC sees, in feet. ☀/🌒 where it stands: its sight (everything in line of sight, or
 // the DM's limit). 🌑: the farthest of its darkvision, its own light and the far edge of the
-// farthest public light (vctx.lights), at least SELF_SIGHT, at most LIT_SIGHT. vctx: fx/lightwriter.js
-// planCtx (the darkness regions, the lights, pxPerFt, senses, lighting).
+// farthest public light ON ITS OWN MAP (fx/darkness.js lightsFor: a light on another map is behind
+// that map's edge wall, so it never counts), at least SELF_SIGHT, at most LIT_SIGHT. vctx:
+// fx/lightwriter.js planCtx (the darkness regions, the lights with their maps, the map rectangles,
+// pxPerFt, senses, lighting).
 export function sightReachFt(item, vctx = {}) {
   const v = visionOf(item, vctx || {});
   if (v.where !== "dark") return v.sight;
   const light = safe(() => effectiveLight(item, vctx?.lighting));
   const reach = light && light.reach > 0 ? light.reach : 0;
-  return Math.min(LIT_SIGHT, Math.max(SELF_SIGHT, v.dark, reach, farLight(item, vctx?.lights, vctx?.pxPerFt)));
+  return Math.min(LIT_SIGHT, Math.max(SELF_SIGHT, v.dark, reach, farLight(item, lightsFor(item, vctx || {}), vctx?.pxPerFt)));
 }
 
 // Attached everywhere but a GM screen on pass "B" (contract section 8; "B" when unset).

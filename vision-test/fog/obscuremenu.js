@@ -22,7 +22,7 @@
 //
 // Every write is whole and explicit; nothing here ever deletes a key.
 
-import { obscureValue } from "../rules2024.js?v=222aeb9";
+import { obscureValue } from "../rules2024.js?v=af4de9c";
 
 export const OBSCURE_MENU = Object.freeze({
   light: "dnd-npc/fog/obscure-light", heavy: "dnd-npc/fog/obscure-heavy",

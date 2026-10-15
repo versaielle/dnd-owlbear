@@ -21,6 +21,8 @@
 //   pcViews(snap)       one record per PC that sees anything: {id, mapId, map, c, ft, reachPx, dark}
 //                       (what cellsSeen and seenShapes both start from, so the squares and the shapes
 //                       always agree about where a PC stands and how far it sees)
+//   litLightsOn(snap, mapId)  the public lights on map mapId only (fx/darkness.js lightsOnMap): a light
+//                       on another map is behind that map's edge wall, so it lights nothing a PC here sees
 //   darkReachFt(item, vctx), sightBlockersOf(snap, mapId), litLights(vctx)   STAND-INS for Phase 2's
 //                       fog/sight.js darkReachFt and fog/walls.js sightBlockersOf (F1): today's rules,
 //                       moved here from fog/seen.js (which re-exports darkReachFt). The integrator (I2)
@@ -78,13 +80,14 @@
 // after the clean. Written only when the area grew by more than MIN_GROW of a square. Over
 // EXPLORED_MAX_BYTES: cleaned harder (3, 6, then 12 px); still over, nothing is written (capped).
 
-import { EXPLORED_KEY } from "../keys.js?v=222aeb9";
-import { SELF_SIGHT, effectiveLight, visionOf } from "../fx/lightmeta.js?v=222aeb9";
-import { inCone } from "../rules2024.js?v=222aeb9";
-import { centreOf, mapAt } from "../views.js?v=222aeb9";
-import { edgeWalls, segmentsOf } from "./lines.js?v=222aeb9";
-import { sightBlockers, visibilityPolygon } from "./los.js?v=222aeb9";
-import { sightReachFt } from "./sight.js?v=222aeb9";
+import { EXPLORED_KEY } from "../keys.js?v=af4de9c";
+import { SELF_SIGHT, effectiveLight, visionOf } from "../fx/lightmeta.js?v=af4de9c";
+import { lightsOnMap } from "../fx/darkness.js?v=af4de9c";
+import { inCone } from "../rules2024.js?v=af4de9c";
+import { centreOf, mapAt } from "../views.js?v=af4de9c";
+import { edgeWalls, segmentsOf } from "./lines.js?v=af4de9c";
+import { sightBlockers, visibilityPolygon } from "./los.js?v=af4de9c";
+import { sightReachFt } from "./sight.js?v=af4de9c";
 
 export const VERSION = 1;
 // Arcs: every chord within this many px of the true circle (about 28 points round a 5 ft circle at 150
@@ -338,6 +341,10 @@ export function sightBlockersOf(snap, mapId) {
 // anything.
 export const litLights = (vctx) => (Array.isArray(vctx?.lights) ? vctx.lights : [])
   .filter((l) => l && finite(l.x, l.y, l.reach) && l.reach > 0);
+// ...of them, the ones on map `mapId` (each light's mapId from darknessCtx, else the topmost map of
+// snap.rects under it): a PC on that map sees by these only (2026-10-14: a torch on another map lit
+// nothing there, yet its circle overlapping this map's rectangle would have been stored as explored).
+export const litLightsOn = (snap, mapId) => lightsOnMap(litLights(snap?.vctx), mapId, Array.isArray(snap?.rects) ? snap.rects : []);
 
 // One record per PC (snap.pcs, each once) that sees anything: {id, mapId, map (snap.maps' entry), c
 // (its centre, scene px), ft and reachPx (sightReachFt), dark: {ft: darkReachFt} | null (null unless it
@@ -454,7 +461,7 @@ export function seenShapes(snap, clip, { arcPx = ARC_ERROR_PX } = {}) {
   const out = new Map();
   if (!clipOk(clip)) return out;
   const pxPerFt = snap?.grid?.pxPerFt;
-  const lights = litLights(snap?.vctx);
+  const lightsOf = new Map(); // mapId -> the public lights on it (litLightsOn, worked out once per map)
   const blockers = new Map(); // mapId -> its sight blockers (worked out once per map)
   const per = new Map(); // mapId -> {rect, size, paths}
   for (const v of pcViews(snap)) {
@@ -462,6 +469,7 @@ export function seenShapes(snap, clip, { arcPx = ARC_ERROR_PX } = {}) {
     const size = rectSize(rect);
     if (!size) continue;
     if (!blockers.has(v.mapId)) blockers.set(v.mapId, sightBlockersOf(snap, v.mapId));
+    if (!lightsOf.has(v.mapId)) lightsOf.set(v.mapId, litLightsOn(snap, v.mapId));
     const poly = visibilityPolygon(v.c, blockers.get(v.mapId), v.reachPx, { arcSteps: arcSteps(v.reachPx, arcPx) });
     if (poly.length < 3) continue;
     let paths = [positive(clip, toPath(toLocal(poly, rect)))].filter((p) => p.length >= 3);
@@ -470,7 +478,7 @@ export function seenShapes(snap, clip, { arcPx = ARC_ERROR_PX } = {}) {
     // circles of one radius would only add points where they cross).
     if (v.dark && paths.length && v.dark.ft * pxPerFt < v.reachPx - 0.5) {
       const lit = [circlePath(v.c.x - rect.x0, v.c.y - rect.y0, v.dark.ft * pxPerFt, arcPx),
-        ...lights.map((l) => lightPath(l, rect, pxPerFt, arcPx))].filter((p) => p.length >= 3).map((p) => positive(clip, p));
+        ...lightsOf.get(v.mapId).map((l) => lightPath(l, rect, pxPerFt, arcPx))].filter((p) => p.length >= 3).map((p) => positive(clip, p));
       paths = run(clip, "ctIntersection", paths, "pftNonZero", lit, "pftNonZero");
     }
     if (!paths.length) continue;

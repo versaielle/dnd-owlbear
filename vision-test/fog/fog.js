@@ -76,18 +76,18 @@
 // the answerer watch, at most every SMOKE_CHECK_MS (one OBR.scene.local.getItems), never on a
 // player's screen. Smoke's leftover shared data (its sceneId, a token's hasVision) never counts.
 
-import { FOG_KEY, FOG_LOCAL_KEY, FOG_LOOK_KEY, PARTY_KEY, PARTY_SENSES_KEY, RULES_KEY, SCENE_LIGHTING_KEY, SMOKE, WEATHER_KEY } from "../keys.js?v=222aeb9";
-import { planCtx } from "../fx/lightwriter.js?v=222aeb9";
-import { readGrid } from "../fx/darkness.js?v=222aeb9";
-import { mapRects } from "../views.js?v=222aeb9";
-import { doorEdit, drift, occupiedMaps, readLines } from "./lines.js?v=222aeb9";
-import { mapStates } from "./maps.js?v=222aeb9";
-import { createSight } from "./sight.js?v=222aeb9";
-import { createWalls } from "./walls.js?v=222aeb9";
-import { ANSWERER_SETTLE_MS, createDoors } from "./doors.js?v=222aeb9";
-import { createSeen } from "./seen.js?v=222aeb9";
-import { createMemory } from "./memory.js?v=222aeb9";
-import { createLiveLog, lineText } from "./livelog.js?v=222aeb9";
+import { FOG_KEY, FOG_LOCAL_KEY, FOG_LOOK_KEY, PARTY_KEY, PARTY_SENSES_KEY, RULES_KEY, SCENE_LIGHTING_KEY, SMOKE, WEATHER_KEY } from "../keys.js?v=af4de9c";
+import { planCtx } from "../fx/lightwriter.js?v=af4de9c";
+import { readGrid } from "../fx/darkness.js?v=af4de9c";
+import { mapRects } from "../views.js?v=af4de9c";
+import { doorEdit, drift, occupiedMaps, readLines } from "./lines.js?v=af4de9c";
+import { mapStates } from "./maps.js?v=af4de9c";
+import { createSight } from "./sight.js?v=af4de9c";
+import { createWalls } from "./walls.js?v=af4de9c";
+import { ANSWERER_SETTLE_MS, createDoors } from "./doors.js?v=af4de9c";
+import { createSeen } from "./seen.js?v=af4de9c";
+import { createMemory } from "./memory.js?v=af4de9c";
+import { createLiveLog, lineText } from "./livelog.js?v=af4de9c";
 
 export { lineText }; // a live-log line as text (background.js sends them to the GM box)
 

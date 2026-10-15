@@ -19,9 +19,9 @@
 // checked with the bridge again and dropped when the bridge has none for us.
 // This module listens to one channel itself: LOCAL_ASK from its popover ({need: "state"} /
 // {need: "aim", key} / {need: "withdraw", req}), and answers with LOCAL_STATE.
-import { CH as DEFAULT_CH, LS_ROSTER } from "../aim/consts.js?v=222aeb9";
-import { logText } from "../aim/geometry.js?v=222aeb9";
-import { specFor } from "./view.js?v=222aeb9";
+import { CH as DEFAULT_CH, LS_ROSTER } from "../aim/consts.js?v=af4de9c";
+import { logText } from "../aim/geometry.js?v=af4de9c";
+import { specFor } from "./view.js?v=af4de9c";
 
 const STATUSES = ["waiting", "accepted", "declined", "told", "error"];
 // Which DM decisions can follow which (anything else is a late or repeated message).

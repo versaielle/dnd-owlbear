@@ -32,18 +32,20 @@
 //                        Lighting list's rows): never in every pass's snapshot
 //   mapStates({items, rects, grid, sceneMeta})   one entry per map image in rects (topmost first):
 //                        {id, item, rect, grid, name, building, buildingKey, kind, painted, remembered,
-//                        darkness, override, mode, auto, hidden}. kind: the DM's MAP_FOG_KEY.kind, else
-//                        paintedKind, else "outdoor". remembered: any map of the same building (by
-//                        key) says MEMORY_KEY.remembered true. darkness: fog/mode.js resolveDarkness of
-//                        the map's own MAP_DARKNESS_KEY and the scene's. override: MAP_FOG_KEY.mode
-//                        unless "auto" (else null; never "lit"). auto: the mode without the override.
-//                        mode: the one drawn. hidden: the DM hid the map image (visible false): nothing
-//                        drawn for it
+//                        darkness, darkLocked, override, mode, auto, hidden}. kind: the DM's
+//                        MAP_FOG_KEY.kind, else paintedKind, else "outdoor". remembered: any map of the
+//                        same building (by key) says MEMORY_KEY.remembered true. darkness: fog/mode.js
+//                        resolveDarkness of the map's own MAP_DARKNESS_KEY and the scene's. darkLocked:
+//                        that darkness is 🌑, so the map is fog only (fog/mode.js darkLocked). override:
+//                        MAP_FOG_KEY.mode unless "auto" (else null; never "lit"), as stored even on a 🌑
+//                        map (it applies again once the map is 🌒 or ☀). auto: the mode without the
+//                        override. mode: the one drawn (fog/mode.js fogMode: "fog" on 🌑 whatever the
+//                        override). hidden: the DM hid the map image (visible false): nothing drawn for it
 
-import { MAP_DARKNESS_KEY, MAP_FOG_KEY, MAP_INFO_KEY, MEMORY_KEY, SCENE_LIGHTING_KEY, SEEN_KEY } from "../keys.js?v=222aeb9";
-import { MODES, drawnMode, fogMode, resolveDarkness } from "./mode.js?v=222aeb9";
-import { createBits, encode, load } from "./bitset.js?v=222aeb9";
-import { readExplored } from "./shapes.js?v=222aeb9";
+import { MAP_DARKNESS_KEY, MAP_FOG_KEY, MAP_INFO_KEY, MEMORY_KEY, SCENE_LIGHTING_KEY, SEEN_KEY } from "../keys.js?v=af4de9c";
+import { MODES, darkLocked, drawnMode, fogMode, resolveDarkness } from "./mode.js?v=af4de9c";
+import { createBits, encode, load } from "./bitset.js?v=af4de9c";
+import { readExplored } from "./shapes.js?v=af4de9c";
 
 export const FOG_MODES = ["auto", ...MODES];
 export const MAP_KINDS = ["interior", "outdoor"];
@@ -129,6 +131,7 @@ export function mapStates({ items = [], rects = [], grid = null, sceneMeta = {} 
   return base.map(({ own, ...m }) => {
     const rem = own || (m.buildingKey != null && remembered.has(m.buildingKey));
     const auto = fogMode({ darkness: m.darkness, kind: m.kind, remembered: rem, override: null });
-    return { ...m, remembered: rem, auto, mode: m.override ?? auto };
+    const mode = fogMode({ darkness: m.darkness, kind: m.kind, remembered: rem, override: m.override });
+    return { ...m, darkLocked: darkLocked(m.darkness), remembered: rem, auto, mode };
   });
 }

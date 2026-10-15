@@ -24,11 +24,15 @@
 //   mapRows({items, rects, grid, sceneMeta})   (rects: views.js mapRects, worked out when left out)
 //                        per map image (fog/maps.js mapStates, topmost first):
 //                        {id, name, building, buildingKey, kind, kindFrom, painted, mode, auto, override,
-//                        remembered, canRemember, seen, explored, grid, darkness, hidden, floors}. seen:
+//                        remembered, canRemember, seen, explored, grid, darkness, darkLocked, hidden,
+//                        floors}. darkLocked: the map is 🌑, so fog only (fog/mode.js darkLocked). seen:
 //                        the old squares' count (never drawn); explored: the smooth memory's share of
 //                        the map in thousandths (EXPLORED_KEY's a, 0-1000; 0 when missing, junk or of
 //                        another size). Pure
-//   chipsFor(row)        what the row's chips say and do: {modes, kinds, forget, remember} (pure)
+//   chipsFor(row)        what the row's chips say and do: {modes, kinds, forget, remember} (pure). On a
+//                        🌑 map (row.darkLocked) the remembered and clear chips are disabled ("dark map:
+//                        fog only"); a stored override stays stored, and the chip of it stays on
+//   DARK_ONLY_TITLE      that tooltip
 //   setMapFog(OBR, id, {mode, kind})        -> {wrote, value}: MAP_FOG_KEY whole (a "lit" asked for
 //                        is written as "dim")
 //   forgetExplored(OBR, id, dpi)            -> {wrote, cells, keys}: SEEN_KEY's empty set and
@@ -41,13 +45,13 @@
 // The automatic threshold (2 visits plus 10 active minutes, spec section 7) comes after Thursday;
 // it will write the same MEMORY_KEY setRemembered writes, so nothing here changes.
 
-import { EXPLORED_KEY, FOG_LOOK_KEY, MAP_FOG_KEY, MEMORY_KEY, SEEN_KEY } from "../keys.js?v=222aeb9";
-import { mapRects } from "../views.js?v=222aeb9";
-import { count } from "./bitset.js?v=222aeb9";
-import { FOG_MODES, MAP_KINDS, buildingOf, emptySeen, exploredFor, mapFogOf, mapGrid, mapStates, paintedKind, seenOf } from "./maps.js?v=222aeb9";
-import { DEFAULT_SHADE, SHADES, shadeOf } from "./memory.js?v=222aeb9";
-import { drawnMode } from "./mode.js?v=222aeb9";
-import { emptyExplored } from "./shapes.js?v=222aeb9";
+import { EXPLORED_KEY, FOG_LOOK_KEY, MAP_FOG_KEY, MEMORY_KEY, SEEN_KEY } from "../keys.js?v=af4de9c";
+import { mapRects } from "../views.js?v=af4de9c";
+import { count } from "./bitset.js?v=af4de9c";
+import { FOG_MODES, MAP_KINDS, buildingOf, emptySeen, exploredFor, mapFogOf, mapGrid, mapStates, paintedKind, seenOf } from "./maps.js?v=af4de9c";
+import { DEFAULT_SHADE, SHADES, shadeOf } from "./memory.js?v=af4de9c";
+import { drawnMode } from "./mode.js?v=af4de9c";
+import { emptyExplored } from "./shapes.js?v=af4de9c";
 
 export { DEFAULT_SHADE, SHADES, shadeOf };
 export const FORGET_ARM_MS = 5000;
@@ -59,6 +63,9 @@ export const MODE_WORDS = {
   clear: { label: "clear", about: "The whole map shown, dimmed at the memory shade; creatures show only where a PC's sight reaches them" },
 };
 export const MODE_CHIPS = ["auto", "fog", "dim", "clear"].map((mode) => ({ mode, ...MODE_WORDS[mode] }));
+// 🌑 locks a map to fog (decided 2026-10-14, "Never: lock 🌑 to fog"): these chips are greyed there.
+export const DARK_ONLY_TITLE = "dark map: fog only";
+const DARK_LOCKED_MODES = ["dim", "clear"];
 export const modeWord = (mode) => MODE_WORDS[drawnMode(mode)]?.label ?? String(mode ?? "");
 
 export const SHADE_CHIPS = [
@@ -106,25 +113,34 @@ export function mapRows({ items = [], rects, grid = null, sceneMeta = {} } = {})
       kind: m.kind, kindFrom: k.kindFrom, painted: m.painted,
       mode: m.mode, auto: m.auto, override: m.override, remembered: m.remembered,
       canRemember: m.kind === "interior" && !!m.buildingKey,
-      seen: bits ? count(bits) : 0, explored: exploredFor(m).a, grid: m.grid, darkness: m.darkness, hidden: m.hidden,
+      seen: bits ? count(bits) : 0, explored: exploredFor(m).a, grid: m.grid, darkness: m.darkness,
+      darkLocked: m.darkLocked === true, hidden: m.hidden,
       floors: m.buildingKey ? floors.get(m.buildingKey) : 0,
     };
   });
 }
 
-// What the row's chips say. modes: [{mode, label, on, title}]; kinds: [{kind (the value written:
+// What the row's chips say. modes: [{mode, label, on, title, disabled}] (disabled: remembered and clear
+// on a 🌑 map, row.darkLocked; the stored override's chip stays on there, its tooltip saying it's kept
+// for when the map is 🌒 or ☀); kinds: [{kind (the value written:
 // "interior" | "outdoor" | null), label, on, title}] (on every map; "as painted" only on a painted
 // map the DM changed); forget: {label, a, pct, disabled, title} (a: the explored share in
 // thousandths; greyed when nothing is explored); remember: null unless an interior with a building,
 // else {on (what a tap writes), label, title}.
 export function chipsFor(row) {
   const override = row.override == null ? null : drawnMode(row.override);
-  const modes = MODE_CHIPS.map((c) => ({
-    mode: c.mode,
-    label: c.mode === "auto" ? `auto (→ ${modeWord(row.auto)})` : c.label,
-    on: c.mode === "auto" ? !override : override === c.mode,
-    title: c.about,
-  }));
+  const locked = row.darkLocked === true;
+  const modes = MODE_CHIPS.map((c) => {
+    const on = c.mode === "auto" ? !override : override === c.mode;
+    const disabled = locked && DARK_LOCKED_MODES.includes(c.mode);
+    return {
+      mode: c.mode,
+      label: c.mode === "auto" ? `auto (→ ${modeWord(row.auto)})` : c.label,
+      on,
+      title: disabled ? `${DARK_ONLY_TITLE}${on ? " (your pick is kept: it's back if the map is 🌒 or ☀)" : ""}` : c.about,
+      disabled,
+    };
+  });
   // On EVERY map (review of B4: a painted map has to be changeable too: a building's outdoor grounds
   // painted with an entry and stairs count as a building floor). The outdoor chip writes
   // null (the default) on a map nobody painted, "outdoor" on a painted one; "as painted" only once

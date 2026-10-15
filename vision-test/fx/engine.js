@@ -18,12 +18,12 @@
 // panel's own split); ONE 30 Hz timer moves every live effect's progress in ONE batched update;
 // every item is deleted at its deadline whatever happened to its add or updates, and a sweep
 // catches anything left behind; a screen never has more than 12 live effects (6 in lite).
-import { ALIASES, ARCHETYPES, PALETTE, SPEC, TIMING, colors, defaultDur, defaultHit, hostFor, maxDur, uniformValues } from "./archetypes.js?v=222aeb9";
-import { fallbackItem } from "./fallback.js?v=222aeb9";
-import { numberItem } from "./numbers.js?v=222aeb9";
-import { finite, footprint, fromBounds, gridOf, rotate } from "./place.js?v=222aeb9";
-import { customUniforms, fillUniforms, shaderFor } from "./shaders.js?v=222aeb9";
-import { createZones, setZoneBuilder } from "./zones.js?v=222aeb9";
+import { ALIASES, ARCHETYPES, PALETTE, SPEC, TIMING, colors, defaultDur, defaultHit, hostFor, maxDur, uniformValues } from "./archetypes.js?v=af4de9c";
+import { fallbackItem } from "./fallback.js?v=af4de9c";
+import { numberItem } from "./numbers.js?v=af4de9c";
+import { finite, footprint, fromBounds, gridOf, rotate } from "./place.js?v=af4de9c";
+import { customUniforms, fillUniforms, shaderFor } from "./shaders.js?v=af4de9c";
+import { createZones, setZoneBuilder } from "./zones.js?v=af4de9c";
 
 export const FX_KEY = "dnd-npc/fx"; // on every one-shot item: {until} (wall-clock ms), for the sweep
 export const CAP = { full: 12, lite: 6 };
@@ -100,7 +100,7 @@ export function createFx(api = {}, ctx = {}) {
   const ready = (async () => {
     const need = ["buildEffect", "buildShape", "buildText"];
     if (api.OBR && need.every((k) => typeof api[k] === "function")) return api;
-    const sdk = await import("../obr-sdk.js?v=222aeb9");
+    const sdk = await import("../obr-sdk.js?v=af4de9c");
     return { OBR: sdk.default, buildEffect: sdk.buildEffect, buildShape: sdk.buildShape, buildText: sdk.buildText,
       buildLabel: sdk.buildLabel, buildImage: sdk.buildImage, Math2: sdk.Math2, MathM: sdk.MathM, ...api };
   })().then((a) => {
@@ -117,8 +117,8 @@ export function createFx(api = {}, ctx = {}) {
     return r.ok ? r.json() : null;
   });
   (async () => {
-    try { const p = await loadJson(new URL("./palette.json?v=222aeb9", import.meta.url).href); if (p && typeof p === "object") palette = { ...PALETTE, ...p }; } catch (e) { /* built-in copy */ }
-    try { const t = await loadJson(new URL("./timing.json?v=222aeb9", import.meta.url).href); if (t && typeof t === "object") timing = { ...TIMING, ...t }; } catch (e) { /* built-in copy */ }
+    try { const p = await loadJson(new URL("./palette.json?v=af4de9c", import.meta.url).href); if (p && typeof p === "object") palette = { ...PALETTE, ...p }; } catch (e) { /* built-in copy */ }
+    try { const t = await loadJson(new URL("./timing.json?v=af4de9c", import.meta.url).href); if (t && typeof t === "object") timing = { ...TIMING, ...t }; } catch (e) { /* built-in copy */ }
   })();
 
   const val = (v) => (typeof v === "function" ? v() : v);

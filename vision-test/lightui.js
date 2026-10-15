@@ -17,11 +17,11 @@
 // with the writer's ctx, in ONE write (fx/lightwriter.js writeNow): the same pure function on the
 // same inputs as the leader's writer, so a tap writes once and the writer's next pass plans
 // nothing for that token.
-import * as LM from "./fx/lightmeta.js?v=222aeb9";
-import { planCtx } from "./fx/lightwriter.js?v=222aeb9";
-import { SOURCES } from "./fx/lights.js?v=222aeb9";
-import { CARRIER_KEY, LIGHT_KEY, SCENE_LIGHTING_KEY, SMOKE, SPELL_LIGHT_KEY, VISION_KEY } from "./keys.js?v=222aeb9";
-import { pcName, tokenLabel } from "./fx/pcs.js?v=222aeb9";
+import * as LM from "./fx/lightmeta.js?v=af4de9c";
+import { planCtx } from "./fx/lightwriter.js?v=af4de9c";
+import { SOURCES } from "./fx/lights.js?v=af4de9c";
+import { CARRIER_KEY, LIGHT_KEY, SCENE_LIGHTING_KEY, SMOKE, SPELL_LIGHT_KEY, VISION_KEY } from "./keys.js?v=af4de9c";
+import { pcName, tokenLabel } from "./fx/pcs.js?v=af4de9c";
 
 // The scene's (and each map's) darkness, as docs/lights-darkness-spec.md says it: darkness comes
 // from light, per point. The 🔥 Lighting list's chips (lightpanel.js) say these.
@@ -156,7 +156,10 @@ export function describe(item, ctx) {
 // ---- the 🔥 Lighting list ----
 
 // {pcs: [...], lit: [...]} for the scene's items: every PC token (roots only: a ring under a mini
-// follows its parent) with its sight, darkvision (and the sheet's) and light; every other item with
+// follows its parent) with its sight, darkvision (and the sheet's) and light (seesFt: how far the fog
+// opens for it, fx/lightmeta.js seerReachFt, the same number as its sight light: on 🌑 ground its
+// darkvision, its own light or the far edge of a light on its own map; where: the darkness under it);
+// every other item with
 // a light (the DM's, a spell's, one lit by its name, an adopted Smoke torch), by name.
 export function lightingRows(items, ctx) {
   const pcs = [], lit = [];
@@ -170,7 +173,7 @@ export function lightingRows(items, ctx) {
       const dm = i.metadata?.[VISION_KEY]?.dm || {};
       const v = visionOf(i, ctx);
       pcs.push({ id: i.id, name: nameOf(i, ctx), sight: dm.sight ?? null, dark: dm.dark ?? null,
-                 sheetDark: ctx.senses(i)?.dark ?? null, seesFt: v.sight, darkFt: v.dark,
+                 sheetDark: ctx.senses(i)?.dark ?? null, seesFt: LM.seerReachFt(i, ctx, v), darkFt: v.dark, where: v.where,
                  kind: known(hand) ? hand : hand === "none" ? "none" : "", eff });
     } else if (eff || hand === "none") {
       lit.push({ id: i.id, name: nameOf(i, ctx), kind: known(hand) ? hand : hand === "none" ? "none" : "", eff,

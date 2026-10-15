@@ -32,13 +32,13 @@
 // with the lights writer's own ctx, in one write (fx/lightwriter.js writeNow): the writer's next
 // pass plans nothing more. Any control here that changes an input takes a scene released to
 // Smoke back (SCENE_LIGHTING_KEY.managed true); "Release lights to Smoke" sets it false.
-import { FOG_KEY, MAP_DARKNESS_KEY, PARTY_KEY, SCENE_LIGHTING_KEY } from "./keys.js?v=222aeb9";
-import { SOURCES } from "./fx/lights.js?v=222aeb9";
-import { isMap, mapDarkness, readGrid, sceneDarkness } from "./fx/darkness.js?v=222aeb9";
-import { writeNow } from "./fx/lightwriter.js?v=222aeb9";
-import { cleanParty } from "./gather.js?v=222aeb9";
+import { FOG_KEY, MAP_DARKNESS_KEY, PARTY_KEY, SCENE_LIGHTING_KEY } from "./keys.js?v=af4de9c";
+import { SOURCES } from "./fx/lights.js?v=af4de9c";
+import { isMap, mapDarkness, readGrid, sceneDarkness } from "./fx/darkness.js?v=af4de9c";
+import { writeNow } from "./fx/lightwriter.js?v=af4de9c";
+import { cleanParty } from "./gather.js?v=af4de9c";
 import { DARKNESS, applyMeta, autoKind, carriers, describe, editFor, lightingOf, lightingRows, managed, releaseItem,
-         screenLine, screenWarnings, uiCtx } from "./lightui.js?v=222aeb9";
+         screenLine, screenWarnings, uiCtx } from "./lightui.js?v=af4de9c";
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 const COMMON = ["candle", "torch", "lamp", "hooded_lantern", "brazier"].filter((k) => SOURCES[k]);
@@ -46,6 +46,13 @@ export const SWITCH_WAIT_MS = 3000; // the background didn't answer the 🌫 tap
 // Darkness comes from light (docs/lights-darkness-spec.md): the scene's, and each map's own
 // (lightui.js DARKNESS: the same words as the 🔥 menu).
 const DARK_CHIPS = DARKNESS;
+// The PC rows' "sees N ft" on 🌑 ground (fx/lightmeta.js seerReachFt). The fog opens a whole circle
+// that far round the PC (ruling (a): lit ground in line of sight is seen from the dark), so the unlit
+// ground inside it is blacked by our overlay only, and what is drawn above the overlay (Stat Bubbles'
+// HP bars) still shows there (review of dark-fix, 2026-10-14: the tooltip must not promise more).
+export const DARK_SEES_TITLE = "On dark ground: how far the fog opens all round it (its darkvision, its own light, or the far edge of a light on its own map)."
+  + " Lights on other maps never count. Unlit ground inside that circle is blacked by our overlay only, so a creature standing there"
+  + " can still show its HP bar: hide it until a light or darkvision reaches it";
 const short = (k) => (k === "hooded_lantern" ? "Lantern" : k === "brazier" ? "Brazier" : SOURCES[k]?.label || k);
 
 export const LIGHTING_CSS = `
@@ -197,15 +204,37 @@ export function startLighting(OBR, el, { build = "", ask = null } = {}) {
     return r.wrote.length;
   }
 
+  // 🌑 is fog only, and the DM's stored remembered or clear waits there (fog/mode.js fogMode): a
+  // darkness tap that lifts a map off 🌑 draws that pick again with no other prompt (review of
+  // dark-fix, 2026-10-14: a clear set on a dark map during the live test came back at moonrise). So
+  // such a tap says which maps' picks are drawn again, in the box and the 🪵 Live log. waitingPicks:
+  // the rows (while 🌫 Our fog is on) on 🌑 holding a stored remembered or clear, by id, as drawn now.
+  // Neither ever stops the darkness write: a failure here only leaves the line out.
+  const waitingPicks = () => {
+    try { return new Map(mapRowsNow().filter((r) => r.darkLocked && r.override && r.override !== "fog").map((r) => [r.id, r])); } catch { return new Map(); }
+  };
+  const drawnAgain = (before) => {
+    try {
+      return mapRowsNow().filter((r) => before.has(r.id) && !r.darkLocked && r.override === before.get(r.id).override)
+        .map((r) => ` · ${r.name || "Map"}: your ${word(r.override)} is drawn again (tap auto to drop it)`).join("");
+    } catch { return ""; }
+  };
+  // The darkness tap's line: logged too when a stored pick came back, else only said.
+  const darkSaid = (text, before) => {
+    const again = before.size ? drawnAgain(before) : "";
+    return again ? note(text + again, "warn") : say(text);
+  };
+
   async function setScene(patch) {
     if (!ready) return say("Open a scene first", "warn");
     const cur = curLighting();
+    const waiting = waitingPicks();
     const next = { ...cur, ...patch, managed: true };
     await OBR.scene.setMetadata({ [SCENE_LIGHTING_KEY]: next });
     const n = await replanAll();
     const d = DARK_CHIPS.find((x) => x.value === next.darkness);
-    say(`${d.icon} Scene ${d.label}${"auto" in patch ? ` · props ${next.auto ? "light themselves" : "stay as you set them"}` : ""}`
-      + (n ? ` · ${n} token(s) updated` : "") + (cur.managed ? "" : " · lights are ours again in this scene"));
+    darkSaid(`${d.icon} Scene ${d.label}${"auto" in patch ? ` · props ${next.auto ? "light themselves" : "stay as you set them"}` : ""}`
+      + (n ? ` · ${n} token(s) updated` : "") + (cur.managed ? "" : " · lights are ours again in this scene"), waiting);
     render();
   }
 
@@ -215,6 +244,7 @@ export function startLighting(OBR, el, { build = "", ask = null } = {}) {
   async function setMap(id, code) {
     if (!ready) return say("Open a scene first", "warn");
     const value = code || null;
+    const waiting = waitingPicks();
     await OBR.scene.items.updateItems([id], (drafts) => {
       for (const d of drafts) {
         if ((d.metadata?.[MAP_DARKNESS_KEY] ?? null) === value) continue; // already so (missing = as the scene)
@@ -227,7 +257,7 @@ export function startLighting(OBR, el, { build = "", ask = null } = {}) {
     const n = await replanAll();
     const m = items.find((i) => i.id === id);
     const d = DARK_CHIPS.find((x) => x.value === code);
-    say(`${m?.name || "Map"}: ${d ? `${d.icon} ${d.label}` : "as the scene"}${n ? ` · ${n} token(s) updated` : ""}${back ? " · lights are ours again in this scene" : ""}`);
+    darkSaid(`${m?.name || "Map"}: ${d ? `${d.icon} ${d.label}` : "as the scene"}${n ? ` · ${n} token(s) updated` : ""}${back ? " · lights are ours again in this scene" : ""}`, waiting);
     render();
   }
 
@@ -245,7 +275,9 @@ export function startLighting(OBR, el, { build = "", ask = null } = {}) {
   const mapRowsNow = () => (ready && mapUi && fogIsOn() ? mapUi.mapRows({ items, grid: sceneGrid, sceneMeta }) : []);
   const rowOf = (id) => mapRowsNow().find((r) => r.id === id) || null;
   const word = (mode) => (mapUi?.modeWord ? mapUi.modeWord(mode) : mode); // "dim" is said "remembered"
-  const modeSaid = (r) => (!r ? "" : r.override ? `${word(r.override)} (set by you)` : `auto → ${word(r.auto)}`);
+  const modeSaid = (r) => (!r ? "" : r.darkLocked && r.override && r.override !== "fog"
+    ? `fog (🌑 dark map: fog only; your ${word(r.override)} is kept for when it's 🌒 or ☀)`
+    : r.override ? `${word(r.override)} (set by you)` : `auto → ${word(r.auto)}`);
   // What a fog tap did: the box's one line, and the 🪵 Live log (this device's background logs it
   // with this screen's name, so every GM screen's log shows it).
   function note(text, cls = "ok") {
@@ -265,6 +297,11 @@ export function startLighting(OBR, el, { build = "", ask = null } = {}) {
     render();
   }
   const setFogMode = (row, mode) => fogWrite(async () => {
+    // 🌑 is fog only: a remembered or clear tap there (a chip drawn before the map went dark) writes nothing
+    const now = rowOf(row.id);
+    if (now?.darkLocked && (mode === "dim" || mode === "clear")) {
+      return say(`${row.name || "Map"}: ${mapUi.DARK_ONLY_TITLE ?? "dark map: fog only"} (nothing written)`, "warn");
+    }
     const r = await mapUi.setMapFog(OBR, row.id, { mode });
     await load();
     note(`${row.name || "Map"}: fog mode ${word(mode)}${r.wrote ? "" : " (already so)"} · now ${modeSaid(rowOf(row.id))}`);
@@ -314,7 +351,11 @@ export function startLighting(OBR, el, { build = "", ask = null } = {}) {
     const c = mapUi.chipsFor(row);
     const modes = document.createElement("div");
     modes.className = "chips fm";
-    for (const m of c.modes) modes.append(chip(m.label, m.on, m.title, () => setFogMode(row, m.mode)));
+    for (const m of c.modes) {
+      const b = chip(m.label, m.on, m.title, () => setFogMode(row, m.mode));
+      b.disabled = !!m.disabled; // 🌑: remembered and clear greyed ("dark map: fog only")
+      modes.append(b);
+    }
     const more = document.createElement("div");
     more.className = "chips fm";
     for (const k of c.kinds) more.append(chip(k.label, k.on, k.title, () => setFogKind(row, k.kind)));
@@ -519,7 +560,7 @@ export function startLighting(OBR, el, { build = "", ask = null } = {}) {
           const row = document.createElement("div");
           row.className = "row";
           const tags = fr ? [fr.kind === "interior" ? `🏠${fr.building ? ` ${fr.building}` : ""}` : "🌳 outdoor",
-            fr.remembered && "remembered", fr.hidden && "hidden: nothing drawn"].filter(Boolean) : [];
+            fr.remembered && "remembered", fr.darkLocked && "🌑 fog only", fr.hidden && "hidden: nothing drawn"].filter(Boolean) : [];
           row.innerHTML = `<span class="who">${esc(m.name || "Map")}</span>${tags.map((t) => `<span class="tag">${esc(t)}</span>`).join("")}`;
           const chips = document.createElement("div");
           chips.className = "chips";
@@ -553,7 +594,10 @@ export function startLighting(OBR, el, { build = "", ask = null } = {}) {
     for (const p of pcs) {
       const row = document.createElement("div");
       row.className = "row";
-      row.innerHTML = `<span class="who">${esc(p.name)}</span><span class="tag">sees ${p.seesFt >= 1000 ? "all" : `${p.seesFt} ft`}`
+      // On 🌑 ground "sees" is how far the fog opens for it (darkvision, its own light, or the far edge of
+      // a light on its own map; fx/lightmeta.js seerReachFt); DARK_SEES_TITLE says what that leaves open.
+      const seesTitle = p.where === "dark" ? ` title="${esc(DARK_SEES_TITLE)}"` : "";
+      row.innerHTML = `<span class="who">${esc(p.name)}</span><span class="tag"${seesTitle}>sees ${p.seesFt >= 1000 ? "all" : `${p.seesFt} ft`}`
         + `${p.darkFt ? ` · darkvision ${p.darkFt} ft` : ""}</span>`;
       const f = document.createElement("div");
       f.className = "fields";
@@ -657,8 +701,8 @@ export function startLighting(OBR, el, { build = "", ask = null } = {}) {
     }
   }
 
-  import("./fog/fog.js?v=222aeb9").then((m) => { fogMod = m; render(); }, (e) => { fogErr = String(e?.message || e); renderFog(); });
-  import("./fog/mapui.js?v=222aeb9").then((m) => { mapUi = m; render(); }, (e) => console.warn("dnd-npc: 🌫 map controls", e));
+  import("./fog/fog.js?v=af4de9c").then((m) => { fogMod = m; render(); }, (e) => { fogErr = String(e?.message || e); renderFog(); });
+  import("./fog/mapui.js?v=af4de9c").then((m) => { mapUi = m; render(); }, (e) => console.warn("dnd-npc: 🌫 map controls", e));
   OBR.scene.items.onChange(() => refresh());
   OBR.scene.onMetadataChange?.(() => refresh());
   OBR.scene.onReadyChange?.(() => refresh());

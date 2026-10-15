@@ -19,16 +19,21 @@
 //                        darkness "lit" | "dim" | "dark"; kind "interior" | "outdoor" (anything
 //                        else is outdoor: a map nobody marked Interior); remembered: its building
 //                        is remembered; override: the DM's null | "fog" | "dim" | "clear" (a "lit"
-//                        reads as "dim")
+//                        reads as "dim"). On 🌑 always "fog", whatever the override says
+//   darkLocked(darkness) is this darkness 🌑 (so the map is fog only: the remembered and clear chips
+//                        are greyed, and a stored override waits until the map is 🌒 or ☀ again)
 //   fromGraphLighting(v) the graph's spelling: "bright" | "dim" | "dark" -> "lit" | "dim" | "dark"
 //
-// The table (the override, when set, always wins):
-//   🌑 dark         any kind                      fog   darkness beats the interior rule
+// The table (on ☀ and 🌒 the override, when set, always wins; on 🌑 nothing does):
+//   🌑 dark         any kind, any override        fog   darkness beats the interior rule, and the DM's
+//                                                       remembered or clear (decided 2026-10-14, "Never:
+//                                                       lock 🌑 to fog": remembered ground on a dark map
+//                                                       showed the dark ground the party can't see)
 //   ☀ lit / 🌒 dim  interior, not remembered      fog
 //   ☀ lit / 🌒 dim  interior, remembered          dim
 //   ☀ lit / 🌒 dim  outdoor                       dim   (B4 gave ☀ outdoor "lit": decision 69)
 
-import { codeOf } from "../fx/darkness.js?v=222aeb9";
+import { codeOf } from "../fx/darkness.js?v=af4de9c";
 
 export const MODES = ["fog", "dim", "lit", "clear"];
 
@@ -39,10 +44,12 @@ export function resolveDarkness({ dm = null, adventure = null, scene = null } = 
   return codeOf(dm) ?? codeOf(adventure) ?? codeOf(scene) ?? "lit";
 }
 
+// 🌑: fog only (the table above).
+export const darkLocked = (darkness) => codeOf(darkness) === "dark";
+
 export function fogMode({ darkness = "lit", kind = "outdoor", remembered = false, override = null } = {}) {
+  if (darkLocked(darkness)) return "fog";
   if (MODES.includes(override)) return drawnMode(override);
-  const d = codeOf(darkness) ?? "lit";
-  if (d === "dark") return "fog";
   if (kind === "interior") return remembered ? "dim" : "fog";
   return "dim";
 }

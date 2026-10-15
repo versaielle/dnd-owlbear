@@ -41,9 +41,9 @@
 // The deletes below (migrate, adoptInto, planItem, release) all work on COPIES (`clone`), which
 // reach a draft only through writeLightPart (or lightui.js applyMeta, which writes the same nulls).
 
-import { BUBBLES_NAME_KEY, CARRIER_KEY, LIGHT_BASE_KEY, LIGHT_KEY, SMOKE, SPELL_LIGHT_KEY, VISION_KEY } from "../keys.js?v=222aeb9";
-import { SOURCES } from "./lights.js?v=222aeb9";
-import { farLight, regionAt } from "./darkness.js?v=222aeb9";
+import { BUBBLES_NAME_KEY, CARRIER_KEY, LIGHT_BASE_KEY, LIGHT_KEY, SMOKE, SPELL_LIGHT_KEY, VISION_KEY } from "../keys.js?v=af4de9c";
+import { SOURCES } from "./lights.js?v=af4de9c";
+import { farLight, lightsFor, regionAt } from "./darkness.js?v=af4de9c";
 
 const K = (name) => `${SMOKE}/${name}`;
 // The Smoke keys we write (and so may have to remove), by their short names.
@@ -230,6 +230,22 @@ export function visionOf(item, ctx = {}) {
   return { seer: pc || dm.seer === true, sight, dark, pc, where };
 }
 
+// How far a seer sees, in feet. On ☀/🌒 where it stands: by line of sight (visionOf's sight: its
+// limit, if any). On 🌑: as far as its darkvision, its own light, or the far edge of the farthest
+// public light ON ITS OWN MAP (ctx.lights through fx/darkness.js lightsFor: a light on another map is
+// behind that map's edge wall, so it never counts), at most LIT_SIGHT. Our overlay blacks out the
+// dark gap in between. Never under SELF_SIGHT there: Smoke's fog would hide the PC's own mini, which
+// our overlay leaves clear. smokeFor's visionRange for a seer and the 🔥 Lighting list's "sees" (fog/
+// sight.js sightReachFt is the same number for a PC). `v`: visionOf(item, ctx), when the caller has it.
+export function seerReachFt(item, ctx = {}, v = null) {
+  const c = ctx || {};
+  const vv = v || visionOf(item, c);
+  if (vv.where !== "dark") return vv.sight;
+  const light = safe(() => effectiveLight(item, c.lighting));
+  const reach = light && light.reach > 0 ? light.reach : 0;
+  return Math.min(LIT_SIGHT, Math.max(SELF_SIGHT, vv.dark, reach, farLight(item, lightsFor(item, c), c.pxPerFt)));
+}
+
 // The Smoke keys this token should have (short names); a key left out = absent (taken off, as a
 // null, if we wrote it). ctx as visionOf, plus isSecret(item) (hidden, itself or through what it hangs
 // from, and not a PC: fx/lightmeta.js isSecret()).
@@ -241,16 +257,9 @@ export function smokeFor(item, ctx = {}) {
   if (!v.pc && safe(() => ctx.isSecret?.(item), false)) return {};
   const light = effectiveLight(item, ctx.lighting);
   const reach = light ? light.reach : 0;
-  // A seer on ☀/🌒 sees by line of sight (its limit, if any); on 🌑 as far as its darkvision, its
-  // own light, or the far edge of the farthest public light (ctx.lights: fx/darkness.js
-  // darknessCtx), at most LIT_SIGHT. Our overlay blacks out the dark gap in between. Never under
-  // SELF_SIGHT there: Smoke's fog would hide the PC's own mini, which our overlay leaves clear.
-  if (v.seer) {
-    const range = v.where === "dark"
-      ? Math.min(LIT_SIGHT, Math.max(SELF_SIGHT, v.dark, reach, farLight(item, ctx.lights, ctx.pxPerFt)))
-      : v.sight;
-    return { hasVision: true, visionRange: String(range), visionDark: "0" };
-  }
+  // A seer: seerReachFt (its line of sight on ☀/🌒; on 🌑 its darkvision, its own light or the far
+  // edge of the farthest public light on its own map).
+  if (v.seer) return { hasVision: true, visionRange: String(seerReachFt(item, ctx, v)), visionDark: "0" };
   if (light && item.layer !== "CHARACTER") return { hasVision: true, isTorch: true, visionRange: String(reach), visionDark: "0" };
   return {};
 }
