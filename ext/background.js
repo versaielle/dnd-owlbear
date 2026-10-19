@@ -18,14 +18,14 @@
 // and a player's view follows their PC after a portal trip. Those load with import() and may fail
 // on their own: the map jobs, rings and HP keep working without them.
 import OBR, { buildCurve, buildEffect, buildImage, buildLabel, buildLight, buildPath, buildShape, buildText, buildWall, Math2,
-  MathM } from "./obr-sdk.js?v=d96a2d9";
-import { contains, isRoom, size } from "./areas.js?v=d96a2d9";
-import { checkPortals, describe, panelLog, setUpInteriors } from "./interiors.js?v=d96a2d9";
-import { cleanParty, placeTownsfolk, rememberParty } from "./gather.js?v=d96a2d9";
-import { isPcToken, nameKey, pcName, tokenLabel } from "./fx/pcs.js?v=d96a2d9";
-import { BADGE_KEY, BADGE_URL, BUBBLES_KEY, BUBBLES_NAME_KEY, COND_KEY, CONDITIONS, DOWN_COLOR, FOE_COLOR, FOG_LOG_LOCAL_CH, GRIMOIRE_KEY, MARK_PREFIX, PARTY_KEY, PARTY_SENSES_KEY, PLACE_KEY, RING_KEY, TARGET_COLOR, WHO_KEY, targetRingColor } from "./keys.js?v=d96a2d9";
+  MathM } from "./obr-sdk.js?v=4556f3c";
+import { contains, isRoom, size } from "./areas.js?v=4556f3c";
+import { checkPortals, describe, panelLog, setUpInteriors } from "./interiors.js?v=4556f3c";
+import { cleanParty, placeTownsfolk, rememberParty } from "./gather.js?v=4556f3c";
+import { isPcToken, nameKey, pcName, tokenLabel } from "./fx/pcs.js?v=4556f3c";
+import { BADGE_KEY, BADGE_URL, BUBBLES_KEY, BUBBLES_NAME_KEY, COND_KEY, CONDITIONS, DOWN_COLOR, FOE_COLOR, FOG_LOG_LOCAL_CH, GRIMOIRE_KEY, MARK_PREFIX, PARTY_KEY, PARTY_SENSES_KEY, PLACE_KEY, RING_KEY, TARGET_COLOR, WHO_KEY, targetRingColor } from "./keys.js?v=4556f3c";
 import { CH, DEFAULT_SETTINGS, LS, buildOf, forMe, here, isLocalOrigin, kindOf, lsGet, on as busOn, send as busSend,
-  setConnection, setSceneWrite, startSceneReader, tierOf } from "./bus.js?v=d96a2d9";
+  setConnection, setSceneWrite, startSceneReader, tierOf } from "./bus.js?v=4556f3c";
 
 const HEARTBEAT_MS = 10000;
 const DEBOUNCE_MS = 250;
@@ -35,6 +35,7 @@ const GO_TO_KEY = "J"; // the key for 🎯 Go to PC ("jump")
 const TARGET_KEY = "9"; // toggles a BLUE (party target) ring on the selected tokens
 const FOE_KEY = "0"; // toggles a YELLOW (NPC / monster target) ring on the selected tokens
 const RING_KEY_STUCK_MS = 3000; // a ring key still "running" after this long is treated as stuck (an Owlbear call that never settled)
+const RING_KEY_SELECTION_MS = 1500; // a ring key uses the selection Owlbear cleared this recently (its own key press clears it)
 const RING_KEY_GAP_MS = 300; // a ring key pressed again within this long of its last press is ignored (a held key repeats)
 
 let timer = null;
@@ -659,18 +660,18 @@ const JOBS = {
 // The parts that load on their own (R4): a broken one is left out and the rest carry on.
 // Literal paths, so the publisher can stamp each with the build.
 const MODULES = {
-  bridge: () => import("./bridge.js?v=d96a2d9"),
-  fx: () => import("./fx/engine.js?v=d96a2d9"),
-  samples: () => import("./fx/samples.js?v=d96a2d9"),
-  aim: () => import("./aim/tool.js?v=d96a2d9"),
-  geometry: () => import("./aim/geometry.js?v=d96a2d9"),
-  rings: () => import("./aim/rings.js?v=d96a2d9"),
-  player: () => import("./player/state.js?v=d96a2d9"),
-  lights: () => import("./fx/lighting.js?v=d96a2d9"),
-  lightjobs: () => import("./fx/lightjobs.js?v=d96a2d9"),
-  lightwriter: () => import("./fx/lightwriter.js?v=d96a2d9"),
-  views: () => import("./views.js?v=d96a2d9"),
-  fog: () => import("./fog/fog.js?v=d96a2d9"),
+  bridge: () => import("./bridge.js?v=4556f3c"),
+  fx: () => import("./fx/engine.js?v=4556f3c"),
+  samples: () => import("./fx/samples.js?v=4556f3c"),
+  aim: () => import("./aim/tool.js?v=4556f3c"),
+  geometry: () => import("./aim/geometry.js?v=4556f3c"),
+  rings: () => import("./aim/rings.js?v=4556f3c"),
+  player: () => import("./player/state.js?v=4556f3c"),
+  lights: () => import("./fx/lighting.js?v=4556f3c"),
+  lightjobs: () => import("./fx/lightjobs.js?v=4556f3c"),
+  lightwriter: () => import("./fx/lightwriter.js?v=4556f3c"),
+  views: () => import("./views.js?v=4556f3c"),
+  fog: () => import("./fog/fog.js?v=4556f3c"),
 };
 
 const HELLO_MS = 30000; // each screen says hello this often, so the panel's screens list stays fresh
@@ -945,7 +946,27 @@ export async function boot(api = sdk, opts = {}) {
   // aim is open (its HUD owns the keys), on a copy that only relays, on a player's screen, or with
   // nothing selected (a short note says so). It never throws at the DM.
   let ringKeysStop = null; // set by ringKeys: clears its queued press and that press's timer (stepAside calls it)
+  let ringKeysSelStop = null; // set by ringKeys: ends its selection watch
   function ringKeys(keyIds) {
+    // Owlbear clears the selection when a toolbar action's key fires, before onClick can read it (the DM's
+    // live test, 2026-10-19: select a token, press 9, "select a token first", the token deselected). So the
+    // keys watch the selection, use the last one when a press finds none and it went within
+    // RING_KEY_SELECTION_MS (or its clearing hasn't reached us yet), and select those tokens again after.
+    let lastSel = [];
+    let clearedAt = -Infinity; // Infinity: something is selected now
+    const seen = (sel) => {
+      const s = Array.isArray(sel) ? sel.filter((x) => typeof x === "string") : [];
+      if (s.length) { lastSel = s; clearedAt = Infinity; } else if (clearedAt === Infinity) clearedAt = T.now();
+    };
+    try { ringKeysSelStop?.(); } catch (e) { console.warn("dnd-npc: the ring key", e); }
+    ringKeysSelStop = null;
+    try {
+      const un = O.player.onChange?.((p) => seen(p?.selection));
+      Promise.resolve(un).then((f) => { if (typeof f === "function") ringKeysSelStop = f; }, (e) => console.warn("dnd-npc: the ring key", e));
+      Promise.resolve(O.player.getSelection?.()).then((s) => { if (clearedAt === -Infinity) seen(s); }, () => {});
+    } catch (e) {
+      console.warn("dnd-npc: the ring key", e);
+    }
     // One press at a time (two at once would read the same rings and write the same sizes or doubles). A
     // second press of the SAME key while one runs does nothing (a double tap, a held key repeating); a press
     // of the OTHER key waits and runs right after (one slot: a fast "1 then 2" does both). A key held down is
@@ -990,7 +1011,14 @@ export async function boot(api = sdk, opts = {}) {
         if ((await O.player.getRole()) !== "GM") return;
         if (!rings?.toggleTargetRing) return;
         ran = true;
-        const r = await rings.toggleTargetRing(api, color);
+        let selection = await O.player.getSelection();
+        const restore = !(Array.isArray(selection) && selection.length) && lastSel.length > 0
+          && (clearedAt === Infinity || mine.at - clearedAt < RING_KEY_SELECTION_MS);
+        if (restore) selection = lastSel.slice();
+        const r = await rings.toggleTargetRing(api, color, { selection });
+        if (restore) {
+          try { await O.player.select?.(selection, true); } catch (e) { console.warn("dnd-npc: the ring key", e); }
+        }
         if (givenUp()) return; // this press was given up on (hung > 3 s) and settled late: nothing further, no note
         if (r.action === "none") {
           O.notification.show(r.why === "nothing selected" ? `${label}: select a token first` : `${label}: those can't wear a target ring`, "DEFAULT");
