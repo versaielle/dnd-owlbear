@@ -1,8 +1,8 @@
 // BLUE (party) and YELLOW (NPC / monster) target rings, written the way Owlbear's Colored Rings extension writes them, so the
 // panel's ring reader (_take_target_pick) and the DM's own clicks treat them like any other.
 // The bridge rings what a locked aim caught; a GM aimer does it itself when the bridge is gone.
-import { DOWN_COLOR, FOE_COLOR, RING_KEY, TARGET_COLOR } from "../keys.js?v=2094e30";
-import { footprint } from "./geometry.js?v=2094e30";
+import { DOWN_COLOR, FOE_COLOR, RING_KEY, TARGET_COLOR } from "../keys.js?v=d96a2d9";
+import { footprint } from "./geometry.js?v=d96a2d9";
 
 const NEST_STEP = 0.14; // a ring on top of another of ours is this much smaller (of the token's diameter)
 const NEST_MIN = 0.55;
@@ -10,7 +10,7 @@ const NEST_MIN = 0.55;
 let sdk = null;
 async function shapeBuilder(api) {
   if (api.buildShape) return api.buildShape;
-  sdk ||= import("../obr-sdk.js?v=2094e30");
+  sdk ||= import("../obr-sdk.js?v=d96a2d9");
   return (await sdk).buildShape;
 }
 
@@ -90,7 +90,7 @@ export async function setTargetRings(api, ids, { replace = true, color = TARGET_
 }
 
 export async function toggleTargetRing(api, color, { selection } = {}) {
-  // The 1 (blue) and 2 (yellow) keys: put this colour on the selected tokens, or take it off.
+  // The 9 (blue) and 0 (yellow) keys: put this colour on the selected tokens, or take it off.
   // If every selected token already wears the colour it comes off them all; otherwise it goes on
   // the rest (a mix: all get it). Only rings of THIS colour are touched: the red (down) and white
   // (conditions) rings, and the other target colour, stay. Fails closed: with nothing usable

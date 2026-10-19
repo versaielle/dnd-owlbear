@@ -5,12 +5,11 @@ export const WHO_KEY = "dnd-npc/who"; // on a token: "pc:<character name>" or "n
 // with this key, its colour in style.strokeColor. A BLUE ring marks a spell's target.
 export const RING_KEY = "rodeo.owlbear.colored-rings/metadata";
 export const TARGET_COLOR = "#1a6aff"; // Colored Rings' blue
-// YELLOW: the ring for the NPCs' and monsters' targets (the Battle tab's Foes side; key 2). It must equal
+// YELLOW: the ring for the NPCs' and monsters' targets (the Battle tab's Foes side; key 0). It must equal
 // Colored Rings' own yellow exactly, or a yellow ring the DM places by hand there is not counted.
-// The hex is NOT verified: nothing in this repo records Colored Rings' palette.
-// CHECK AT THE DELL LIVE TEST: place one yellow ring by hand in Colored Rings and read the colour the
-// panel's map report gives it; if it differs, change this one line (and the server's copy of it).
-export const FOE_COLOR = "#ffd633";
+// Checked 2026-10-19 against Colored Rings' source (github.com/owlbear-rodeo/colored-rings, src/colors.ts,
+// 4f8e751): its yellow is "#ffd433" (its blue "#1a6aff" and red "#ff4d4d" match ours). map_state.py keeps a copy.
+export const FOE_COLOR = "#ffd433";
 // The two ring colours a target may take (a Party aim is blue, a monster aim is yellow): the aim's
 // `ring_color` (NOT its `color`, which is the template's tint). Nothing (or empty) is blue; exactly blue or
 // yellow (any case) is that colour; anything else is null, and the caller then changes NO rings (an aim

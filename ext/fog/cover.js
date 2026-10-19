@@ -103,15 +103,15 @@
 // back on the next sync (fog.js retries the pass); fog.js's own sweep removes our items
 // (FOG_LOCAL_KEY {kind: "cover", host}) whenever the switch goes off or the page starts.
 
-import { CARRIER_KEY, FOG_LOCAL_KEY } from "../keys.js?v=2094e30";
-import { footprint } from "../fx/place.js?v=2094e30";
-import { visionOf } from "../fx/lightmeta.js?v=2094e30";
-import { DV_SOFT_FT } from "../fx/lights.js?v=2094e30";
-import { inCone } from "../rules2024.js?v=2094e30";
-import { centreOf, mapAt } from "../views.js?v=2094e30";
-import { canSee, pointInPolygon, visibilityPolygon } from "./los.js?v=2094e30";
-import { arcSteps, clipOk, litLights, litLightsOn, pcViews, sightBlockersOf } from "./shapes.js?v=2094e30";
-import { seenInputSig } from "./seen.js?v=2094e30";
+import { CARRIER_KEY, FOG_LOCAL_KEY } from "../keys.js?v=d96a2d9";
+import { footprint } from "../fx/place.js?v=d96a2d9";
+import { visionOf } from "../fx/lightmeta.js?v=d96a2d9";
+import { DV_SOFT_FT } from "../fx/lights.js?v=d96a2d9";
+import { inCone } from "../rules2024.js?v=d96a2d9";
+import { centreOf, mapAt } from "../views.js?v=d96a2d9";
+import { canSee, pointInPolygon, visibilityPolygon } from "./los.js?v=d96a2d9";
+import { arcSteps, clipOk, litLights, litLightsOn, pcViews, sightBlockersOf } from "./shapes.js?v=d96a2d9";
+import { seenInputSig } from "./seen.js?v=d96a2d9";
 
 export const COVER_LAYER = "RULER";
 export const COVER_Z = 0; // under Owlbear's own rulers (auto z: timestamps)
@@ -550,7 +550,7 @@ export function createCover(api = {}, ctx = {}) {
   // ---- the polygon library: loaded the first time a dark map has a creature, never on a GM screen ----
   let clip = clipOk(api.clip) ? api.clip : null;
   let clipLoading = null, clipFailedAt = -Infinity, clipSaid = null;
-  const loadClip = typeof api.loadClip === "function" ? api.loadClip : () => import("./clipper.js?v=2094e30").then((m) => m.default);
+  const loadClip = typeof api.loadClip === "function" ? api.loadClip : () => import("./clipper.js?v=d96a2d9").then((m) => m.default);
   function ensureClip() {
     if (clip || clipLoading || now() - clipFailedAt < CLIP_RETRY_MS) return;
     const job = Promise.resolve().then(() => loadClip());

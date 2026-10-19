@@ -32,13 +32,13 @@
 // with the lights writer's own ctx, in one write (fx/lightwriter.js writeNow): the writer's next
 // pass plans nothing more. Any control here that changes an input takes a scene released to
 // Smoke back (SCENE_LIGHTING_KEY.managed true); "Release lights to Smoke" sets it false.
-import { FOG_KEY, MAP_DARKNESS_KEY, PARTY_KEY, SCENE_LIGHTING_KEY } from "./keys.js?v=2094e30";
-import { SOURCES } from "./fx/lights.js?v=2094e30";
-import { isMap, mapDarkness, readGrid, sceneDarkness } from "./fx/darkness.js?v=2094e30";
-import { writeNow } from "./fx/lightwriter.js?v=2094e30";
-import { cleanParty } from "./gather.js?v=2094e30";
+import { FOG_KEY, MAP_DARKNESS_KEY, PARTY_KEY, SCENE_LIGHTING_KEY } from "./keys.js?v=d96a2d9";
+import { SOURCES } from "./fx/lights.js?v=d96a2d9";
+import { isMap, mapDarkness, readGrid, sceneDarkness } from "./fx/darkness.js?v=d96a2d9";
+import { writeNow } from "./fx/lightwriter.js?v=d96a2d9";
+import { cleanParty } from "./gather.js?v=d96a2d9";
 import { DARKNESS, applyMeta, autoKind, carriers, describe, editFor, lightingOf, lightingRows, managed, releaseItem,
-         screenLine, screenWarnings, uiCtx } from "./lightui.js?v=2094e30";
+         screenLine, screenWarnings, uiCtx } from "./lightui.js?v=d96a2d9";
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 const COMMON = ["candle", "torch", "lamp", "hooded_lantern", "brazier"].filter((k) => SOURCES[k]);
@@ -703,8 +703,8 @@ export function startLighting(OBR, el, { build = "", ask = null } = {}) {
     }
   }
 
-  import("./fog/fog.js?v=2094e30").then((m) => { fogMod = m; render(); }, (e) => { fogErr = String(e?.message || e); renderFog(); });
-  import("./fog/mapui.js?v=2094e30").then((m) => { mapUi = m; render(); }, (e) => console.warn("dnd-npc: 🌫 map controls", e));
+  import("./fog/fog.js?v=d96a2d9").then((m) => { fogMod = m; render(); }, (e) => { fogErr = String(e?.message || e); renderFog(); });
+  import("./fog/mapui.js?v=d96a2d9").then((m) => { mapUi = m; render(); }, (e) => console.warn("dnd-npc: 🌫 map controls", e));
   OBR.scene.items.onChange(() => refresh());
   OBR.scene.onMetadataChange?.(() => refresh());
   OBR.scene.onReadyChange?.(() => refresh());

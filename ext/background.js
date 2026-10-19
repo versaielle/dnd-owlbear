@@ -18,22 +18,22 @@
 // and a player's view follows their PC after a portal trip. Those load with import() and may fail
 // on their own: the map jobs, rings and HP keep working without them.
 import OBR, { buildCurve, buildEffect, buildImage, buildLabel, buildLight, buildPath, buildShape, buildText, buildWall, Math2,
-  MathM } from "./obr-sdk.js?v=2094e30";
-import { contains, isRoom, size } from "./areas.js?v=2094e30";
-import { checkPortals, describe, panelLog, setUpInteriors } from "./interiors.js?v=2094e30";
-import { cleanParty, placeTownsfolk, rememberParty } from "./gather.js?v=2094e30";
-import { isPcToken, nameKey, pcName, tokenLabel } from "./fx/pcs.js?v=2094e30";
-import { BADGE_KEY, BADGE_URL, BUBBLES_KEY, BUBBLES_NAME_KEY, COND_KEY, CONDITIONS, DOWN_COLOR, FOE_COLOR, FOG_LOG_LOCAL_CH, GRIMOIRE_KEY, MARK_PREFIX, PARTY_KEY, PARTY_SENSES_KEY, PLACE_KEY, RING_KEY, TARGET_COLOR, WHO_KEY, targetRingColor } from "./keys.js?v=2094e30";
+  MathM } from "./obr-sdk.js?v=d96a2d9";
+import { contains, isRoom, size } from "./areas.js?v=d96a2d9";
+import { checkPortals, describe, panelLog, setUpInteriors } from "./interiors.js?v=d96a2d9";
+import { cleanParty, placeTownsfolk, rememberParty } from "./gather.js?v=d96a2d9";
+import { isPcToken, nameKey, pcName, tokenLabel } from "./fx/pcs.js?v=d96a2d9";
+import { BADGE_KEY, BADGE_URL, BUBBLES_KEY, BUBBLES_NAME_KEY, COND_KEY, CONDITIONS, DOWN_COLOR, FOE_COLOR, FOG_LOG_LOCAL_CH, GRIMOIRE_KEY, MARK_PREFIX, PARTY_KEY, PARTY_SENSES_KEY, PLACE_KEY, RING_KEY, TARGET_COLOR, WHO_KEY, targetRingColor } from "./keys.js?v=d96a2d9";
 import { CH, DEFAULT_SETTINGS, LS, buildOf, forMe, here, isLocalOrigin, kindOf, lsGet, on as busOn, send as busSend,
-  setConnection, setSceneWrite, startSceneReader, tierOf } from "./bus.js?v=2094e30";
+  setConnection, setSceneWrite, startSceneReader, tierOf } from "./bus.js?v=d96a2d9";
 
 const HEARTBEAT_MS = 10000;
 const DEBOUNCE_MS = 250;
 const TODO_MS = 1000; // how often the Dell's copy asks the panel for map jobs
 const PING_MS = 3000; // how long 📍 rings a token
 const GO_TO_KEY = "J"; // the key for 🎯 Go to PC ("jump")
-const TARGET_KEY = "1"; // toggles a BLUE (party target) ring on the selected tokens
-const FOE_KEY = "2"; // toggles a YELLOW (NPC / monster target) ring on the selected tokens
+const TARGET_KEY = "9"; // toggles a BLUE (party target) ring on the selected tokens
+const FOE_KEY = "0"; // toggles a YELLOW (NPC / monster target) ring on the selected tokens
 const RING_KEY_STUCK_MS = 3000; // a ring key still "running" after this long is treated as stuck (an Owlbear call that never settled)
 const RING_KEY_GAP_MS = 300; // a ring key pressed again within this long of its last press is ignored (a held key repeats)
 
@@ -453,7 +453,7 @@ const LOCAL_MENU_IDS = { place: "dnd-npc/local/mark-place", who: "dnd-npc/local/
 // 🎯 Go to PC's toolbar button and key (a tool action, removed with tool.removeAction).
 const GOTO_KEY_ID = "dnd-npc/go-to-pc-key";
 const LOCAL_GOTO_KEY_ID = "dnd-npc/local/go-to-pc-key";
-// The 1 and 2 ring keys (toolbar actions too). Owlbear's ids are room-wide, so the copy served by
+// The 9 and 0 ring keys (Owlbear keeps 1 and 2 for itself; DM, 2026-10-19) (toolbar actions too). Owlbear's ids are room-wide, so the copy served by
 // this PC has its own, and removes only those when it steps aside for the Pages copy.
 const RING_KEY_IDS = { blue: "dnd-npc/ring-key-1", yellow: "dnd-npc/ring-key-2" };
 const LOCAL_RING_KEY_IDS = { blue: "dnd-npc/local/ring-key-1", yellow: "dnd-npc/local/ring-key-2" };
@@ -659,18 +659,18 @@ const JOBS = {
 // The parts that load on their own (R4): a broken one is left out and the rest carry on.
 // Literal paths, so the publisher can stamp each with the build.
 const MODULES = {
-  bridge: () => import("./bridge.js?v=2094e30"),
-  fx: () => import("./fx/engine.js?v=2094e30"),
-  samples: () => import("./fx/samples.js?v=2094e30"),
-  aim: () => import("./aim/tool.js?v=2094e30"),
-  geometry: () => import("./aim/geometry.js?v=2094e30"),
-  rings: () => import("./aim/rings.js?v=2094e30"),
-  player: () => import("./player/state.js?v=2094e30"),
-  lights: () => import("./fx/lighting.js?v=2094e30"),
-  lightjobs: () => import("./fx/lightjobs.js?v=2094e30"),
-  lightwriter: () => import("./fx/lightwriter.js?v=2094e30"),
-  views: () => import("./views.js?v=2094e30"),
-  fog: () => import("./fog/fog.js?v=2094e30"),
+  bridge: () => import("./bridge.js?v=d96a2d9"),
+  fx: () => import("./fx/engine.js?v=d96a2d9"),
+  samples: () => import("./fx/samples.js?v=d96a2d9"),
+  aim: () => import("./aim/tool.js?v=d96a2d9"),
+  geometry: () => import("./aim/geometry.js?v=d96a2d9"),
+  rings: () => import("./aim/rings.js?v=d96a2d9"),
+  player: () => import("./player/state.js?v=d96a2d9"),
+  lights: () => import("./fx/lighting.js?v=d96a2d9"),
+  lightjobs: () => import("./fx/lightjobs.js?v=d96a2d9"),
+  lightwriter: () => import("./fx/lightwriter.js?v=d96a2d9"),
+  views: () => import("./views.js?v=d96a2d9"),
+  fog: () => import("./fog/fog.js?v=d96a2d9"),
 };
 
 const HELLO_MS = 30000; // each screen says hello this often, so the panel's screens list stays fresh
@@ -940,7 +940,7 @@ export async function boot(api = sdk, opts = {}) {
     T.setTimeout(() => silent.delete(id), 2000);
   };
 
-  // Keys 1 (blue) and 2 (yellow): toolbar actions like J, GM screens only. Each toggles its colour's
+  // Keys 9 (blue) and 0 (yellow): toolbar actions like J, GM screens only. Each toggles its colour's
   // ring on the selected tokens (aim/rings.js toggleTargetRing). A key does nothing, quietly, while an
   // aim is open (its HUD owns the keys), on a copy that only relays, on a player's screen, or with
   // nothing selected (a short note says so). It never throws at the DM.
