@@ -18,20 +18,24 @@
 // and a player's view follows their PC after a portal trip. Those load with import() and may fail
 // on their own: the map jobs, rings and HP keep working without them.
 import OBR, { buildCurve, buildEffect, buildImage, buildLabel, buildLight, buildPath, buildShape, buildText, buildWall, Math2,
-  MathM } from "./obr-sdk.js?v=ef5a062-d6f6ba6";
-import { contains, isRoom, size } from "./areas.js?v=ef5a062-d6f6ba6";
-import { checkPortals, describe, panelLog, setUpInteriors } from "./interiors.js?v=ef5a062-d6f6ba6";
-import { cleanParty, placeTownsfolk, rememberParty } from "./gather.js?v=ef5a062-d6f6ba6";
-import { isPcToken, nameKey, pcName, tokenLabel } from "./fx/pcs.js?v=ef5a062-d6f6ba6";
-import { BADGE_KEY, BADGE_URL, BUBBLES_KEY, BUBBLES_NAME_KEY, COND_KEY, CONDITIONS, DOWN_COLOR, FOG_LOG_LOCAL_CH, GRIMOIRE_KEY, MARK_PREFIX, PARTY_KEY, PARTY_SENSES_KEY, PLACE_KEY, RING_KEY, TARGET_COLOR, WHO_KEY } from "./keys.js?v=ef5a062-d6f6ba6";
+  MathM } from "./obr-sdk.js?v=2094e30";
+import { contains, isRoom, size } from "./areas.js?v=2094e30";
+import { checkPortals, describe, panelLog, setUpInteriors } from "./interiors.js?v=2094e30";
+import { cleanParty, placeTownsfolk, rememberParty } from "./gather.js?v=2094e30";
+import { isPcToken, nameKey, pcName, tokenLabel } from "./fx/pcs.js?v=2094e30";
+import { BADGE_KEY, BADGE_URL, BUBBLES_KEY, BUBBLES_NAME_KEY, COND_KEY, CONDITIONS, DOWN_COLOR, FOE_COLOR, FOG_LOG_LOCAL_CH, GRIMOIRE_KEY, MARK_PREFIX, PARTY_KEY, PARTY_SENSES_KEY, PLACE_KEY, RING_KEY, TARGET_COLOR, WHO_KEY, targetRingColor } from "./keys.js?v=2094e30";
 import { CH, DEFAULT_SETTINGS, LS, buildOf, forMe, here, isLocalOrigin, kindOf, lsGet, on as busOn, send as busSend,
-  setConnection, setSceneWrite, startSceneReader, tierOf } from "./bus.js?v=ef5a062-d6f6ba6";
+  setConnection, setSceneWrite, startSceneReader, tierOf } from "./bus.js?v=2094e30";
 
 const HEARTBEAT_MS = 10000;
 const DEBOUNCE_MS = 250;
 const TODO_MS = 1000; // how often the Dell's copy asks the panel for map jobs
 const PING_MS = 3000; // how long 📍 rings a token
 const GO_TO_KEY = "J"; // the key for 🎯 Go to PC ("jump")
+const TARGET_KEY = "1"; // toggles a BLUE (party target) ring on the selected tokens
+const FOE_KEY = "2"; // toggles a YELLOW (NPC / monster target) ring on the selected tokens
+const RING_KEY_STUCK_MS = 3000; // a ring key still "running" after this long is treated as stuck (an Owlbear call that never settled)
+const RING_KEY_GAP_MS = 300; // a ring key pressed again within this long of its last press is ignored (a held key repeats)
 
 let timer = null;
 
@@ -348,15 +352,37 @@ async function unring(ids, color = TARGET_COLOR) {
 async function ringDown(id) {
   // 0 HP: the token's blue (target) ring turns red, a Colored Rings red Colored Rings itself
   // shows as picked. No ring at all: it gets a red one, built the way Colored Rings builds them.
+  // A yellow (NPC / monster target) ring goes too: it turns red if nothing else made the red, else
+  // it is deleted. The red stays (a key never removes it).
   const [token] = await OBR.scene.items.getItems([id]);
   if (!token) return;
   const rings = await OBR.scene.items.getItems((i) => i.attachedTo === id && i.metadata?.[RING_KEY]?.enabled);
   const colour = (i) => String(i.style?.strokeColor).toLowerCase();
   const blue = rings.filter((i) => colour(i) === TARGET_COLOR);
+  const yellow = rings.filter((i) => colour(i) === FOE_COLOR);
+  const hasRed = rings.some((i) => colour(i) === DOWN_COLOR);
+  if (hasRed && (blue.length || yellow.length)) {
+    // Already marked red: the blue and yellow go (never a second red, which would sit beside the first).
+    await OBR.scene.items.deleteItems([...blue, ...yellow].map((i) => i.id));
+    return;
+  }
   if (blue.length) {
     await OBR.scene.items.updateItems(blue.map((i) => i.id), (items) => {
       for (const i of items) i.style.strokeColor = DOWN_COLOR;
     });
+    if (yellow.length) await OBR.scene.items.deleteItems(yellow.map((i) => i.id));
+    return;
+  }
+  if (yellow.length) {
+    const [first, ...rest] = yellow;
+    if (hasRed || !first) {
+      await OBR.scene.items.deleteItems(yellow.map((i) => i.id));
+    } else {
+      await OBR.scene.items.updateItems([first.id], (items) => {
+        for (const i of items) i.style.strokeColor = DOWN_COLOR;
+      });
+      if (rest.length) await OBR.scene.items.deleteItems(rest.map((i) => i.id));
+    }
     return;
   }
   if (rings.some((i) => colour(i) === DOWN_COLOR) || !token.image || !token.grid) return;
@@ -427,6 +453,10 @@ const LOCAL_MENU_IDS = { place: "dnd-npc/local/mark-place", who: "dnd-npc/local/
 // 🎯 Go to PC's toolbar button and key (a tool action, removed with tool.removeAction).
 const GOTO_KEY_ID = "dnd-npc/go-to-pc-key";
 const LOCAL_GOTO_KEY_ID = "dnd-npc/local/go-to-pc-key";
+// The 1 and 2 ring keys (toolbar actions too). Owlbear's ids are room-wide, so the copy served by
+// this PC has its own, and removes only those when it steps aside for the Pages copy.
+const RING_KEY_IDS = { blue: "dnd-npc/ring-key-1", yellow: "dnd-npc/ring-key-2" };
+const LOCAL_RING_KEY_IDS = { blue: "dnd-npc/local/ring-key-1", yellow: "dnd-npc/local/ring-key-2" };
 // 📺 Show my view on the projector: a toolbar button beside it (views.js).
 const PROJECTOR_ACTION_ID = "dnd-npc/projector-view";
 const LOCAL_PROJECTOR_ACTION_ID = "dnd-npc/local/projector-view";
@@ -629,18 +659,18 @@ const JOBS = {
 // The parts that load on their own (R4): a broken one is left out and the rest carry on.
 // Literal paths, so the publisher can stamp each with the build.
 const MODULES = {
-  bridge: () => import("./bridge.js?v=ef5a062-d6f6ba6"),
-  fx: () => import("./fx/engine.js?v=ef5a062-d6f6ba6"),
-  samples: () => import("./fx/samples.js?v=ef5a062-d6f6ba6"),
-  aim: () => import("./aim/tool.js?v=ef5a062-d6f6ba6"),
-  geometry: () => import("./aim/geometry.js?v=ef5a062-d6f6ba6"),
-  rings: () => import("./aim/rings.js?v=ef5a062-d6f6ba6"),
-  player: () => import("./player/state.js?v=ef5a062-d6f6ba6"),
-  lights: () => import("./fx/lighting.js?v=ef5a062-d6f6ba6"),
-  lightjobs: () => import("./fx/lightjobs.js?v=ef5a062-d6f6ba6"),
-  lightwriter: () => import("./fx/lightwriter.js?v=ef5a062-d6f6ba6"),
-  views: () => import("./views.js?v=ef5a062-d6f6ba6"),
-  fog: () => import("./fog/fog.js?v=ef5a062-d6f6ba6"),
+  bridge: () => import("./bridge.js?v=2094e30"),
+  fx: () => import("./fx/engine.js?v=2094e30"),
+  samples: () => import("./fx/samples.js?v=2094e30"),
+  aim: () => import("./aim/tool.js?v=2094e30"),
+  geometry: () => import("./aim/geometry.js?v=2094e30"),
+  rings: () => import("./aim/rings.js?v=2094e30"),
+  player: () => import("./player/state.js?v=2094e30"),
+  lights: () => import("./fx/lighting.js?v=2094e30"),
+  lightjobs: () => import("./fx/lightjobs.js?v=2094e30"),
+  lightwriter: () => import("./fx/lightwriter.js?v=2094e30"),
+  views: () => import("./views.js?v=2094e30"),
+  fog: () => import("./fog/fog.js?v=2094e30"),
 };
 
 const HELLO_MS = 30000; // each screen says hello this often, so the panel's screens list stays fresh
@@ -903,11 +933,100 @@ export async function boot(api = sdk, opts = {}) {
   let lastHbAt = T.now(); // as if heard at start: give the bridge 15 s before ringing here
   const shows = new Map(); // template id -> what AIM_SHOW said (the all and gm copies merged)
   const silent = new Set(); // aims this tab stops because someone else locked or the panel cancelled
+  const aimColors = new Map(); // aim id -> the ring colour that aim replaces: its ring_color (blue for the Party, yellow for a monster; null = neither, ring nothing)
 
   const silence = (id) => {
     silent.add(id);
     T.setTimeout(() => silent.delete(id), 2000);
   };
+
+  // Keys 1 (blue) and 2 (yellow): toolbar actions like J, GM screens only. Each toggles its colour's
+  // ring on the selected tokens (aim/rings.js toggleTargetRing). A key does nothing, quietly, while an
+  // aim is open (its HUD owns the keys), on a copy that only relays, on a player's screen, or with
+  // nothing selected (a short note says so). It never throws at the DM.
+  let ringKeysStop = null; // set by ringKeys: clears its queued press and that press's timer (stepAside calls it)
+  function ringKeys(keyIds) {
+    // One press at a time (two at once would read the same rings and write the same sizes or doubles). A
+    // second press of the SAME key while one runs does nothing (a double tap, a held key repeating); a press
+    // of the OTHER key waits and runs right after (one slot: a fast "1 then 2" does both). A key held down is
+    // also ignored for RING_KEY_GAP_MS after its last press finished, so it toggles once, not on and off. A
+    // press that never settles is given up on after RING_KEY_STUCK_MS, so the keys can't stay dead.
+    let running = null; // {color, at}
+    let pending = null; // {color, label}: the other key, pressed while one ran
+    const lastEnd = new Map();
+    let dropTimer = null;
+    const dropPending = (startingColor) => {
+      // A queued press that will never run (the press ahead of it hung): say so, so the DM presses it again.
+      // No note when that same key is the press starting right now (it is running; nothing to repeat).
+      if (!pending) return;
+      const gone = pending;
+      pending = null;
+      if (gone.color === startingColor) return;
+      try { O.notification.show("Ring key was busy, press it again", "DEFAULT"); } catch (e) { console.warn("dnd-npc: the ring key", e); }
+    };
+    ringKeysStop = () => {
+      if (dropTimer != null) T.clearTimeout(dropTimer);
+      dropTimer = null;
+      pending = null;
+    };
+    const press = async (color, label) => {
+      if (running && T.now() - running.at < RING_KEY_STUCK_MS) {
+        if (running.color !== color) {
+          const queued = pending = { color, label };
+          // ...and if the press ahead is still hung when this one's time is up, it is dropped with a note
+          if (dropTimer != null) T.clearTimeout(dropTimer);
+          dropTimer = T.setTimeout(() => { dropTimer = null; if (pending === queued) dropPending(); }, RING_KEY_STUCK_MS);
+        }
+        return;
+      }
+      if (T.now() - (lastEnd.get(color) ?? -Infinity) < RING_KEY_GAP_MS) return;
+      dropPending(color); // a press queued behind one that hung is not run now
+      const mine = running = { color, at: T.now() };
+      let ran = false;
+      // given up on: another press replaced this one, or it has been running past the stuck limit
+      const givenUp = () => running !== mine || T.now() - mine.at >= RING_KEY_STUCK_MS;
+      try {
+        if (!drawsHere() || role !== "GM" || aim?.isAiming?.()) return;
+        if ((await O.player.getRole()) !== "GM") return;
+        if (!rings?.toggleTargetRing) return;
+        ran = true;
+        const r = await rings.toggleTargetRing(api, color);
+        if (givenUp()) return; // this press was given up on (hung > 3 s) and settled late: nothing further, no note
+        if (r.action === "none") {
+          O.notification.show(r.why === "nothing selected" ? `${label}: select a token first` : `${label}: those can't wear a target ring`, "DEFAULT");
+        }
+      } catch (e) {
+        console.warn("dnd-npc: the ring key", e);
+      } finally {
+        const mineStill = !givenUp(); // false: a stuck press, already given up on: it starts and changes nothing more
+        const replaced = running !== mine; // another press took the slot: the queue behind that one is not ours to drop
+        if (!replaced) running = null;
+        if (ran && mineStill) lastEnd.set(color, T.now());
+        if (mineStill) {
+          const next = pending;
+          pending = null;
+          if (next) await press(next.color, next.label);
+        } else if (!replaced) {
+          dropPending(); // anything still queued behind this hung press was never going to run
+        }
+      }
+    };
+    for (const [id, key, color, label, name] of [
+      [keyIds.blue, TARGET_KEY, TARGET_COLOR, "Blue target ring", "🔵 Blue target ring"],
+      [keyIds.yellow, FOE_KEY, FOE_COLOR, "Yellow target ring", "🟡 Yellow target ring"],
+    ]) {
+      try {
+        Promise.resolve(O.tool.createAction({
+          id,
+          shortcut: key,
+          icons: [{ icon: ICON, label: `${name} (${key})`, filter: { roles: ["GM"] } }],
+          onClick: () => press(color, label),
+        })).catch((e) => console.warn("dnd-npc: the ring key", e));
+      } catch (e) {
+        console.warn("dnd-npc: the ring key", e);
+      }
+    }
+  }
 
   async function gmLocked(result, info) {
     // How far the aim tool measured, for the panel's "⚠ too far" (the bridge passes it on).
@@ -921,7 +1040,13 @@ export async function boot(api = sdk, opts = {}) {
       const caught = await geometry.computeCaught(result.template, await O.scene.items.getItems(), await gridOf(O),
         { includeSecret: true, isPublic: ctx.isPublic, casterId: result.template.caster_token || null });
       if (!Array.isArray(caught)) return; // can't tell who's caught: leave the rings alone
-      await rings.setTargetRings(api, caught.map((c) => c.id), { replace: true });
+      const id = String(result.aim_id);
+      const color = aimColors.has(id) ? aimColors.get(id) : TARGET_COLOR; // an aim never heard of: blue
+      if (!color) {
+        console.warn("dnd-npc: an aim asked for a ring colour that isn't blue or yellow; rings left as they were");
+        return;
+      }
+      await rings.setTargetRings(api, caught.map((c) => c.id), { replace: true, color });
       ctx.log(`no bridge: rang ${caught.length} target(s) here`);
     } catch (e) {
       console.warn("dnd-npc: couldn't ring the targets here", e);
@@ -1126,12 +1251,13 @@ export async function boot(api = sdk, opts = {}) {
       console.warn("dnd-npc: aim", e);
     }
     shows.clear();
+    try { ringKeysStop?.(); } catch (e) { console.warn("dnd-npc: the ring key", e); }
     try { player?.stop?.(); } catch (e) { console.warn("dnd-npc: player", e); }
     player = null;
     screenViews(); // the Pages copy holds or follows the view here now
     if (role === "GM") {
       for (const id of Object.values(LOCAL_MENU_IDS)) Promise.resolve().then(() => O.contextMenu.remove(id)).catch(() => {});
-      for (const id of [LOCAL_GOTO_KEY_ID, LOCAL_PROJECTOR_ACTION_ID]) {
+      for (const id of [LOCAL_GOTO_KEY_ID, LOCAL_PROJECTOR_ACTION_ID, ...Object.values(LOCAL_RING_KEY_IDS)]) {
         Promise.resolve().then(() => O.tool.removeAction(id)).catch(() => {});
       }
     }
@@ -1167,6 +1293,10 @@ export async function boot(api = sdk, opts = {}) {
   });
   busOn(api, CH.AIM_START, (msg) => {
     if (!drawsHere() || !forMe(msg, me) || role !== "GM" || lsGet(LS.AIM_HERE) === "0" || !msg.aim) return;
+    if (msg.aim.id != null) {
+      aimColors.set(String(msg.aim.id), targetRingColor(msg.aim.ring_color)); // ring_color, never the tint (color)
+      while (aimColors.size > 20) aimColors.delete(aimColors.keys().next().value);
+    }
     aim?.start(msg.aim);
   });
   busOn(api, CH.AIM_SHOW, (msg) => {
@@ -1339,6 +1469,7 @@ export async function boot(api = sdk, opts = {}) {
       if (!ctx.relayOnly) {
         menus(local ? LOCAL_MENU_IDS : MENU_IDS, local ? LOCAL_GOTO_KEY_ID : GOTO_KEY_ID,
               local ? LOCAL_PROJECTOR_ACTION_ID : PROJECTOR_ACTION_ID);
+        ringKeys(local ? LOCAL_RING_KEY_IDS : RING_KEY_IDS);
       }
       if (local) thisPcMenus(); // 🏘 and 👥: on this copy even when it only relays (THIS_PC_MENU_IDS)
       if (local) keepParty();

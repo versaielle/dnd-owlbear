@@ -27,8 +27,8 @@
 // Every Owlbear call and fetch goes through `api` and `mods`, so check_bridge.mjs can run it
 // against a fake room and a fake clock.
 import { CH, DEFAULT_SETTINGS, LS, PANEL_PORTS, RPC_PATHS, canSeal, lsGet, lsSet, on, seal, send, setConnection,
-  setSceneWrite } from "./bus.js?v=ef5a062-d6f6ba6";
-import { RING_KEY, TARGET_COLOR } from "./keys.js?v=ef5a062-d6f6ba6";
+  setSceneWrite } from "./bus.js?v=2094e30";
+import { RING_KEY, TARGET_COLOR, targetRingColor } from "./keys.js?v=2094e30";
 
 const HELLO_TIMEOUT_MS = 800; // per port, when looking for the panel
 const FIND_RETRY_MS = 30000; // no panel found: look again
@@ -459,13 +459,18 @@ export function startBridge(api, ctx, mods = {}) {
     if (old) return old(job); // hp stats mark ping unring down cond: the functions from game night 1
     switch (job?.op) {
       case "fx": return playFx(job);
-      case "aim":
-        if (job.aim?.id != null) {
-          aims.delete(String(job.aim.id));
-          aims.set(String(job.aim.id), job.aim);
+      case "aim": {
+        // The ring colour this aim replaces (a Party aim: blue, a monster aim: yellow) is `ring_color`: the
+        // aim's own, else the job's, else blue. (Never `color`: that is the template's tint.) Kept on the spec
+        // so the aimer's no-bridge fallback sees it too.
+        const aimSpec = job.aim && job.aim.ring_color == null && job.ring_color != null ? { ...job.aim, ring_color: job.ring_color } : job.aim;
+        if (aimSpec?.id != null) {
+          aims.delete(String(aimSpec.id));
+          aims.set(String(aimSpec.id), aimSpec);
           while (aims.size > AIMS_KEPT) aims.delete(aims.keys().next().value);
         }
-        return send(api, CH.AIM_START, { audience: "gm", aim: job.aim }, "ALL");
+        return send(api, CH.AIM_START, { audience: "gm", aim: aimSpec }, "ALL");
+      }
       case "aim-show": {
         const { op, ...show } = job;
         if (show.audience !== "gm") delete show.secret; // never hidden ids in the public copy
@@ -719,7 +724,15 @@ export function startBridge(api, ctx, mods = {}) {
     // Rings first, then the panel: a map report already on its way can't undo the targets (F6).
     if (mods.rings?.setTargetRings && (msg.template || msg.target)) {
       try {
-        await mods.rings.setTargetRings(api, caught.map((c) => c.id), { replace: true });
+        // Replace only THIS aim's colour (C10): a Party aim blue, a monster aim yellow; the other
+        // colour, the red (down) and the white rings stay.
+        const color = targetRingColor(aims.get(String(msg.aim_id))?.ring_color);
+        if (color) {
+          await mods.rings.setTargetRings(api, caught.map((c) => c.id), { replace: true, color });
+        } else {
+          // A colour that is neither blue nor yellow: change no rings (the aim still locks below).
+          console.warn("dnd-npc: an aim asked for a ring colour that isn't blue or yellow; rings left as they were");
+        }
       } catch (e) {
         console.warn("dnd-npc: couldn't ring the targets", e);
       }

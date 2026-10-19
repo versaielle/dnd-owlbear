@@ -20,9 +20,9 @@
 // imports gather.js, which imports this) but never fetches anything there. What 🧭 Bring PCs here
 // needs of it (each map's entry, stairs and furniture: numbers, no names) is written on the map
 // images themselves (MAP_INFO_KEY, mapInfo()), so 🧭 works on every copy.
-import OBR, { buildCurve, buildShape } from "./obr-sdk.js?v=ef5a062-d6f6ba6";
-import { directBase } from "./bus.js?v=ef5a062-d6f6ba6";
-import { INTERIOR_KEY, MAP_INFO_KEY, PLACE_KEY } from "./keys.js?v=ef5a062-d6f6ba6";
+import OBR, { buildCurve, buildShape } from "./obr-sdk.js?v=2094e30";
+import { directBase } from "./bus.js?v=2094e30";
+import { INTERIOR_KEY, MAP_INFO_KEY, PLACE_KEY } from "./keys.js?v=2094e30";
 
 const GAP_FLOORS = 2, GAP_ROWS = 3, GAP_TOWN = 6, GAP_COLUMNS = 6; // in squares
 // Owlbear rate-limits requests ("RateLimitHit: Too many requests" with 20-item batches, live
@@ -142,11 +142,14 @@ function curve(id, pts, rest) {
 }
 
 function roomItem(id, room, pts, map, image, sceneDpi, rest = {}) {
+  // A room may carry its own place (one map holding several scenes); otherwise it is a room of its
+  // map's place. Only a non-empty string counts as a room's own place.
+  const place = typeof room.place === "string" && room.place.trim() ? room.place : map.place;
   return curve(id, pts, {
     name: room.name,
     layer: "DRAWING",
     attachedTo: image.id,
-    metadata: { [INTERIOR_KEY]: { map: map.name, kind: "room" }, ...(map.place ? { [PLACE_KEY]: map.place } : {}) },
+    metadata: { [INTERIOR_KEY]: { map: map.name, kind: "room" }, ...(place ? { [PLACE_KEY]: place } : {}) },
     style: { fillColor: ROOM_COLOR, fillOpacity: 0, strokeColor: ROOM_COLOR, strokeOpacity: 1,
              strokeWidth: Math.max(2, sceneDpi / 50), strokeDash: [], tension: 0, closed: true },
     ...rest,
@@ -188,6 +191,17 @@ function link(a, b) {
   // Two-way: each end is an origin whose destination is the other end.
   a.metadata[PORTAL_KEY] = b.id;
   b.metadata[PORTAL_KEY] = a.id;
+  return [a, b];
+}
+
+function landing(id, centre, diameter, attachedTo, mapName, from) {
+  // A one-way portal's far end: where a token lands, never a trigger (no destination of its own).
+  return { ...circle(id, centre, diameter, attachedTo, mapName, from), name: `Landing ← ${from}` };
+}
+
+function oneWay(a, b) {
+  // One-way: a is the trigger, b only its destination.
+  a.metadata[PORTAL_KEY] = b.id;
   return [a, b];
 }
 
@@ -279,12 +293,23 @@ export function plan(json, town, images, sceneDpi, newId) {
     ));
     counts.portals++;
   }
-  // Stairs: each link is listed on both floors, so each pair is made once.
+  // Stairs: each link is listed on both floors, so each pair is made once. A link the other map
+  // doesn't list back is one-way (a doorway between two room maps): a trigger here, and a landing
+  // there with no destination of its own, so a token that arrives doesn't bounce back.
   const seen = new Set();
+  const same = (p, q) => Array.isArray(p) && Array.isArray(q) && Math.abs(p[0] - q[0]) < 0.5 && Math.abs(p[1] - q[1]) < 0.5;
   for (const { map, image, here } of placed.values()) {
     for (const l of map.links || []) {
       const other = placed.get(l.to);
       if (!other) continue;
+      if (!(other.map.links || []).some((r) => r.to === map.name && same(r.at, l.to_at) && same(r.to_at, l.at))) {
+        groups.push(oneWay(
+          circle(newId(), here(l.at), sceneDpi, image.id, map.name, l.to),
+          landing(newId(), other.here(l.to_at), sceneDpi, other.image.id, l.to, map.name),
+        ));
+        counts.portals++;
+        continue;
+      }
       const key = [`${map.name}@${l.at}`, `${l.to}@${l.to_at}`].sort().join("|");
       if (seen.has(key)) continue;
       seen.add(key);
@@ -410,11 +435,13 @@ export async function checkPortals(townId) {
   const portals = all.filter((i) => i.metadata?.[INTERIOR_KEY]?.kind === "portal");
   const linked = all.filter((i) => i.metadata?.[PORTAL_KEY] !== undefined);
   lines.push(`${portals.length} portal circles of ours, ${linked.length} items with a Portals destination`);
+  const landings = new Set(linked.map((i) => i.metadata[PORTAL_KEY]));
   for (const p of portals) {
     const dest = p.metadata?.[PORTAL_KEY];
     const parent = byId.get(p.attachedTo);
     lines.push(`  ${p.name} | on "${parent?.name ?? "?"}" | ${p.layer} ${p.type}/${p.shapeType} at ${r(p.position.x)},${r(p.position.y)}`
-      + ` d=${r(p.width * p.scale.x)} visible=${p.visible} | dest ${dest ? (byId.has(dest) ? "ok" : "MISSING " + dest) : "NONE"}`);
+      + ` d=${r(p.width * p.scale.x)} visible=${p.visible} | dest ${dest ? (byId.has(dest) ? "ok" : "MISSING " + dest)
+        : landings.has(p.id) ? "none (a one-way landing)" : "NONE"}`);
   }
   const tokens = all.filter((i) => i.layer === "CHARACTER").slice(0, 12)
     .map((t) => `${t.text?.plainText || t.name} @ ${r(t.position.x)},${r(t.position.y)}`);

@@ -5,6 +5,21 @@ export const WHO_KEY = "dnd-npc/who"; // on a token: "pc:<character name>" or "n
 // with this key, its colour in style.strokeColor. A BLUE ring marks a spell's target.
 export const RING_KEY = "rodeo.owlbear.colored-rings/metadata";
 export const TARGET_COLOR = "#1a6aff"; // Colored Rings' blue
+// YELLOW: the ring for the NPCs' and monsters' targets (the Battle tab's Foes side; key 2). It must equal
+// Colored Rings' own yellow exactly, or a yellow ring the DM places by hand there is not counted.
+// The hex is NOT verified: nothing in this repo records Colored Rings' palette.
+// CHECK AT THE DELL LIVE TEST: place one yellow ring by hand in Colored Rings and read the colour the
+// panel's map report gives it; if it differs, change this one line (and the server's copy of it).
+export const FOE_COLOR = "#ffd633";
+// The two ring colours a target may take (a Party aim is blue, a monster aim is yellow): the aim's
+// `ring_color` (NOT its `color`, which is the template's tint). Nothing (or empty) is blue; exactly blue or
+// yellow (any case) is that colour; anything else is null, and the caller then changes NO rings (an aim
+// must never be able to replace the red (down) or white (conditions) rings, nor ring in a colour nobody meant).
+export function targetRingColor(c) {
+  const s = String(c ?? "").trim().toLowerCase();
+  if (!s) return TARGET_COLOR;
+  return s === TARGET_COLOR ? TARGET_COLOR : s === FOE_COLOR ? FOE_COLOR : null;
+}
 export const DOWN_COLOR = "#ff4d4d"; // Colored Rings' red: the creature is down at 0 HP
 export const CHOOSE_COLOR = "#ffffff"; // Colored Rings' white: show this token's conditions on the panel
 // D&D conditions on a token: the list is kept on the token itself (its metadata), and the

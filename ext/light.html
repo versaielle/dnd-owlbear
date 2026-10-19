@@ -41,15 +41,15 @@
 // Below the chips it says what it did ("Ana carries a torch (40 ft)") and what's missing
 // (no table screen heard, a screen on an older build), from the screens this GM copy has heard.
 // A light from a spell cast on the panel is kept apart: shown, never changed here.
-import OBR from "./obr-sdk.js?v=ef5a062-d6f6ba6";
-import { CH, isLocalOrigin, on, send } from "./bus.js?v=ef5a062-d6f6ba6";
-import { LIGHT_KEY, PARTY_KEY } from "./keys.js?v=ef5a062-d6f6ba6";
-import { SOURCES } from "./fx/lights.js?v=ef5a062-d6f6ba6";
-import * as LM from "./fx/lightmeta.js?v=ef5a062-d6f6ba6";
-import { readGrid } from "./fx/darkness.js?v=ef5a062-d6f6ba6";
-import { writeNow } from "./fx/lightwriter.js?v=ef5a062-d6f6ba6";
-import { cleanParty } from "./gather.js?v=ef5a062-d6f6ba6";
-import { autoKind, describe, editFor, effectiveLight, lightName, reachOf, screenWarnings, uiCtx } from "./lightui.js?v=ef5a062-d6f6ba6";
+import OBR from "./obr-sdk.js?v=2094e30";
+import { CH, isLocalOrigin, on, send } from "./bus.js?v=2094e30";
+import { LIGHT_KEY, PARTY_KEY } from "./keys.js?v=2094e30";
+import { SOURCES } from "./fx/lights.js?v=2094e30";
+import * as LM from "./fx/lightmeta.js?v=2094e30";
+import { readGrid } from "./fx/darkness.js?v=2094e30";
+import { writeNow } from "./fx/lightwriter.js?v=2094e30";
+import { cleanParty } from "./gather.js?v=2094e30";
+import { autoKind, describe, editFor, effectiveLight, lightName, reachOf, screenWarnings, uiCtx } from "./lightui.js?v=2094e30";
 
 const HOST = isLocalOrigin(location.origin) ? "local" : "pages";
 const grid = document.getElementById("grid");
