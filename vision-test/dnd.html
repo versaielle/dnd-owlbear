@@ -18,9 +18,9 @@
 // last tab used with the same tabs on this screen, else the first offered). The 📺 Projector here tab
 // is this page: one button doing what the old "📺 Projector here" entry's click did (views.js
 // aimProjector on the item clicked, named as before, and the same notices); then the popover closes.
-import OBR from "./obr-sdk.js?v=8f4acd5";
-import { DND_POPOVER_ID, readParams } from "./dndmenu.js?v=8f4acd5";
-import { route, showTabs, tabHref } from "./tabs.js?v=8f4acd5";
+import OBR from "./obr-sdk.js?v=c5ec1d6";
+import { DND_POPOVER_ID, readParams } from "./dndmenu.js?v=c5ec1d6";
+import { route, showTabs, tabHref } from "./tabs.js?v=c5ec1d6";
 
 const params = readParams(location.search);
 const aim = document.getElementById("aim");
@@ -36,7 +36,7 @@ async function aimHere() {
   try {
     // views.js and fx/pcs.js load only on the 📺 tap, so a failure there can't stop the other tabs
     // from opening (review of #201); it lands in the notice below.
-    const [{ aimProjector }, { tokenLabel }] = await Promise.all([import("./views.js?v=8f4acd5"), import("./fx/pcs.js?v=8f4acd5")]);
+    const [{ aimProjector }, { tokenLabel }] = await Promise.all([import("./views.js?v=c5ec1d6"), import("./fx/pcs.js?v=c5ec1d6")]);
     const r = await aimProjector(OBR, { item: item?.id ?? id, label: tokenLabel(item).replace(/\.(png|jpe?g|webp|gif|avif)$/i, "") });
     OBR.notification.show(r.text, r.ok ? "SUCCESS" : "WARNING");
   } catch (e) {

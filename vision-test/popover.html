@@ -136,11 +136,11 @@
 // draws and aims. Both boxes hear every LOCAL message, so this box tags what it asks with its own
 // copy's host and only shows the answers from its own copy. While this copy only relays (relay_only),
 // its box shows the status line, ✅ Check and ⚙ Setup, and says everything else is in the other box.
-import OBR from "./obr-sdk.js?v=8f4acd5";
-import { CH, LS, QUALITIES, ask, isLocalOrigin, lsGet, lsSet, on, send } from "./bus.js?v=8f4acd5";
-import { goToPc, pcLabel, scenePcs } from "./goto.js?v=8f4acd5";
-import { noPcsText } from "./gather.js?v=8f4acd5";
-import { FOG_LOG_LOCAL_CH, PROJECTOR_KEY } from "./keys.js?v=8f4acd5";
+import OBR from "./obr-sdk.js?v=c5ec1d6";
+import { CH, LS, QUALITIES, ask, isLocalOrigin, lsGet, lsSet, on, send } from "./bus.js?v=c5ec1d6";
+import { goToPc, pcLabel, scenePcs } from "./goto.js?v=c5ec1d6";
+import { noPcsText } from "./gather.js?v=c5ec1d6";
+import { FOG_LOG_LOCAL_CH, PROJECTOR_KEY } from "./keys.js?v=c5ec1d6";
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
@@ -372,7 +372,7 @@ OBR.onReady(async () => {
     else logWaiting = m;
   });
   // 📺 Projector: loaded on its own too.
-  import("./views.js?v=8f4acd5").then((m) => {
+  import("./views.js?v=c5ec1d6").then((m) => {
     views = m;
     projectorBox();
   }).catch((e) => {
@@ -380,7 +380,7 @@ OBR.onReady(async () => {
     $("pj-view").hidden = true;
   });
   // 🔥 Light: loaded on its own, so the rest of this box works whatever happens to it.
-  import("./lightpanel.js?v=8f4acd5").then((m) => {
+  import("./lightpanel.js?v=c5ec1d6").then((m) => {
     const css = document.createElement("style");
     css.textContent = m.LIGHTING_CSS;
     document.head.append(css);

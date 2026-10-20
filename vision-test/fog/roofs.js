@@ -19,7 +19,9 @@
 // a room's...), or one something is attached to. One addItems for the new pieces (ROOF_BATCH a call),
 // then one deleteItems for the originals: each its own job of ONE Owlbear call, after any write that is
 // due. A new piece's id comes from its original's (roofId), so a take-in cut short (a failed delete,
-// a reload, a second writer) never adds a piece twice: the next one only deletes the original. A
+// a reload, a second writer) never adds a piece twice: the next one only deletes the original. An add
+// with no answer in time may still land: before that original is added again, its piece is asked of
+// Owlbear (one getItems), and if it's there the original is only deleted. A
 // failure backs off that original alone (ROOF_RETRY_MS doubling to ROOF_RETRY_MAX_MS; a batch that
 // fails is tried one original at a time); after ROOF_GIVE_UP failures (Owlbear's rate limit not
 // counted) that original is given up, said once in the live log, until 🛖 goes off and on again.
@@ -39,6 +41,7 @@
 // THE WRITER (createRoofs, on the one GM screen that writes the explored memory: ctx.isAnswerer()).
 // Each pass: the plan, compared with the pieces as the snapshot has them; only the pieces that differ
 // are written, visible + position + scale + rotation in one updateItems (at most ROOF_BATCH a call).
+// Two items with one id (a late add, a handoff) are planned and compared by the first (firstPerId).
 // One job (a write, or one take-in call) at a time, never awaited by the pass; writes go first, so a
 // write waits for one take-in call at most (ROOF_TAKE_TIMEOUT_MS when Owlbear doesn't answer). A job is
 // ONE Owlbear call raced against its timeout, so the job has settled (and `inflight` is cleared) when
@@ -50,13 +53,14 @@
 // it never fails fog.js's pass. A take-in round is said as it starts ("taking in N") and ends ("took in
 // N; M placed, K waiting: why").
 //
-// WHY NOTHING HAPPENED (every GM screen, the writer too, while 🌫 Our fog is on; roofMisses, pure): said
-// once per piece and reason in the 🪵 Live log: a picture with " roof " in its name that doesn't read
-// as a piece's; a piece or an original whose floor isn't in the scene (by name or label); no room line,
+// WHY NOTHING HAPPENED (every GM screen, the writer too, while 🌫 Our fog is on and 🛖 is on or a piece
+// is in the scene; roofMisses, pure): said once per piece and reason in the 🪵 Live log (until 🌫 goes
+// off; an older piece's until the scene closes): a picture with " roof " in its name that doesn't read
+// as a piece's (never a token's); a piece or an original whose floor isn't in the scene (by name or label); no room line,
 // an older piece, no size; an original on a token layer, carrying our keys, or with something attached.
 // And once per new count, the originals nobody takes in from this screen: dropped while 🛖 is off, or
-// (it isn't the writer) waiting, and why (ctx.writerWhy: its doors not started, still settling with the
-// seconds left, or another GM screen's name). 🌫 off: lightpanel.js says "🌫 is off: roofs do nothing"
+// (it isn't the writer) still there ROOF_WAIT_MS after it first saw them (at most one such line per
+// ROOF_WAIT_MS), and why (ctx.writerWhy: its doors not started, or another GM screen's name). 🌫 off: lightpanel.js says "🌫 is off: roofs do nothing"
 // (roofOriginals), as fog.js reads nothing then. A PC crossing a room's line: the item change
 // gives fog.js a pass (SETTLE_MS, at most MAX_WAIT_MS in a long drag), this part's sync starts the
 // write at once, and one round-trip later every screen has it.
@@ -71,7 +75,7 @@
 // above the roofs (does it cut them for the players? a live check), and the memory below them.
 //
 //   slug(s), normName(s), parseRoofName(name) -> {floor, room, x, y, w} | null
-//   roofFields(item), roofAt(item), roofId(originalId), isRoof(item)
+//   roofFields(item), roofAt(item), roofId(originalId), isRoof(item), firstPerId(items)
 //   cleanRoofs(v), roofsOn(sceneMeta), roofsValue(on, now)
 //   toScene(image, p, sceneDpi), ratioOf(floor), placePiece(floor, piece, sceneDpi) -> {position, scale, rotation} | null
 //   roomPolygon(curve), exploredShare(floor, rect, polys, cache), parkSpot(items, dpi)
@@ -83,10 +87,10 @@
 //
 // No place names in this file: it is published, and the publish's leak guard holds them back.
 
-import { EXPLORED_KEY, FOG_KEY, INTERIOR_KEY, MAP_INFO_KEY, ROOF_KEY, ROOFS_KEY } from "../keys.js?v=8f4acd5";
-import { centreOf, mapRects } from "../views.js?v=8f4acd5";
-import { pointInPolygon } from "./los.js?v=8f4acd5";
-import { readExplored } from "./shapes.js?v=8f4acd5";
+import { EXPLORED_KEY, FOG_KEY, INTERIOR_KEY, MAP_INFO_KEY, ROOF_KEY, ROOFS_KEY } from "../keys.js?v=c5ec1d6";
+import { centreOf, mapRects } from "../views.js?v=c5ec1d6";
+import { pointInPolygon } from "./los.js?v=c5ec1d6";
+import { readExplored } from "./shapes.js?v=c5ec1d6";
 
 export const ROOF_LAYER = "FOG";
 export const ROOF_Z = -0.5; // between the memory's cut (-1) and our sight lights and walls (0)
@@ -100,6 +104,7 @@ export const ROOF_RETRY_MS = 1000; // a failed job's back-off (the writes', or o
 export const ROOF_RETRY_MAX_MS = 30000; // ...up to this
 export const ROOF_ECHO_MS = 3000; // a value just written isn't sent again this long
 export const ROOF_SAME_WRITES = 3; // a value that never reads back equal is sent this often, then left
+export const ROOF_WAIT_MS = 10000; // a GM screen says originals wait once they've been there this long, at most once this often
 export const ROOF_MAJORITY = 0.5; // a room more explored than this lifts while a PC is in the building
 export const ROOF_SAMPLES = 20; // the explored share is sampled on this many x this many points (each part)
 export const PARK_STEP = 1000; // the park spot moves in steps this big (scene px), so it rarely moves
@@ -160,6 +165,12 @@ export function roofAt(item) {
 export const roofId = (originalId) => `roof-${originalId}`;
 // One of ours: an image carrying ROOF_KEY.
 export const isRoof = (i) => !!i && (i.type === "IMAGE" || i.type === undefined) && isObj(i.metadata?.[ROOF_KEY]);
+// The first item of each id: a scene holding two items with one id (an add's late answer after its
+// retry, two writers in a handoff) is planned and compared by its first only, so the writes never take turns.
+export function firstPerId(list) {
+  const seen = new Set();
+  return (Array.isArray(list) ? list : []).filter((i) => !seen.has(i?.id) && !!seen.add(i?.id));
+}
 const isMapImage = (i) => !!i && i.layer === "MAP" && (i.type === undefined || i.type === "IMAGE");
 
 // ---- the switch's value ----
@@ -346,7 +357,7 @@ const newer = (a, b) => a.at > b.at || (a.at === b.at && String(a.p.id) < String
 // What every piece should be now: shown over its room, or hidden at the park spot. Pure.
 export function roofPlan(snap, { cache = null } = {}) {
   const items = Array.isArray(snap?.items) ? snap.items : [];
-  const pieces = items.filter(isRoof);
+  const pieces = firstPerId(items.filter(isRoof)); // one entry per id
   if (!pieces.length) return [];
   const dpi = finite(snap?.grid?.dpi) && snap.grid.dpi > 0 ? snap.grid.dpi : 150;
   const park = parkSpot(items, dpi);
@@ -448,8 +459,9 @@ export function roofOriginals(items) {
 }
 
 // Pictures that look meant as pieces (" roof " in the name) but whose name doesn't read as one (Owlbear
-// may have changed or cut it). A "(DM)" name never counts.
+// may have changed or cut it). A "(DM)" name never counts, nor a token (CHARACTER, MOUNT: "Kobold on the roof edge").
 export const unreadableNames = (items) => (Array.isArray(items) ? items : []).filter((i) => i?.type === "IMAGE"
+  && !TOKEN_LAYERS.includes(i.layer)
   && !isObj(i.metadata?.[ROOF_KEY]) && typeof i.name === "string" && / roof /i.test(i.name) && !DM_RE.test(i.name) && !parseRoofName(i.name));
 
 const STATIC_MISSES = ["no name", "older duplicate", "no floor", "no room", "no size"];
@@ -596,7 +608,10 @@ export function createRoofs(api = {}, ctx = {}) {
   let syncError = null;
   let round = null; // the take-in on its way: {ids, done, given} (original ids), said as it starts and ends
   let saidWaiting = null; // the GM screen's last "waiting" / "dropped while 🛖 is off" line (its count and why)
+  let waitSince = new Map(); // the GM screen's (not the writer's): original id -> when it first saw it waiting
+  let waitSaidAt = -Infinity, waitT = null, waitSnap = null; // its last "waiting" line's time; its look-again timer
   let diag = new Set(); // the GM screen's "why nothing happened" lines said ("id|why|name"): until 🌫 goes off or the scene closes
+  let diagDup = new Set(); // ...its "older duplicate" ones (a re-upload's normal state): until the scene closes
   let cache = new Map(); // exploredShare's
   let writes = 0, takesDone = 0, lastWriteAt = null;
   let last = { pieces: 0, shown: 0, waiting: 0, why: {} };
@@ -652,41 +667,79 @@ export function createRoofs(api = {}, ctx = {}) {
   };
 
   // On a GM screen (the writer too): why each piece or original can't be placed or taken in, once each.
+  // Only while 🛖 is on or a roof piece is in the scene (Thursday, 🛖 never tapped: nothing said).
   function diagnose(snap) {
     if (!gmScreen()) return;
+    if (!roofsOn(snap?.sceneMeta) && !(Array.isArray(snap?.items) ? snap.items : []).some(isRoof)) return;
     for (const m of roofMisses(snap)) {
       const key = `${m.id}|${m.why}|${m.name}`;
-      if (diag.has(key)) continue;
-      if (diag.size > 2000) diag.clear();
-      diag.add(key);
+      const set = m.why === "older duplicate" ? diagDup : diag;
+      if (set.has(key)) continue;
+      if (set.size > 2000) set.clear();
+      set.add(key);
       log(missLine(m));
     }
   }
 
+  function unwait() {
+    if (waitT != null) safe(() => T.clearTimeout(waitT));
+    waitT = null;
+  }
+  // The GM screen looks again at `at` (an original's ROOF_WAIT_MS up, or the line's own pause over).
+  function waitAgain(at) {
+    unwait();
+    if (!finite(at)) return;
+    waitT = T.setTimeout(() => {
+      waitT = null;
+      const s = safe(() => ctx.snapshot?.(), null) || waitSnap;
+      if (s) sync(s);
+    }, Math.max(0, at - now()));
+  }
+
   // On a GM screen: the originals in the scene that nobody takes in here, said once per new count (and
-  // reason): dropped while 🛖 is off, or (this screen not the writer) waiting, and why (ctx.writerWhy).
+  // reason): dropped while 🛖 is off (at once), or (this screen not the writer) waiting, and why
+  // (ctx.writerWhy): only the originals still here ROOF_WAIT_MS after this screen first saw them (a
+  // healthy take-in is over long before), and at most one such line per ROOF_WAIT_MS.
   function sayWaiting(snap, writing) {
     if (!gmScreen()) return;
     const meta = snap?.sceneMeta;
-    let key = null, text = null;
+    const t = now();
+    const ids = new Set(bothOn(meta) && !writing ? takeInList(snap).map((x) => x.item.id) : []);
+    for (const id of [...waitSince.keys()]) if (!ids.has(id)) waitSince.delete(id);
+    for (const id of ids) if (!waitSince.has(id)) waitSince.set(id, t);
+    let key = null, text = null, next = Infinity;
     if (fogIsOn(meta) && !roofsOn(meta)) {
       const n = originalsIn(snap).length;
       if (n) {
         key = `off ${n}`;
         text = `🛖 ${n} roof piece${n === 1 ? "" : "s"} dropped while 🛖 is off: tap 🛖 to take ${n === 1 ? "it" : "them"} in`;
       }
-    } else if (bothOn(meta) && !writing) {
-      const n = takeInList(snap).length;
+    } else if (ids.size) {
+      let n = 0;
+      for (const at of waitSince.values()) {
+        if (t - at >= ROOF_WAIT_MS) n++;
+        else next = Math.min(next, at + ROOF_WAIT_MS);
+      }
       if (n) {
         const why = safe(() => ctx.writerWhy?.(), null);
         key = `wait ${n} ${why?.kind || "other"} ${why?.who || ""}`;
-        text = `🛖 ${n} roof piece${n === 1 ? " is" : "s are"} waiting: `
+        text = `🛖 ${n} roof piece${n === 1 ? " is" : "s are"} still waiting after ${Math.round(ROOF_WAIT_MS / 1000)} s: `
           + (why?.text || "another GM screen writes the roofs (reload every DM browser onto this copy)");
+        if (key !== saidWaiting && t < waitSaidAt + ROOF_WAIT_MS) {
+          // the last such line was under ROOF_WAIT_MS ago: said then, if still so
+          waitSnap = snap;
+          waitAgain(Math.min(next, waitSaidAt + ROOF_WAIT_MS));
+          return;
+        }
       }
     }
+    waitSnap = snap;
+    waitAgain(next);
     if (key === saidWaiting) return;
     saidWaiting = key;
-    if (text) log(text);
+    if (!text) return;
+    log(text);
+    if (key.startsWith("wait ")) waitSaidAt = t;
   }
 
   // The take-in round's end: every original of it taken in (its piece in the snapshot) or given up.
@@ -728,7 +781,7 @@ export function createRoofs(api = {}, ctx = {}) {
     const t = now();
     const items = Array.isArray(snap?.items) ? snap.items : [];
     const dpi = finite(snap?.grid?.dpi) && snap.grid.dpi > 0 ? snap.grid.dpi : 150;
-    const byId = snap?.byId instanceof Map ? snap.byId : new Map(items.map((i) => [i.id, i]));
+    const byId = new Map(firstPerId(items).map((i) => [i.id, i])); // the first of an id, as the plan has it
     const plan = roofPlan(snap, { cache });
     const cands = takeInList(snap);
     if (!bothOn(snap?.sceneMeta)) {
@@ -834,14 +887,16 @@ export function createRoofs(api = {}, ctx = {}) {
   const stOf = (x) => {
     let st = takes.get(x.item.id);
     if (!st) {
-      st = { name: String(x.item.name ?? ""), fails: 0, backoff: 0, retryAt: -Infinity, solo: false, gaveUp: false, added: false, goneUntil: -Infinity, error: null };
+      st = { name: String(x.item.name ?? ""), fails: 0, backoff: 0, retryAt: -Infinity, solo: false, gaveUp: false, added: false, unsure: false,
+        goneUntil: -Infinity, error: null };
       takes.set(x.item.id, st);
     }
     return st;
   };
 
   // The next take-in call, if one is due: the adds first (a batch of the originals not tried alone,
-  // else one), then the deletes of the originals whose piece is there. -> whether one started.
+  // else one; an original whose add timed out is first looked for, as that add may land late), then
+  // the deletes of the originals whose piece is there. -> whether one started.
   function takeStep(cands, items, dpi, t) {
     if (!cands.length) return false;
     const have = new Set(items.filter(isRoof).map((i) => i.id));
@@ -871,7 +926,9 @@ export function createRoofs(api = {}, ctx = {}) {
     }
     for (const x of waiting) round.ids.add(x.item.id);
     const toAdd = ready.filter((x) => !have.has(roofId(x.item.id)) && !takes.get(x.item.id)?.added);
-    if (toAdd.length) startAdd(pick(toAdd), items, dpi);
+    const unsure = toAdd.filter((x) => takes.get(x.item.id)?.unsure);
+    if (unsure.length) startLook(unsure.slice(0, ROOF_BATCH));
+    else if (toAdd.length) startAdd(pick(toAdd), items, dpi);
     else startDelete(pick(ready));
     return true;
   }
@@ -883,7 +940,28 @@ export function createRoofs(api = {}, ctx = {}) {
     const add = list.map((x) => buildRoof(api, x.item, x.fields, park, dpi, at));
     startJob("take-in", () => OBR().scene.items.addItems(add), ROOF_TAKE_TIMEOUT_MS, {
       ok: () => { for (const x of list) Object.assign(stOf(x), { added: true, fails: 0, backoff: 0, retryAt: -Infinity, error: null }); },
-      fail: (err) => takeFailed(list, err, "adding the roof piece"),
+      fail: (err) => {
+        if (err?.timedOut) for (const x of list) stOf(x).unsure = true; // it may still land: looked for before adding again
+        takeFailed(list, err, "adding the roof piece");
+      },
+      after: () => { takeNextAt = now() + ROOF_PAUSE_MS; },
+    });
+  }
+
+  // The originals whose add timed out: their pieces asked of Owlbear (one getItems). One there (that add
+  // landed, its answer late) isn't added again: its original is deleted next. The others are added again.
+  function startLook(list) {
+    const ids = list.map((x) => roofId(x.item.id));
+    startJob("take-in", () => OBR().scene.items.getItems(ids), ROOF_TAKE_TIMEOUT_MS, {
+      ok: (found) => {
+        const there = new Set((Array.isArray(found) ? found : []).filter(isRoof).map((i) => i.id));
+        for (const x of list) {
+          const st = stOf(x);
+          st.unsure = false;
+          if (there.has(roofId(x.item.id))) st.added = true;
+        }
+      },
+      fail: (err) => { for (const x of list) takeFailed([x], err, "looking for the roof piece"); }, // each backs off
       after: () => { takeNextAt = now() + ROOF_PAUSE_MS; },
     });
   }
@@ -948,16 +1026,18 @@ export function createRoofs(api = {}, ctx = {}) {
       try {
         const answer = Promise.resolve().then(call);
         answer.catch(() => {}); // a call that answers after its timeout is no unhandled rejection
-        await Promise.race([answer, new Promise((_, reject) => {
+        return await Promise.race([answer, new Promise((_, reject) => {
           timer = T.setTimeout(() => {
             timer = null;
-            reject(new Error(`no answer from Owlbear in ${Math.round(ms / 1000)} s`));
+            const err = new Error(`no answer from Owlbear in ${Math.round(ms / 1000)} s`);
+            err.timedOut = true; // the call may still land
+            reject(err);
           }, ms);
         })]);
       } finally {
         if (timer != null) safe(() => T.clearTimeout(timer));
       }
-    })().then(() => { if (e === epoch) safe(() => ok?.()); }, (err) => { if (e === epoch) safe(() => fail?.(err)); })
+    })().then((v) => { if (e === epoch) safe(() => ok?.(v)); }, (err) => { if (e === epoch) safe(() => fail?.(err)); })
       .finally(() => {
         if (e === epoch) safe(() => after?.());
         if (inflight !== me) return;
@@ -988,8 +1068,8 @@ export function createRoofs(api = {}, ctx = {}) {
     reset();
     writer = false;
     sawPieces = false;
-    diag = new Set();
-    saidWaiting = null;
+    diag = new Set(); // said again on the next 🌫 on; an older duplicate's line isn't (diagDup)
+    forgetWaiting();
     if (!had) return Promise.resolve({ cleared: true });
     const O = OBR();
     (async () => {
@@ -1008,7 +1088,16 @@ export function createRoofs(api = {}, ctx = {}) {
     writer = false;
     sawPieces = false;
     diag = new Set();
+    diagDup = new Set();
+    forgetWaiting();
+  }
+
+  function forgetWaiting() {
+    unwait();
     saidWaiting = null;
+    waitSince = new Map();
+    waitSaidAt = -Infinity;
+    waitSnap = null;
   }
 
   function status() {
