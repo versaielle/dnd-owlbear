@@ -1,0 +1,23 @@
+{
+  "bolt": {"per_cell": 45, "travel_min": 250, "travel_max": 500, "tail": 300},
+  "ray": {"dur": 900, "hit": 0.18, "stagger": 120},
+  "arrow": {"per_cell": 35, "travel_min": 250, "travel_max": 550, "hit": 0.75, "thrown": 1.1},
+  "burst": {"dur": 1400, "hit": 0.02, "small_dur": 900},
+  "cone": {"dur": 1100, "hit": 0.25},
+  "line": {"dur": 800, "hit": 0.05},
+  "cube": {"dur": 1000, "hit": 0.1},
+  "glow": {"dur": 1100, "hit": 0.2},
+  "smite": {"dur": 750, "hit": 0.03},
+  "sparkle": {"dur": 1000, "hit": 0.15},
+  "slash": {"dur": 450, "hit": 0.25},
+  "thrust": {"dur": 450, "hit": 0.3},
+  "smash": {"dur": 450, "hit": 0.25},
+  "bite": {"dur": 500, "hit": 0.3},
+  "impact": {"dur": 350, "hit": 0.0},
+  "resist": {"dur": 600, "hit": 0.1},
+  "death": {"dur": 1200, "hit": 0.5, "after": 150},
+  "number": {"dur": 900, "after": 50},
+  "flash": {"dur": 250},
+  "shake": {"dur": 350},
+  "zone": {"fade_in": 500, "fade_out": 600}
+}
