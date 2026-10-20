@@ -20,9 +20,9 @@
 // thisPcMenus). A button for each job the old right-click entries ran, with their labels. A tap asks
 // this copy's background to run it (CH.LOCAL_ASK, need "map-setup", host "local"): the job runs
 // there, exactly as before, with the same notices, so closing this popover doesn't stop it.
-import OBR from "./obr-sdk.js?v=c5ec1d6";
-import { CH, send } from "./bus.js?v=c5ec1d6";
-import { MAP_SETUP_JOBS, MAP_SETUP_NEED, MAP_SETUP_POPOVER_ID } from "./dndmenu.js?v=c5ec1d6";
+import OBR from "./obr-sdk.js?v=07010d1";
+import { CH, send } from "./bus.js?v=07010d1";
+import { MAP_SETUP_JOBS, MAP_SETUP_NEED, MAP_SETUP_POPOVER_ID } from "./dndmenu.js?v=07010d1";
 
 const params = new URLSearchParams(location.search);
 const id = (params.get("ids") || "").split(",").filter(Boolean)[0] || "";

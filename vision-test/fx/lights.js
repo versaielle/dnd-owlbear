@@ -13,7 +13,7 @@
 // and one dim pass over every public seer's band, leaving every public light and every seer's
 // own sight in colour (darkvisionPlan, darkvisionShader below).
 
-import { CLOCK, CLOCK_STATIC, HELPERS } from "./shaders.js?v=c5ec1d6";
+import { CLOCK, CLOCK_STATIC, HELPERS } from "./shaders.js?v=07010d1";
 
 // D&D light sources: bright and dim reach in feet, and the look that draws them (5e PHB/SRD
 // numbers; the brazier is a house number, like a torch).

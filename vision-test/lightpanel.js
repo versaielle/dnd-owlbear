@@ -50,13 +50,13 @@
 // with the lights writer's own ctx, in one write (fx/lightwriter.js writeNow): the writer's next
 // pass plans nothing more. Any control here that changes an input takes a scene released to
 // Smoke back (SCENE_LIGHTING_KEY.managed true); "Release lights to Smoke" sets it false.
-import { FOG_KEY, MAP_DARKNESS_KEY, PARTY_KEY, SCENE_LIGHTING_KEY } from "./keys.js?v=c5ec1d6";
-import { SOURCES } from "./fx/lights.js?v=c5ec1d6";
-import { isMap, mapDarkness, readGrid, sceneDarkness } from "./fx/darkness.js?v=c5ec1d6";
-import { writeNow } from "./fx/lightwriter.js?v=c5ec1d6";
-import { cleanParty } from "./gather.js?v=c5ec1d6";
+import { FOG_KEY, MAP_DARKNESS_KEY, PARTY_KEY, SCENE_LIGHTING_KEY } from "./keys.js?v=07010d1";
+import { SOURCES } from "./fx/lights.js?v=07010d1";
+import { isMap, mapDarkness, readGrid, sceneDarkness } from "./fx/darkness.js?v=07010d1";
+import { writeNow } from "./fx/lightwriter.js?v=07010d1";
+import { cleanParty } from "./gather.js?v=07010d1";
 import { DARKNESS, applyMeta, autoKind, carriers, describe, editFor, lightingOf, lightingRows, managed, releaseItem,
-         screenLine, screenWarnings, uiCtx } from "./lightui.js?v=c5ec1d6";
+         screenLine, screenWarnings, uiCtx } from "./lightui.js?v=07010d1";
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 const COMMON = ["candle", "torch", "lamp", "hooded_lantern", "brazier"].filter((k) => SOURCES[k]);
@@ -604,8 +604,8 @@ export function startLighting(OBR, el, { build = "", ask = null } = {}) {
       const r = fogMod.roofsOn(sceneMeta);
       const rArming = !r && Date.now() - roofsArmed < 5000;
       box.append(chip(r ? "✓ 🛖 Roofs" : rArming ? "🛖 Tap again: on for every screen" : "🛖 Roofs", r,
-        r ? "The building roofs are on in this scene (they show while 🌫 Our fog is on). Tap to hide every roof"
-          : "Painted roofs over the rooms no PC is in, on every screen, while 🌫 Our fog is on too (not for game night until rehearsed)",
+        r ? "The building roofs are on in this scene (a building's show while a PC is on its map and 🌫 Our fog is on). Tap to hide every roof"
+          : "Painted roofs over a building's rooms no PC is in, only while a PC is on its map, on every screen, while 🌫 Our fog is on too (not for game night until rehearsed)",
         () => toggleRoofs(!r)));
     }
     el.fog.append(box);
@@ -1000,8 +1000,8 @@ export function startLighting(OBR, el, { build = "", ask = null } = {}) {
     }
   }
 
-  import("./fog/fog.js?v=c5ec1d6").then((m) => { fogMod = m; render(); }, (e) => { fogErr = String(e?.message || e); renderFog(); });
-  import("./fog/mapui.js?v=c5ec1d6").then((m) => { mapUi = m; render(); }, (e) => console.warn("dnd-npc: 🌫 map controls", e));
+  import("./fog/fog.js?v=07010d1").then((m) => { fogMod = m; render(); }, (e) => { fogErr = String(e?.message || e); renderFog(); });
+  import("./fog/mapui.js?v=07010d1").then((m) => { mapUi = m; render(); }, (e) => console.warn("dnd-npc: 🌫 map controls", e));
   OBR.scene.items.onChange(() => refresh());
   OBR.scene.onMetadataChange?.(() => refresh());
   OBR.scene.onReadyChange?.(() => refresh());

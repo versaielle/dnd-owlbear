@@ -4,7 +4,7 @@
 //
 // The snapshot carries the player's RosterEntry, which the DM's panel sends over the bridge:
 // names and numbers only (no spell text), grouped Attacks, Cantrips, then Level N.
-import { areaText } from "../aim/geometry.js?v=c5ec1d6";
+import { areaText } from "../aim/geometry.js?v=07010d1";
 
 export const TITLE = "Your spells & attacks";
 export const HINT_UNLINKED = "Ask the DM to link you on the Party spells page";

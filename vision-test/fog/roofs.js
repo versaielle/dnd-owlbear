@@ -26,17 +26,24 @@
 // fails is tried one original at a time); after ROOF_GIVE_UP failures (Owlbear's rate limit not
 // counted) that original is given up, said once in the live log, until 🛖 goes off and on again.
 //
-// THE RULE (roofPlan, pure). While 🌫 Our fog and 🛖 Roofs are both on, a piece shows, placed over its
-// room (placePiece), unless that room is LIFTED: some PC's middle (hidden PCs too) is inside the room,
-// or some PC is IN THE BUILDING (its middle inside one of this floor's roofed rooms: the rooms that
-// have a piece) and most of the room (over ROOF_MAJORITY of it) is in the floor's explored memory. A
-// PC in the yard or on a porch (no piece) keeps every roof on, and once every PC has left, every roof
-// goes back on. Each room shows its NEWEST piece (the greatest ROOF_KEY.at; none counts as 0; a tie,
-// the lowest id, so the scene's order never matters): an older one (a re-upload's) stays parked and
-// hidden, never deleted. Every other piece (either switch off, a lifted room, an older piece, a floor
-// or room not in the scene, a hidden floor) is hidden AND parked: one stack spot left of every map
-// image (parkSpot), the same for every piece. So a shown piece is always over its room, and a hidden
-// one always parked.
+// THE RULE (roofPlan, pure). While 🌫 Our fog and 🛖 Roofs are both on, a floor's pieces show only
+// while a PC is ON THAT FLOOR'S MAP (the DM, 2026-10-19: "a building's roofs show only while a PC is on
+// its map", so a player who zooms out never sees every building's roofs): some PC's middle (hidden PCs
+// too) has that floor image as the topmost map under it, the floor's rectangle at its current position
+// and scale, yard and porch included (views.js mapAt over the snapshot's rects: the same test as
+// fog/lines.js occupiedMaps, sight.js and shapes.js). Another floor of the same building (its upper
+// floor, a separate map) doesn't count, nor the town. A 🧠 remembered building is no different. On a
+// floor with a PC on it, a piece shows, placed over its room (placePiece), unless that room is LIFTED:
+// some PC's middle is inside the room, or some PC is IN THE BUILDING (its middle inside one of this
+// floor's roofed rooms: the rooms that have a piece) and most of the room (over ROOF_MAJORITY of it) is
+// in the floor's explored memory. A PC in the yard or on a porch (no piece) keeps every roof of that
+// floor on; once every PC has left the floor's map, its roofs are parked again. Each room shows its
+// NEWEST piece (the greatest ROOF_KEY.at; none counts as 0; a tie, the lowest id, so the scene's order
+// never matters): an older one (a re-upload's) stays parked and hidden, never deleted. Every other
+// piece (either switch off, no PC on its floor's map, a lifted room, an older piece, a floor or room
+// not in the scene, a hidden floor) is hidden AND parked: one stack spot left of every map image
+// (parkSpot), the same for every piece. So a shown piece is always over its room, and a hidden one
+// always parked.
 //
 // THE WRITER (createRoofs, on the one GM screen that writes the explored memory: ctx.isAnswerer()).
 // Each pass: the plan, compared with the pieces as the snapshot has them; only the pieces that differ
@@ -60,7 +67,10 @@
 // an older piece, no size; an original on a token layer, carrying our keys, or with something attached.
 // And once per new count, the originals nobody takes in from this screen: dropped while 🛖 is off, or
 // (it isn't the writer) still there ROOF_WAIT_MS after it first saw them (at most one such line per
-// ROOF_WAIT_MS), and why (ctx.writerWhy: its doors not started, or another GM screen's name). 🌫 off: lightpanel.js says "🌫 is off: roofs do nothing"
+// ROOF_WAIT_MS), and why (ctx.writerWhy: its doors not started, or another GM screen's name; or, while
+// originals are still going from the scene, that the writer is still taking them in: no reload advice
+// then). The look-again timer does nothing once this screen has no pass (fog.js going down: its
+// snapshot gone) or its waiting state was dropped (clear(), forget()). 🌫 off: lightpanel.js says "🌫 is off: roofs do nothing"
 // (roofOriginals), as fog.js reads nothing then. A PC crossing a room's line: the item change
 // gives fog.js a pass (SETTLE_MS, at most MAX_WAIT_MS in a long drag), this part's sync starts the
 // write at once, and one round-trip later every screen has it.
@@ -87,10 +97,10 @@
 //
 // No place names in this file: it is published, and the publish's leak guard holds them back.
 
-import { EXPLORED_KEY, FOG_KEY, INTERIOR_KEY, MAP_INFO_KEY, ROOF_KEY, ROOFS_KEY } from "../keys.js?v=c5ec1d6";
-import { centreOf, mapRects } from "../views.js?v=c5ec1d6";
-import { pointInPolygon } from "./los.js?v=c5ec1d6";
-import { readExplored } from "./shapes.js?v=c5ec1d6";
+import { EXPLORED_KEY, FOG_KEY, INTERIOR_KEY, MAP_INFO_KEY, ROOF_KEY, ROOFS_KEY } from "../keys.js?v=07010d1";
+import { centreOf, mapAt, mapRects } from "../views.js?v=07010d1";
+import { pointInPolygon } from "./los.js?v=07010d1";
+import { readExplored } from "./shapes.js?v=07010d1";
 
 export const ROOF_LAYER = "FOG";
 export const ROOF_Z = -0.5; // between the memory's cut (-1) and our sight lights and walls (0)
@@ -364,9 +374,12 @@ export function roofPlan(snap, { cache = null } = {}) {
   const parked = (p, why) => ({ id: p.id, show: false, position: { x: park.x, y: park.y }, scale: { x: 1, y: 1 }, rotation: 0, why });
   if (!fogIsOn(snap?.sceneMeta) || !roofsOn(snap?.sceneMeta)) return pieces.map((p) => parked(p, "off"));
   const index = indexScene(items);
-  const rects = Array.isArray(snap?.rects) ? snap.rects : mapRects(items, dpi);
+  // The snapshot's map rectangles (fog.js buildSnapshot: an uploaded original is no map), else the same here.
+  const rects = Array.isArray(snap?.rects) ? snap.rects : mapRects(items.filter((i) => !(i?.layer === "MAP" && parseRoofName(i?.name))), dpi);
   const middles = pcMiddles(snap, dpi);
   const inside = (polys) => middles.some((c) => polys.some((poly) => pointInPolygon(c, poly)));
+  // The maps a PC is on: the topmost map under each PC's middle (fog/lines.js occupiedMaps' test).
+  const onMaps = new Set(middles.map((c) => mapAt(c, rects)).filter((id) => id != null));
   // Each piece's room (its parts' polygons), and each room's newest piece.
   const info = pieces.map((p) => {
     const f = roofFields(p);
@@ -398,6 +411,7 @@ export function roofPlan(snap, { cache = null } = {}) {
     if (!x.polys.length) return parked(p, "no room");
     const place = placePiece(x.hit.floor, p, dpi);
     if (!place) return parked(p, "no size");
+    if (!onMaps.has(x.hit.floor.id)) return parked(p, "no PC on its map");
     if (isLifted(x.hit.floor, x.polys)) return parked(p, "lifted");
     return { id: p.id, show: true, position: place.position, scale: place.scale, rotation: place.rotation, why: "roof" };
   });
@@ -559,7 +573,8 @@ export async function writeRoofs(O, on, now = Date.now(), { log = null } = {}) {
 // What the DM's box says after a tap.
 export function roofsWords(on, fogNow) {
   if (!on) return "🛖 Roofs are off: every roof piece is hidden";
-  return fogNow ? "🛖 Roofs are on: a roof covers each room no PC is in (and, while a PC is inside, the rooms the party hasn't mostly explored)"
+  return fogNow ? "🛖 Roofs are on: a building's roofs show only while a PC is on its map, over each room no PC is in"
+    + " (and, while a PC is inside, the rooms the party hasn't mostly explored)"
     : "🛖 Roofs are on: they show once 🌫 Our fog is on";
 }
 
@@ -610,6 +625,8 @@ export function createRoofs(api = {}, ctx = {}) {
   let saidWaiting = null; // the GM screen's last "waiting" / "dropped while 🛖 is off" line (its count and why)
   let waitSince = new Map(); // the GM screen's (not the writer's): original id -> when it first saw it waiting
   let waitSaidAt = -Infinity, waitT = null, waitSnap = null; // its last "waiting" line's time; its look-again timer
+  let waitGoneAt = -Infinity; // ...when an original it saw waiting last went from the scene (the writer taking them in)
+  let waitGen = 0; // forgetWaiting() moves it on: a look-again timer from before does nothing
   let diag = new Set(); // the GM screen's "why nothing happened" lines said ("id|why|name"): until 🌫 goes off or the scene closes
   let diagDup = new Set(); // ...its "older duplicate" ones (a re-upload's normal state): until the scene closes
   let cache = new Map(); // exploredShare's
@@ -686,26 +703,38 @@ export function createRoofs(api = {}, ctx = {}) {
     waitT = null;
   }
   // The GM screen looks again at `at` (an original's ROOF_WAIT_MS up, or the line's own pause over).
+  // Nothing once its waiting state is dropped, or once the screen has no pass (fog.js's snapshot gone: 🌫
+  // going off, the doors still stopping); the last pass's snapshot only where the screen keeps none.
   function waitAgain(at) {
     unwait();
     if (!finite(at)) return;
+    const g = waitGen;
     waitT = T.setTimeout(() => {
       waitT = null;
-      const s = safe(() => ctx.snapshot?.(), null) || waitSnap;
+      if (g !== waitGen) return;
+      const s = typeof ctx.snapshot === "function" ? safe(() => ctx.snapshot(), null) : waitSnap;
       if (s) sync(s);
     }, Math.max(0, at - now()));
   }
 
   // On a GM screen: the originals in the scene that nobody takes in here, said once per new count (and
   // reason): dropped while 🛖 is off (at once), or (this screen not the writer) waiting, and why
-  // (ctx.writerWhy): only the originals still here ROOF_WAIT_MS after this screen first saw them (a
-  // healthy take-in is over long before), and at most one such line per ROOF_WAIT_MS.
+  // (ctx.writerWhy; or, while an original it saw waiting went from the scene under ROOF_WAIT_MS ago,
+  // that the writer is still taking them in): only the originals still here ROOF_WAIT_MS after this
+  // screen first saw them (a healthy take-in is over long before), and at most one such line per ROOF_WAIT_MS.
   function sayWaiting(snap, writing) {
     if (!gmScreen()) return;
     const meta = snap?.sceneMeta;
     const t = now();
-    const ids = new Set(bothOn(meta) && !writing ? takeInList(snap).map((x) => x.item.id) : []);
-    for (const id of [...waitSince.keys()]) if (!ids.has(id)) waitSince.delete(id);
+    const looking = bothOn(meta) && !writing;
+    const ids = new Set(looking ? takeInList(snap).map((x) => x.item.id) : []);
+    const inScene = looking && [...waitSince.keys()].some((id) => !ids.has(id))
+      ? new Set((Array.isArray(snap?.items) ? snap.items : []).map((i) => i?.id)) : null;
+    for (const id of [...waitSince.keys()]) {
+      if (ids.has(id)) continue;
+      waitSince.delete(id);
+      if (inScene && !inScene.has(id)) waitGoneAt = t; // gone from the scene: taken in (by the writer)
+    }
     for (const id of ids) if (!waitSince.has(id)) waitSince.set(id, t);
     let key = null, text = null, next = Infinity;
     if (fogIsOn(meta) && !roofsOn(meta)) {
@@ -722,9 +751,14 @@ export function createRoofs(api = {}, ctx = {}) {
       }
       if (n) {
         const why = safe(() => ctx.writerWhy?.(), null);
-        key = `wait ${n} ${why?.kind || "other"} ${why?.who || ""}`;
+        // an original went from the scene within ROOF_WAIT_MS: a writer is taking them in (no reload advice)
+        const taking = t - waitGoneAt < ROOF_WAIT_MS;
+        if (taking) next = Math.min(next, waitGoneAt + ROOF_WAIT_MS); // looked at again then: still going, or stalled (the reload advice)
+        const who = why?.kind === "other" && why?.who ? ` ("${String(why.who).slice(0, 40)}")` : "";
+        key = `wait ${n} ${taking ? "taking" : why?.kind || "other"} ${why?.who || ""}`;
         text = `🛖 ${n} roof piece${n === 1 ? " is" : "s are"} still waiting after ${Math.round(ROOF_WAIT_MS / 1000)} s: `
-          + (why?.text || "another GM screen writes the roofs (reload every DM browser onto this copy)");
+          + (taking ? `another GM screen${who} is still taking them in`
+            : why?.text || "another GM screen writes the roofs (reload every DM browser onto this copy)");
         if (key !== saidWaiting && t < waitSaidAt + ROOF_WAIT_MS) {
           // the last such line was under ROOF_WAIT_MS ago: said then, if still so
           waitSnap = snap;
@@ -1094,9 +1128,11 @@ export function createRoofs(api = {}, ctx = {}) {
 
   function forgetWaiting() {
     unwait();
+    waitGen++;
     saidWaiting = null;
     waitSince = new Map();
     waitSaidAt = -Infinity;
+    waitGoneAt = -Infinity;
     waitSnap = null;
   }
 

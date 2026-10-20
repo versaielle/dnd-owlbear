@@ -11,10 +11,10 @@
 // with CARRIER_KEY {of} and Smoke's torch keys; only while the goblin is lit, shown and doesn't
 // see by itself. Its id is CARRIER_PREFIX + the goblin's id, so every writer names it alike.
 
-import { CARRIER_KEY, PARTY_KEY, PARTY_SENSES_KEY, SCENE_LIGHTING_KEY, SMOKE, WHO_KEY } from "../keys.js?v=c5ec1d6";
-import { LIGHT_PART, SMOKE_DEFAULT_KEYS, effectiveLight, isSecret, lightingOf, planItem, rangeDefaultOf, stable, visionOf, writeLightPart } from "./lightmeta.js?v=c5ec1d6";
-import { isPcToken, nameKey, pcName, whoMarksFor } from "./pcs.js?v=c5ec1d6";
-import { darknessCtx, readGrid } from "./darkness.js?v=c5ec1d6";
+import { CARRIER_KEY, PARTY_KEY, PARTY_SENSES_KEY, SCENE_LIGHTING_KEY, SMOKE, WHO_KEY } from "../keys.js?v=07010d1";
+import { LIGHT_PART, SMOKE_DEFAULT_KEYS, effectiveLight, isSecret, lightingOf, planItem, rangeDefaultOf, stable, visionOf, writeLightPart } from "./lightmeta.js?v=07010d1";
+import { isPcToken, nameKey, pcName, whoMarksFor } from "./pcs.js?v=07010d1";
+import { darknessCtx, readGrid } from "./darkness.js?v=07010d1";
 
 const K = (name) => `${SMOKE}/${name}`;
 export const CARRIER_PREFIX = "dnd-npc-carrier-";
