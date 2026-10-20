@@ -58,7 +58,7 @@
 // is on its way; a value Owlbear never reads back equal is sent ROOF_SAME_WRITES times at most, then
 // left and said once. Every failure is said once per new error in the 🪵 Live log, and in status():
 // it never fails fog.js's pass. A take-in round is said as it starts ("taking in N") and ends ("took in
-// N; M placed, K waiting: why").
+// N; M placed, P parked (no PC on its map), K waiting: why").
 //
 // WHY NOTHING HAPPENED (every GM screen, the writer too, while 🌫 Our fog is on and 🛖 is on or a piece
 // is in the scene; roofMisses, pure): said once per piece and reason in the 🪵 Live log (until 🌫 goes
@@ -97,10 +97,10 @@
 //
 // No place names in this file: it is published, and the publish's leak guard holds them back.
 
-import { EXPLORED_KEY, FOG_KEY, INTERIOR_KEY, MAP_INFO_KEY, ROOF_KEY, ROOFS_KEY } from "../keys.js?v=07010d1";
-import { centreOf, mapAt, mapRects } from "../views.js?v=07010d1";
-import { pointInPolygon } from "./los.js?v=07010d1";
-import { readExplored } from "./shapes.js?v=07010d1";
+import { EXPLORED_KEY, FOG_KEY, INTERIOR_KEY, MAP_INFO_KEY, ROOF_KEY, ROOFS_KEY } from "../keys.js?v=4710872";
+import { centreOf, mapAt, mapRects } from "../views.js?v=4710872";
+import { pointInPolygon } from "./los.js?v=4710872";
+import { readExplored } from "./shapes.js?v=4710872";
 
 export const ROOF_LAYER = "FOG";
 export const ROOF_Z = -0.5; // between the memory's cut (-1) and our sight lights and walls (0)
@@ -129,6 +129,7 @@ const r2 = (x) => Math.round(x * 100) / 100 + 0;
 const r6 = (x) => Math.round(x * 1e6) / 1e6 + 0;
 const DM_RE = /\(dm\)/i;
 const RATE_RE = /RateLimit|Too many requests/i;
+const NO_PC = "no PC on its map"; // roofPlan's why for a piece parked while no PC is on its floor's map
 
 // ---- names ----
 
@@ -649,7 +650,10 @@ export function createRoofs(api = {}, ctx = {}) {
       wakeT = null;
       wakeAt = null;
       if (!alive || e !== epoch) return;
-      const s = safe(() => ctx.snapshot?.(), null) || lastSnap;
+      // Nothing once the screen has no pass (fog.js's snapshot gone: 🌫 going off, its doors still
+      // stopping): run then on the last pass's snapshot as a non-writer, it would drop clear()'s park.
+      // The last pass's snapshot only where the screen keeps none.
+      const s = typeof ctx.snapshot === "function" ? safe(() => ctx.snapshot(), null) : lastSnap;
       if (s) sync(s);
     }, Math.max(0, at - now()));
   }
@@ -777,7 +781,9 @@ export function createRoofs(api = {}, ctx = {}) {
   }
 
   // The take-in round's end: every original of it taken in (its piece in the snapshot) or given up.
-  // "took in N; M placed, K waiting: <why>" (the plan's word for each piece not shown).
+  // "took in N; M placed, P parked (no PC on its map), K waiting: <why>" (the plan's word for each other
+  // piece not shown). A piece parked because no PC is on its floor's map is the rule's normal state, not a
+  // miss: said as "parked". A zero count of either isn't said.
   function roundEnd(plan, items, cands) {
     if (!round) return;
     const here = new Set(items.map((i) => i.id));
@@ -790,11 +796,13 @@ export function createRoofs(api = {}, ctx = {}) {
     const mine = new Set([...round.done].map(roofId));
     const ws = plan.filter((w) => mine.has(w.id));
     const placed = ws.filter((w) => w.show).length;
+    const parked = ws.filter((w) => !w.show && w.why === NO_PC).length;
     const whys = {};
-    for (const w of ws) if (!w.show) whys[w.why] = (whys[w.why] || 0) + 1;
-    const k = ws.length - placed;
-    log(`🛖 took in ${round.done.size}; ${placed} placed, ${k} waiting`
-      + `${k ? `: ${Object.entries(whys).map(([y, c]) => `${c} ${y}`).join(", ")}` : ""}`
+    for (const w of ws) if (!w.show && w.why !== NO_PC) whys[w.why] = (whys[w.why] || 0) + 1;
+    const k = ws.length - placed - parked;
+    log(`🛖 took in ${round.done.size}; ${placed} placed`
+      + `${parked ? `, ${parked} parked (${NO_PC})` : ""}`
+      + `${k ? `, ${k} waiting: ${Object.entries(whys).map(([y, c]) => `${c} ${y}`).join(", ")}` : ""}`
       + `${round.given.size ? ` (${round.given.size} given up)` : ""}`);
     round = null;
   }

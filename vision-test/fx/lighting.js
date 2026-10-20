@@ -63,15 +63,15 @@
 // Their uniforms are worked out again on EVERY item change, at once (cheap arithmetic, one
 // local update): a carried torch's colour moves with the drag; the flames and walls wait for the
 // scene to settle.
-import { CARRIER_KEY, LIGHT_FX_KEY, PARTY_SENSES_KEY, SCENE_LIGHTING_KEY } from "../keys.js?v=07010d1";
+import { CARRIER_KEY, LIGHT_FX_KEY, PARTY_SENSES_KEY, SCENE_LIGHTING_KEY } from "../keys.js?v=4710872";
 import { DV_DARK_BLEND, DV_GREY, DV_SOFT_FT, FLAME_BLEND, WALL_SLOTS, darknessPlan, darkvisionShader, dimFor,
-  flameShader, flameUniforms } from "./lights.js?v=07010d1";
-import { ambientReach, darkRegions, isAmbientLight, mapsExtent, sceneDarkness } from "./darkness.js?v=07010d1";
-import { DEFAULT_LIGHTING, effectiveLight, lightingOf, rangeDefaultOf, visionOf } from "./lightmeta.js?v=07010d1";
-import { nameKey, pcName, tokenLabel } from "./pcs.js?v=07010d1";
-import { finite, footprint, gridOf } from "./place.js?v=07010d1";
-import { readLine, toWorld } from "../fog/lineread.js?v=07010d1";
-import { customUniforms, fillUniforms } from "./shaders.js?v=07010d1";
+  flameShader, flameUniforms } from "./lights.js?v=4710872";
+import { ambientReach, darkRegions, isAmbientLight, mapsExtent, sceneDarkness } from "./darkness.js?v=4710872";
+import { DEFAULT_LIGHTING, effectiveLight, lightingOf, rangeDefaultOf, visionOf } from "./lightmeta.js?v=4710872";
+import { nameKey, pcName, tokenLabel } from "./pcs.js?v=4710872";
+import { finite, footprint, gridOf } from "./place.js?v=4710872";
+import { readLine, toWorld } from "../fog/lineread.js?v=4710872";
+import { customUniforms, fillUniforms } from "./shaders.js?v=4710872";
 
 export const MAX_FLAMES = 12; // flames per screen: each full one makes Owlbear redraw every frame
 export const LIGHT_Z = 1; // on ATTACHMENT: above the tokens, under rings and badges (auto z-indexes are timestamps)
@@ -308,7 +308,7 @@ export function createLights(api = {}, ctx = {}) {
   let full = null;
   const loading = (async () => {
     if (api.OBR && typeof api.buildEffect === "function") return api;
-    const sdk = await import("../obr-sdk.js?v=07010d1");
+    const sdk = await import("../obr-sdk.js?v=4710872");
     return { OBR: sdk.default, buildEffect: sdk.buildEffect, MathM: sdk.MathM, ...api };
   })().then((a) => {
     full = a;
