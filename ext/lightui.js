@@ -10,18 +10,18 @@
 //   editFor(change)                the edit writeNow() runs on a token for {light} / {vision}
 //   planWrite(item, ctx, change)   the same, pure: {metadata, changed} (the offline checks)
 //   describe(item, ctx)            "Ana carries a torch (40 ft)", "Sconce put out — won't relight by itself"
-//   lightingRows(items, ctx)       the list's PCs and lit objects
+//   lightingRows(items, ctx)       the list's PCs, lit objects, and every NPC (lit or not)
 //   screenLine(s), screenWarnings(screens, opts)   the screens heard, and what to do about them
 //
 // Everything the inputs change goes through lightmeta.js's setLight / setVision, then planItem
 // with the writer's ctx, in ONE write (fx/lightwriter.js writeNow): the same pure function on the
 // same inputs as the leader's writer, so a tap writes once and the writer's next pass plans
 // nothing for that token.
-import * as LM from "./fx/lightmeta.js?v=4556f3c";
-import { planCtx } from "./fx/lightwriter.js?v=4556f3c";
-import { SOURCES } from "./fx/lights.js?v=4556f3c";
-import { CARRIER_KEY, LIGHT_KEY, SCENE_LIGHTING_KEY, SMOKE, SPELL_LIGHT_KEY, VISION_KEY } from "./keys.js?v=4556f3c";
-import { pcName, tokenLabel } from "./fx/pcs.js?v=4556f3c";
+import * as LM from "./fx/lightmeta.js?v=56bda6c";
+import { planCtx } from "./fx/lightwriter.js?v=56bda6c";
+import { SOURCES } from "./fx/lights.js?v=56bda6c";
+import { CARRIER_KEY, LIGHT_KEY, SCENE_LIGHTING_KEY, SMOKE, SPELL_LIGHT_KEY, VISION_KEY } from "./keys.js?v=56bda6c";
+import { pcName, tokenLabel } from "./fx/pcs.js?v=56bda6c";
 
 // The scene's (and each map's) darkness, as docs/lights-darkness-spec.md says it: darkness comes
 // from light, per point. The 🔥 Lighting list's chips (lightpanel.js) say these.
@@ -155,14 +155,16 @@ export function describe(item, ctx) {
 
 // ---- the 🔥 Lighting list ----
 
-// {pcs: [...], lit: [...]} for the scene's items: every PC token (roots only: a ring under a mini
-// follows its parent) with its sight, darkvision (and the sheet's) and light (seesFt: how far the fog
-// opens for it, fx/lightmeta.js seerReachFt, the same number as its sight light: on 🌑 ground its
-// darkvision, its own light or the far edge of a light on its own map; where: the darkness under it);
-// every other item with
-// a light (the DM's, a spell's, one lit by its name, an adopted Smoke torch), by name.
+// {pcs: [...], lit: [...], npcs: [...]} for the scene's items: every PC token (roots only: a ring
+// under a mini follows its parent) with its sight, darkvision (and the sheet's) and light (seesFt: how
+// far the fog opens for it, fx/lightmeta.js seerReachFt, the same number as its sight light: on 🌑
+// ground its darkvision, its own light or the far edge of a light on its own map; where: the darkness
+// under it); every other item with a light (the DM's, a spell's, one lit by its name, an adopted Smoke
+// torch), by name; and npcs: every CHARACTER token that isn't a PC, lit or not (the box's ▸ NPCs &
+// monsters), its row the same fields as a lit one's, a token attached under another CHARACTER left out
+// (it follows its parent, as a ring under a PC's mini does). A lit NPC is in both lit and npcs.
 export function lightingRows(items, ctx) {
-  const pcs = [], lit = [];
+  const pcs = [], lit = [], npcs = [];
   for (const i of items || []) {
     if (!i?.id || (i.layer && !["CHARACTER", "PROP", "MOUNT", "ATTACHMENT"].includes(i.layer))) continue;
     if (i.metadata?.[CARRIER_KEY]) continue; // our invisible carrier child: its NPC is listed
@@ -175,14 +177,16 @@ export function lightingRows(items, ctx) {
       pcs.push({ id: i.id, name: nameOf(i, ctx), sight: dm.sight ?? null, dark: dm.dark ?? null,
                  sheetDark: ctx.senses(i)?.dark ?? null, seesFt: LM.seerReachFt(i, ctx, v), darkFt: v.dark, where: v.where,
                  kind: known(hand) ? hand : hand === "none" ? "none" : "", eff });
-    } else if (eff || hand === "none") {
-      lit.push({ id: i.id, name: nameOf(i, ctx), kind: known(hand) ? hand : hand === "none" ? "none" : "", eff,
-                 auto: eff?.from === "auto", smoke: eff?.from === "smoke", spell: eff?.from === "spell",
-                 hidden: !!ctx.isSecret?.(i), layer: i.layer || "" });
+      continue;
     }
+    const row = () => ({ id: i.id, name: nameOf(i, ctx), kind: known(hand) ? hand : hand === "none" ? "none" : "", eff,
+                         auto: eff?.from === "auto", smoke: eff?.from === "smoke", spell: eff?.from === "spell",
+                         hidden: !!ctx.isSecret?.(i), layer: i.layer || "" });
+    if (eff || hand === "none") lit.push(row());
+    if (i.layer === "CHARACTER" && !(i.attachedTo && ctx.byId?.get?.(i.attachedTo)?.layer === "CHARACTER")) npcs.push(row());
   }
   const byName = (a, b) => a.name.localeCompare(b.name);
-  return { pcs: pcs.sort(byName), lit: lit.sort(byName) };
+  return { pcs: pcs.sort(byName), lit: lit.sort(byName), npcs: npcs.sort(byName) };
 }
 
 // The items "Release lights to Smoke" gives back: every token we manage (VISION_KEY on it).

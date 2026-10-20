@@ -1,23 +1,38 @@
-// "🔥 Lighting" in the GM's 🗺 DND NPC box (popover.html): the one place to set up the lights of
+// The 🔥 Light tab of the GM's 🗺 DND NPC box (popover.html): the one place to set up the lights of
 // the scene, with no panel needed (tools/owlbear_only.py is enough). Lights redo,
-// docs/lights-redo-spec.md.
+// docs/lights-redo-spec.md. Top to bottom (the Owlbear regroup, 2026-10-19: the DM's "maps->main
+// maps->lighting/fog options, maps->building name->floor name->lighting/fog options" and "lights->pcs
+// ->light options, lights->npcd/monsters->light options"; the scene's controls stay on top):
 //
 //   Scene        "This scene" ☀ lit / 🌒 dim / 🌑 dark (SCENE_LIGHTING_KEY.darkness; unmarked = ☀) and
-//                "Props light themselves" (.auto: a sconce, torch, brazier, candle… by name/picture);
-//                "Maps here": each MAP-layer image ☀/🌒/🌑/as scene (MAP_DARKNESS_KEY on it;
-//                docs/lights-darkness-spec.md: darkness comes from light, per point); while 🌫 Our
+//                "Props light themselves" (.auto: a sconce, torch, brazier, candle… by name/picture),
+//                and "Released to Smoke" when it is
+//   ▸ Maps       each MAP-layer image ☀/🌒/🌑/as scene (MAP_DARKNESS_KEY on it;
+//                docs/lights-darkness-spec.md: darkness comes from light, per point), in folds:
+//                ▸ one per main map (named by the map), holding its own row, then ▸ each building nearest
+//                it holding ▸ one per floor (mapGroups: a building floor is an interior, the DM's 🏠 or
+//                what 🏘 Set up interiors laid out, or an unmarked map named "<Building> - <Floor>";
+//                with no main map the buildings sit right under ▸ Maps); while 🌫 Our
 //                fog is on, also its explored-memory controls (fog/mapui.js, docs/vision-layer-b4.md
 //                section 6, docs/vision-layer-2024.md section 6): the mode (auto (→ what auto is
 //                now) / fog / remembered / clear; "remembered" writes "dim"), 🏠 / 🌳, "Forget
-//                explored (40%)" (the explored share; two taps), and for an interior "Remember
-//                building" / "Forget building". Each tap writes a whole value from this GM screen
-//                and goes to the 🪵 Live log (this device's background, LOCAL_ASK "fog-log")
-//   PCs          each PC token in the scene: its sight limit (blank = none: fog, mist), its
-//                darkvision (blank = the sheet's, shown greyed), its light (chips)
-//   Lit objects  everything else with a light (incl. the ones lit by their name: "auto"), chips + None
-//   Screens      the screens this GM copy heard (kind, build, lights) and what to do about them
+//                explored (40%)" (the explored share; two taps), and on the building's own fold row
+//                "Remember building" / "Forget building". Each tap writes a whole value from this GM
+//                screen and goes to the 🪵 Live log (this device's background, LOCAL_ASK "fog-log").
+//                Without fog/mapui.js the maps are one flat list, as before the folds
+//   ▸ Lights     ▸ PCs: each PC token in the scene: its sight limit (blank = none: fog, mist), its
+//                darkvision (blank = the sheet's, shown greyed), its light (chips); ▸ NPCs & monsters:
+//                every CHARACTER token that isn't a PC, lit or not, with its light chips (lightui.js
+//                lightingRows npcs); ▸ Objects: everything else with a light (incl. the ones lit by
+//                their name: "auto"), chips + None. None on an NPC with nothing to put out writes
+//                nothing, as the 🔥 Light menu (light.html)
+//   Screens      (⚙ Setup) the screens this GM copy heard (kind, build, lights) and what to do about them
 //   Release      gives every token we manage back to plain Smoke & Spectre (two taps)
-//   🌫 Our fog    (at the top) the scene switch for our own vision layer (fog/fog.js: FOG_KEY.on; two
+//
+// Every fold keeps its open or closed state across the redraws (every token change) and on this
+// screen (foldStore: localStorage, every read and write in try/catch); a closed fold's rows are built
+// all the same.
+//   🌫 Our fog    (at the top, above Scene) the scene switch for our own vision layer (fog/fog.js: FOG_KEY.on; two
 //                taps to switch on, one off), with a warning while Smoke & Spectre's vision is on in
 //                the same scene, and what this GM screen draws for it (the background's fog status).
 //                While on, the "Memory shade" row (lighter 0.55 / medium 0.65 / darker 0.75): how
@@ -25,20 +40,20 @@
 //                A tap asks this device's background to write the whole switch (fog.js setOn: the
 //                fill, prev, Smoke's door state) at once; with no answer in SWITCH_WAIT_MS this box
 //                writes it itself (fog.js writeSwitch)
-//   🪵 Live log   (right under it, startLiveLog) every screen's fog and door log lines, newest first,
+//   🪵 Live log   (on the ⚙ Setup tab, startLiveLog) every screen's fog and door log lines, newest first,
 //                each with the screen it came from, and a Copy button (fog/livelog.js)
 //
 // Every change goes through lightmeta.js's setLight / setVision, then planItem for Smoke's keys
 // with the lights writer's own ctx, in one write (fx/lightwriter.js writeNow): the writer's next
 // pass plans nothing more. Any control here that changes an input takes a scene released to
 // Smoke back (SCENE_LIGHTING_KEY.managed true); "Release lights to Smoke" sets it false.
-import { FOG_KEY, MAP_DARKNESS_KEY, PARTY_KEY, SCENE_LIGHTING_KEY } from "./keys.js?v=4556f3c";
-import { SOURCES } from "./fx/lights.js?v=4556f3c";
-import { isMap, mapDarkness, readGrid, sceneDarkness } from "./fx/darkness.js?v=4556f3c";
-import { writeNow } from "./fx/lightwriter.js?v=4556f3c";
-import { cleanParty } from "./gather.js?v=4556f3c";
+import { FOG_KEY, MAP_DARKNESS_KEY, PARTY_KEY, SCENE_LIGHTING_KEY } from "./keys.js?v=56bda6c";
+import { SOURCES } from "./fx/lights.js?v=56bda6c";
+import { isMap, mapDarkness, readGrid, sceneDarkness } from "./fx/darkness.js?v=56bda6c";
+import { writeNow } from "./fx/lightwriter.js?v=56bda6c";
+import { cleanParty } from "./gather.js?v=56bda6c";
 import { DARKNESS, applyMeta, autoKind, carriers, describe, editFor, lightingOf, lightingRows, managed, releaseItem,
-         screenLine, screenWarnings, uiCtx } from "./lightui.js?v=4556f3c";
+         screenLine, screenWarnings, uiCtx } from "./lightui.js?v=56bda6c";
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 const COMMON = ["candle", "torch", "lamp", "hooded_lantern", "brazier"].filter((k) => SOURCES[k]);
@@ -76,6 +91,11 @@ export const LIGHTING_CSS = `
   #lighting .chips.fm .chip { font-size: 10px; padding: 1px 6px; }
   #lighting .chip:disabled { opacity: .3; cursor: default; background: rgba(255,255,255,.05); }
   #lighting .chip.arm { opacity: 1; border-color: #f08a7b; }
+  #lighting .fold-head { display: flex; flex-wrap: wrap; align-items: center; gap: 3px; }
+  #lighting .fold-btn { margin: 4px 0 1px; padding: 3px 8px; background: transparent; font-weight: 600; text-align: left; }
+  #lighting .fold-btn:hover { background: rgba(255,255,255,.12); }
+  #lighting .fold .fold .fold-btn { font-weight: 500; }
+  #lighting .fold-body { margin-left: 7px; padding-left: 8px; border-left: 1px solid rgba(255,255,255,.14); }
   #lt-said { min-height: 15px; margin: 4px 0; }
   #livelog .ll-line { font: 10px/1.35 ui-monospace, Consolas, monospace; margin: 1px 0; word-break: break-word; opacity: .9; }
   #livelog .ll-line.error { color: #f08a7b; opacity: 1; }
@@ -86,7 +106,7 @@ export const LIGHTING_CSS = `
                       background: rgba(0,0,0,.35); border: 0; border-radius: 5px; }
 `;
 
-// 🪵 Live log (popover.html, right under 🔥 Lighting): every screen's fog and door lines, as the
+// 🪵 Live log (popover.html, on the ⚙ Setup tab): every screen's fog and door lines, as the
 // background sends them ({kind, text}, newest first: fog/livelog.js lineText), and a Copy button.
 // el: {lines, copy, said} elements. -> {show(lines, error)}
 export function startLiveLog(el) {
@@ -134,8 +154,160 @@ export function startLiveLog(el) {
   return { show };
 }
 
-// el: {scene, pcs, lit, screens, said, release, fog?} elements; OBR: the SDK. ask(need, extra): a
-// LOCAL_ASK to this device's own background (popover.html), for the 🌫 switch.
+// ---- the folds (▸ Maps, ▸ Lights and the folds inside them) ----
+
+// Each fold's open or closed state, kept in JS across every redraw and remembered on this screen
+// (this browser's localStorage for this copy; every read and write in try/catch, so the box works
+// without it). Keys (mapFoldKeys): "maps"; "maps/m:<main map id>" (the id URI-encoded), then
+// "<that>/b:<building key>" and "<that>/b:<key>/f:<floor key>"; "maps/b:<key>" and
+// "maps/b:<key>/f:<floor key>" when the scene has no main map; "lights", "lights/pcs", "lights/npcs",
+// "lights/objects".
+export const FOLD_KEY = "dnd-npc/box-folds";
+// Open until the DM folds them: each main map's fold inside ▸ Maps (as ▸ Main maps was) and PCs inside
+// ▸ Lights. Every other fold (▸ Maps and ▸ Lights themselves, NPCs & monsters, Objects, each building and
+// each floor) starts closed; a 🏠 / 🌳 tap opens the folds that hold its map (revealMap).
+export const FOLD_OPEN = { "lights/pcs": true };
+const MAIN_MAP_FOLD = /^maps\/m:[^/]+$/;
+export const openAtFirst = (k) => FOLD_OPEN[k] === true || MAIN_MAP_FOLD.test(String(k));
+const FOLD_KEEP = 300; // the most fold states remembered (buildings and floors come and go with scenes)
+
+export function foldStore(key = FOLD_KEY) {
+  let saved = {};
+  try {
+    const v = JSON.parse(globalThis.localStorage?.getItem(key) || "{}");
+    if (v && typeof v === "object" && !Array.isArray(v)) saved = v;
+  } catch { /* storage blocked or junk: the defaults */ }
+  return {
+    isOpen: (k) => (typeof saved[k] === "boolean" ? saved[k] : openAtFirst(k)),
+    set(k, open) {
+      delete saved[k]; // the newest last, so the oldest go first past FOLD_KEEP
+      saved[k] = !!open;
+      const ks = Object.keys(saved);
+      for (const old of ks.slice(0, Math.max(0, ks.length - FOLD_KEEP))) delete saved[old];
+      try { globalThis.localStorage?.setItem(key, JSON.stringify(saved)); } catch { /* kept for this box only */ }
+    },
+  };
+}
+
+// ---- ▸ Maps: each main map, holding its buildings → floors ----
+
+// A map's name made comparable, as fog/maps.js normName does (check_box.mjs pins that they agree): no
+// file extension, one kind of dash, one space; case kept.
+const normName = (s) => String(s ?? "").trim().replace(/\.(png|jpe?g|webp|gif|avif)$/i, "")
+  .replace(/[–—]/g, "-").replace(/\s+/g, " ").trim();
+const finite = (...xs) => xs.every((x) => typeof x === "number" && Number.isFinite(x));
+
+// Where one map image goes in ▸ Maps: {building, floor} when it's a building's floor, else null (a main
+// map). A floor is an interior by fog/mapui.js kindOf (the DM's 🏠, MAP_FOG_KEY.kind, else what 🏘 Set up
+// interiors laid out: the rule that gives a map "Remember building"), or a map nobody marked either way
+// (kindFrom "default") whose name reads "<Building> - <Floor>", as every authored interior map is
+// (interiors.json: the DM's room had none set up yet, live 2026-10-19). A map the DM or Set up interiors
+// marked outdoor is a main map whatever its name. Its building is the name before " - " (mapui
+// buildingName), its floor the rest of the name, or all of it when there's no " - " (the DM's 🏠 "Hut").
+function floorOf(m, ui) {
+  const k = ui.kindOf(m) || {};
+  const n = normName(m?.name);
+  const cut = n.indexOf(" - ");
+  const rest = cut > 0 ? n.slice(cut + 3).trim() : "";
+  if (!(k.kind === "interior" || (k.kindFrom === "default" && rest))) return null;
+  const building = ui.buildingName(m);
+  return building ? { building, floor: rest || n } : null;
+}
+
+// Each map's middle on the scene: its rectangle's (fog/mapui.js mapRects, views.js's), else its position.
+function middles(maps, ui, dpi) {
+  const at = new Map();
+  try {
+    if (typeof ui?.mapRects === "function") {
+      for (const r of ui.mapRects(maps, dpi) || []) {
+        if (finite(r?.x0, r?.y0, r?.x1, r?.y1)) at.set(r.id, { x: (r.x0 + r.x1) / 2, y: (r.y0 + r.y1) / 2 });
+      }
+    }
+  } catch { /* the positions, then */ }
+  return (m) => at.get(m?.id) ?? (finite(m?.position?.x, m?.position?.y) ? m.position : null);
+}
+
+// The ▸ Maps folds for the scene's map images (DM, 2026-10-19: "maps->main maps->lighting/fog options,
+// maps->building name->floor name->lighting/fog options"; the town map on top, its buildings under it,
+// each unfurling to its floors):
+//   {main: [{id, name, map, buildings: [B]}], buildings: [B]}, B = {key, name, floors: [{key, name, maps: [item]}]}
+// main: one per main map (floorOf null; an unnamed map too), in the scene's order, named by the map
+// ("Map" when unnamed), holding the buildings nearest it: each building goes under the main map whose
+// middle is nearest its first floor map's (the first main map on a tie or when nothing can be measured;
+// with one main map, all of them). buildings: the buildings directly under ▸ Maps, only when the scene
+// has no main map. Buildings and floors in the scene's order; a building's key is its name lowercased,
+// a floor's its name lowercased. ui: fog/mapui.js; null without it (▸ Maps is one flat list then).
+// dpi: the scene grid's (mapRects measures with it).
+export function mapGroups(maps, ui, { dpi } = {}) {
+  if (typeof ui?.kindOf !== "function" || typeof ui?.buildingName !== "function") return null;
+  const list = (Array.isArray(maps) ? maps : []).filter((m) => m && typeof m === "object");
+  const main = [], byKey = new Map();
+  for (const m of list) {
+    const at = floorOf(m, ui);
+    if (!at) {
+      main.push({ id: m.id, name: normName(m.name) || "Map", map: m, buildings: [] });
+      continue;
+    }
+    const key = at.building.toLowerCase();
+    if (!byKey.has(key)) byKey.set(key, { key, name: at.building, floors: [], byFloor: new Map() });
+    const b = byKey.get(key);
+    const fk = at.floor.toLowerCase();
+    if (!b.byFloor.has(fk)) {
+      const f = { key: fk, name: at.floor, maps: [] };
+      b.byFloor.set(fk, f);
+      b.floors.push(f);
+    }
+    b.byFloor.get(fk).maps.push(m);
+  }
+  const buildings = [...byKey.values()].map(({ byFloor, ...b }) => b);
+  if (!main.length) return { main, buildings };
+  const middle = middles(list, ui, finite(dpi) && dpi > 0 ? dpi : 150);
+  const far = (a, b) => (a && b ? Math.hypot(a.x - b.x, a.y - b.y) : Infinity);
+  for (const b of buildings) {
+    const from = middle(b.floors[0].maps[0]);
+    let best = main[0], bestD = far(from, middle(best.map));
+    for (const mm of main.slice(1)) {
+      const d = far(from, middle(mm.map));
+      if (d < bestD) [best, bestD] = [mm, d];
+    }
+    best.buildings.push(b);
+  }
+  return { main, buildings: [] };
+}
+
+// The fold keys (see FOLD_KEY): a main map's, a building's under its parent fold, a floor's.
+export const mainFoldKey = (mm) => `maps/m:${encodeURIComponent(String(mm?.id ?? ""))}`;
+const buildingFoldKey = (parent, b) => `${parent}/b:${b.key}`;
+const floorFoldKey = (bk, f) => `${bk}/f:${f.key}`;
+
+// The folds that hold one map, outermost first ([] when it isn't in the groups): a main map's own row
+// ["maps", its fold]; a floor's ["maps", its main map's fold, its building's, its floor's] (no main
+// map's fold when the scene has no main map).
+export function mapFoldKeys(groups, id) {
+  if (!groups) return [];
+  const inBuildings = (parent, buildings) => {
+    for (const b of buildings || []) {
+      const bk = buildingFoldKey(parent, b);
+      for (const f of b.floors) if (f.maps.some((m) => m?.id === id)) return [bk, floorFoldKey(bk, f)];
+    }
+    return null;
+  };
+  for (const mm of groups.main || []) {
+    const mk = mainFoldKey(mm);
+    if (mm.id === id) return ["maps", mk];
+    const chain = inBuildings(mk, mm.buildings);
+    if (chain) return ["maps", mk, ...chain];
+  }
+  const chain = inBuildings("maps", groups.buildings);
+  return chain ? ["maps", ...chain] : [];
+}
+
+// el: {scene, pcs?, lit?, screens, said, release, fog?, maps?, lights?, npcs?, objects?} elements; OBR:
+// the SDK. ask(need, extra): a LOCAL_ASK to this device's own background (popover.html), for the 🌫
+// switch. With el.lights, the ▸ Lights fold is built in it, holding PCs (el.pcs, or one made here), NPCs
+// & monsters (el.npcs) and Objects (el.objects); without it (an older caller) the PC rows go in el.pcs
+// and the lit NPCs and objects in el.lit, as before. The ▸ Maps fold goes in el.maps, else under the
+// scene in el.scene.
 export function startLighting(OBR, el, { build = "", ask = null } = {}) {
   let ctx = null, items = [], sceneMeta = {}, roomMeta = {}, ready = false;
   let screens = null, myBuild = build, armed = 0, writer = null;
@@ -147,6 +319,56 @@ export function startLighting(OBR, el, { build = "", ask = null } = {}) {
   // load() reads (mapRows needs its dpi), and the "Forget explored" tap waiting for a second ({id, at}).
   let mapUi = null, sceneGrid = null, forgetArmed = null;
   let pcIds = null; // the bridge heartbeat's PC ids (the background's snapshot), as the writer has them
+
+  // The folds: their state (this screen's), and where the rows go.
+  const folds = foldStore();
+  const made = () => document.createElement("div");
+  const pcsBox = el.pcs || made();
+  const npcBox = el.npcs || (el.lights ? made() : el.lit || made());
+  const objBox = el.objects || (el.lights ? made() : el.lit || made());
+
+  // One fold: a ▸/▾ button that opens and closes its body, `extra` beside it on its row (a building's
+  // Remember building). -> {box, body, label(text)}. A closed fold's body is only hidden: its rows are
+  // built all the same.
+  function fold(key, text, extra = []) {
+    const box = made();
+    box.className = "fold";
+    box.dataset.fold = key;
+    const head = made();
+    head.className = "fold-head";
+    const btn = document.createElement("button");
+    btn.className = "fold-btn";
+    const body = made();
+    body.className = "fold-body";
+    let label = text;
+    const draw = () => {
+      const open = folds.isOpen(key);
+      btn.textContent = `${open ? "▾" : "▸"} ${label}`;
+      btn.title = open ? "Fold it away" : "Open it";
+      body.hidden = !open;
+    };
+    btn.onclick = () => {
+      folds.set(key, !folds.isOpen(key));
+      draw();
+    };
+    draw();
+    head.append(btn, ...extra);
+    box.append(head, body);
+    return { box, body, btn, label(t) { label = t; draw(); } };
+  }
+
+  // ▸ Lights: built once (its rows are redrawn inside it), PCs, NPCs & monsters and Objects.
+  let lightFolds = null;
+  if (el.lights) {
+    lightFolds = { pcs: fold("lights/pcs", "PCs"), npcs: fold("lights/npcs", "NPCs & monsters"), objects: fold("lights/objects", "Objects") };
+    lightFolds.pcs.body.append(pcsBox);
+    lightFolds.npcs.body.append(npcBox);
+    lightFolds.objects.body.append(objBox);
+    const all = fold("lights", "Lights");
+    all.body.append(lightFolds.pcs.box, lightFolds.npcs.box, lightFolds.objects.box);
+    el.lights.innerHTML = "";
+    el.lights.append(all.box);
+  }
 
   const say = (text, cls = "ok") => {
     el.said.className = `small ${cls}`;
@@ -311,6 +533,7 @@ export function startLighting(OBR, el, { build = "", ask = null } = {}) {
   const setFogKind = (row, kind) => fogWrite(async () => {
     const r = await mapUi.setMapFog(OBR, row.id, { kind });
     await load();
+    revealMap(row.id); // 🏠 / 🌳 can make it a main map or a building's floor: open the folds it lands in
     const now = rowOf(row.id);
     note(`${row.name || "Map"}: ${kind === null ? `as painted (${now?.kind || "outdoor"})` : kind === "interior" ? "🏠 interior" : "🌳 outdoor"}`
       + `${r.wrote ? "" : " (already so)"} · now ${modeSaid(now)}`);
@@ -348,8 +571,16 @@ export function startLighting(OBR, el, { build = "", ask = null } = {}) {
       + (now ? `now ${modeSaid(now)}` : on ? "stay dimmed" : "fog over"));
   });
 
-  // The fog controls under one map's darkness chips: the mode chips, then kind / forget / remember.
-  function fogMapControls(row) {
+  // The folds that hold a map, opened (only the folds: nothing is written).
+  function revealMap(id) {
+    try {
+      for (const k of mapFoldKeys(mapGroups(items.filter(isMap), mapUi, { dpi: sceneGrid?.dpi }), id)) folds.set(k, true);
+    } catch { /* the folds only */ }
+  }
+
+  // The fog controls under one map's darkness chips: the mode chips, then kind / forget, and remember
+  // unless it's on the map's building fold row (remember false).
+  function fogMapControls(row, { remember = true } = {}) {
     const c = mapUi.chipsFor(row);
     const modes = document.createElement("div");
     modes.className = "chips fm";
@@ -366,7 +597,7 @@ export function startLighting(OBR, el, { build = "", ask = null } = {}) {
     if (armed) f.className += " arm";
     f.disabled = c.forget.disabled;
     more.append(f);
-    if (c.remember) more.append(chip(c.remember.label, row.remembered, c.remember.title, () => setBuilding(row, c.remember.on)));
+    if (remember && c.remember) more.append(chip(c.remember.label, row.remembered, c.remember.title, () => setBuilding(row, c.remember.on)));
     return [modes, more];
   }
 
@@ -376,8 +607,12 @@ export function startLighting(OBR, el, { build = "", ask = null } = {}) {
     const box = document.createElement("div");
     box.className = "chips";
     const cur = row.kind === "none" ? "" : row.kind || (row.eff && row.eff.from !== "spell" ? row.eff.kind : "");
-    box.append(chip("None", !cur, pc ? "Carries no light" : "Put out (a prop lit by its name stays out)",
-      () => write([row.id], () => ({ light: pc && !row.kind ? null : "none" }))));
+    box.append(chip("None", !cur, pc ? "Carries no light" : "Put out (a prop lit by its name stays out)", () => {
+      // An NPC with nothing to put out (no light, none by its name): nothing written, as the 🔥 Light menu
+      const item = items.find((i) => i.id === row.id);
+      if (!pc && !row.eff && !row.kind && !autoKind(item)) return say(`${item ? describe(item, ctx) : row.name} (already so)`);
+      return write([row.id], () => ({ light: pc && !row.kind ? null : "none" }));
+    }));
     for (const k of COMMON) {
       box.append(chip(short(k), cur === k, `${SOURCES[k].label}: ${SOURCES[k].bright}/${SOURCES[k].dim} ft`,
         () => write([row.id], () => ({ light: k }))));
@@ -528,11 +763,91 @@ export function startLighting(OBR, el, { build = "", ask = null } = {}) {
     refresh();
   }
 
+  // A one-line note in a box (an empty list's hint).
+  const hint = (box, cls, text) => {
+    const p = document.createElement("p");
+    p.className = `${cls} small`;
+    p.textContent = text;
+    box.append(p);
+  };
+
+  // One map's row, as "Maps here" had it: its name and tags, its own darkness chips, and (🌫 on) its fog
+  // controls. remember false: its building's Remember building is on the building's fold row instead.
+  function mapRow(m, fr, { remember = true } = {}) {
+    const own = mapDarkness(m);
+    const row = document.createElement("div");
+    row.className = "row";
+    const tags = fr ? [fr.kind === "interior" ? `🏠${fr.building ? ` ${fr.building}` : ""}` : "🌳 outdoor",
+      fr.remembered && "remembered", fr.darkLocked && "🌑 fog only", fr.hidden && "hidden: nothing drawn"].filter(Boolean) : [];
+    row.innerHTML = `<span class="who">${esc(m.name || "Map")}</span>${tags.map((t) => `<span class="tag">${esc(t)}</span>`).join("")}`;
+    const chips = document.createElement("div");
+    chips.className = "chips";
+    for (const d of DARK_CHIPS) chips.append(chip(`${d.icon}`, own === d.value, `${d.label}: ${d.about}`, () => setMap(m.id, d.value)));
+    chips.append(chip("as scene", !own, "Follow the scene's darkness", () => setMap(m.id, null)));
+    row.append(chips);
+    if (fr) row.append(...fogMapControls(fr, { remember }));
+    return row;
+  }
+
+  // ▸ Maps: each MAP-layer image's own darkness (a 🌑 cellar inside a ☀ town scene), folded by main map
+  // (its own row first, then its buildings → floors; mapGroups); one flat list inside ▸ Maps if
+  // fog/mapui.js didn't load.
+  function renderMaps(target) {
+    const maps = items.filter(isMap);
+    if (!maps.length) return;
+    const fogRows = new Map(mapRowsNow().map((r) => [r.id, r])); // 🌫 on: each map's memory facts
+    const top = fold("maps", `Maps (${maps.length})`);
+    target.append(top.box);
+    const groups = mapGroups(maps, mapUi, { dpi: sceneGrid?.dpi });
+    if (!groups) {
+      for (const m of maps) top.body.append(mapRow(m, fogRows.get(m.id)));
+      return;
+    }
+    // One building's fold under `parent` (a main map's fold, or ▸ Maps), holding a fold per floor.
+    const buildingBox = (b, parent) => {
+      // Remember building once, on the building's row: the chip each of its floors had (fog/mapui.js
+      // chipsFor; the same write, every floor of the building at once).
+      const fr = b.floors.flatMap((f) => f.maps).map((m) => fogRows.get(m.id)).find((r) => r && mapUi.chipsFor(r).remember);
+      const rem = fr ? mapUi.chipsFor(fr).remember : null;
+      const extra = rem ? [chip(rem.label, fr.remembered, rem.title, () => setBuilding(fr, rem.on))] : [];
+      const n = b.floors.length;
+      const bk = buildingFoldKey(parent, b);
+      const bf = fold(bk, `🏠 ${b.name} · ${n} floor${n === 1 ? "" : "s"}`, extra);
+      for (const f of b.floors) {
+        const ff = fold(floorFoldKey(bk, f), f.name + (f.maps.length > 1 ? ` (${f.maps.length})` : ""));
+        for (const m of f.maps) ff.body.append(mapRow(m, fogRows.get(m.id), { remember: !rem }));
+        bf.body.append(ff.box);
+      }
+      return bf.box;
+    };
+    for (const mm of groups.main) {
+      const n = mm.buildings.length;
+      const mk = mainFoldKey(mm);
+      const mf = fold(mk, mm.name + (n ? ` · ${n} building${n === 1 ? "" : "s"}` : ""));
+      mf.body.append(mapRow(mm.map, fogRows.get(mm.id)));
+      for (const b of mm.buildings) mf.body.append(buildingBox(b, mk));
+      top.body.append(mf.box);
+    }
+    for (const b of groups.buildings) top.body.append(buildingBox(b, "maps"));
+  }
+
+  // One NPC's, monster's or object's row: its name and tags, then its light chips.
+  function lightRow(o) {
+    const row = document.createElement("div");
+    row.className = "row";
+    const tags = [o.auto && "auto", o.smoke && "Smoke torch", o.spell && "✨ spell", o.hidden && "hidden", o.kind === "none" && "put out"]
+      .filter(Boolean);
+    row.innerHTML = `<span class="who">${esc(o.name)}</span>${tags.map((t) => `<span class="tag">${esc(t)}</span>`).join("")}`;
+    row.append(lightChips(o, { pc: false }));
+    return row;
+  }
+
   function render() {
     if (!ctx) return;
     renderFog();
-    // Scene
+    // This scene (and the Released warning), then ▸ Maps
     el.scene.innerHTML = "";
+    if (el.maps) el.maps.innerHTML = "";
     if (!ready) {
       el.scene.innerHTML = `<p class="dim small">No scene open.</p>`;
     } else {
@@ -548,51 +863,25 @@ export function startLighting(OBR, el, { build = "", ask = null } = {}) {
         "Sconces, torches, braziers, candles, lanterns and lamps light by their name or picture",
         () => setScene({ auto: !l.auto })));
       el.scene.append(head, box);
-      // Maps here: each MAP-layer image's own darkness (a 🌑 cellar inside a ☀ town scene)
-      const maps = items.filter(isMap);
-      if (maps.length) {
-        const mh = document.createElement("div");
-        mh.className = "small dim";
-        mh.textContent = "Maps here";
-        el.scene.append(mh);
-        const fogRows = new Map(mapRowsNow().map((r) => [r.id, r])); // 🌫 on: each map's memory facts
-        for (const m of maps) {
-          const own = mapDarkness(m);
-          const fr = fogRows.get(m.id);
-          const row = document.createElement("div");
-          row.className = "row";
-          const tags = fr ? [fr.kind === "interior" ? `🏠${fr.building ? ` ${fr.building}` : ""}` : "🌳 outdoor",
-            fr.remembered && "remembered", fr.darkLocked && "🌑 fog only", fr.hidden && "hidden: nothing drawn"].filter(Boolean) : [];
-          row.innerHTML = `<span class="who">${esc(m.name || "Map")}</span>${tags.map((t) => `<span class="tag">${esc(t)}</span>`).join("")}`;
-          const chips = document.createElement("div");
-          chips.className = "chips";
-          for (const d of DARK_CHIPS) chips.append(chip(`${d.icon}`, own === d.value, `${d.label}: ${d.about}`, () => setMap(m.id, d.value)));
-          chips.append(chip("as scene", !own, "Follow the scene's darkness", () => setMap(m.id, null)));
-          row.append(chips);
-          if (fr) row.append(...fogMapControls(fr));
-          el.scene.append(row);
-        }
-      }
       if (!l.managed) {
         const p = document.createElement("p");
         p.className = "warn small";
         p.textContent = "Released to Smoke: Smoke draws vision and darkvision here (our flames still show). Any control here takes it back.";
         el.scene.append(p);
       }
+      renderMaps(el.maps || el.scene);
     }
     // Not while the DM is typing feet or picking from a list (tokens moving redraw often): once they leave it.
     const active = document.activeElement;
-    if (active && /^(INPUT|SELECT)$/.test(active.tagName) && (el.pcs.contains(active) || el.lit.contains(active))) {
+    if (active && /^(INPUT|SELECT)$/.test(active.tagName) && [pcsBox, npcBox, objBox].some((b) => b.contains(active))) {
       active.onblur = () => setTimeout(refresh, 0);
       renderScreens();
       return;
     }
-    const { pcs, lit } = lightingRows(items, ctx);
+    const { pcs, lit, npcs = [] } = lightingRows(items, ctx);
     // PCs
-    el.pcs.innerHTML = "";
-    if (ready && !pcs.length) {
-      el.pcs.innerHTML = `<p class="warn small">No PC tokens in this scene. Name a token after its PC, or right-click → 🗺 This is…</p>`;
-    }
+    pcsBox.innerHTML = "";
+    if (ready && !pcs.length) hint(pcsBox, "warn", "No PC tokens in this scene. Name a token after its PC, or right-click → 🎲 DND → 🏷 This is…");
     for (const p of pcs) {
       const row = document.createElement("div");
       row.className = "row";
@@ -613,18 +902,30 @@ export function startLighting(OBR, el, { build = "", ask = null } = {}) {
         (n) => write([p.id], () => ({ vision: { dark: n } }))));
       f.append(sightL, darkL);
       row.append(f, lightChips(p, { pc: true }));
-      el.pcs.append(row);
+      pcsBox.append(row);
     }
-    // Lit objects
-    el.lit.innerHTML = lit.length ? "" : (ready ? `<p class="dim small">No lit objects. Right-click one → 🔥 Light.</p>` : "");
-    for (const o of lit) {
-      const row = document.createElement("div");
-      row.className = "row";
-      const tags = [o.auto && "auto", o.smoke && "Smoke torch", o.spell && "✨ spell", o.hidden && "hidden", o.kind === "none" && "put out"]
-        .filter(Boolean);
-      row.innerHTML = `<span class="who">${esc(o.name)}</span>${tags.map((t) => `<span class="tag">${esc(t)}</span>`).join("")}`;
-      row.append(lightChips(o, { pc: false }));
-      el.lit.append(row);
+    if (npcBox === objBox) {
+      // An older caller's one list (el.lit): the lit NPCs and objects, as before
+      npcBox.innerHTML = "";
+      if (ready && !lit.length) hint(npcBox, "dim", "No lit objects. Right-click one → 🎲 DND → 🔥 Light.");
+      for (const o of lit) npcBox.append(lightRow(o));
+    } else {
+      // NPCs & monsters: every non-PC token on the CHARACTER layer, lit or not
+      npcBox.innerHTML = "";
+      if (ready && !npcs.length) hint(npcBox, "dim", "No NPC or monster tokens in this scene.");
+      for (const o of npcs) npcBox.append(lightRow(o));
+      // Objects: the lit props, mounts and attachments (a lit NPC is in its own fold)
+      const npcIds = new Set(npcs.map((o) => o.id));
+      const objs = lit.filter((o) => !npcIds.has(o.id));
+      objBox.innerHTML = "";
+      if (ready && !objs.length) hint(objBox, "dim", "No lit objects. Right-click one → 🎲 DND → 🔥 Light.");
+      for (const o of objs) objBox.append(lightRow(o));
+      if (lightFolds) {
+        lightFolds.pcs.label(`PCs (${pcs.length})`);
+        const litN = npcs.filter((o) => o.eff).length;
+        lightFolds.npcs.label(`NPCs & monsters (${npcs.length}${litN ? ` · ${litN} lit` : ""})`);
+        lightFolds.objects.label(`Objects (${objs.length})`);
+      }
     }
     renderScreens();
   }
@@ -703,8 +1004,8 @@ export function startLighting(OBR, el, { build = "", ask = null } = {}) {
     }
   }
 
-  import("./fog/fog.js?v=4556f3c").then((m) => { fogMod = m; render(); }, (e) => { fogErr = String(e?.message || e); renderFog(); });
-  import("./fog/mapui.js?v=4556f3c").then((m) => { mapUi = m; render(); }, (e) => console.warn("dnd-npc: 🌫 map controls", e));
+  import("./fog/fog.js?v=56bda6c").then((m) => { fogMod = m; render(); }, (e) => { fogErr = String(e?.message || e); renderFog(); });
+  import("./fog/mapui.js?v=56bda6c").then((m) => { mapUi = m; render(); }, (e) => console.warn("dnd-npc: 🌫 map controls", e));
   OBR.scene.items.onChange(() => refresh());
   OBR.scene.onMetadataChange?.(() => refresh());
   OBR.scene.onReadyChange?.(() => refresh());

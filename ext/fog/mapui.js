@@ -21,6 +21,8 @@
 //                        up interiors laid out ("painted": MAP_INFO_KEY with an entry or stairs is a
 //                        building floor, both null is the town), else "outdoor" ("default")
 //   buildingName(item)   the building's name ("The Inn - Ground floor" -> "The Inn"), or null
+//   mapRects(items, dpi) views.js's map rectangles, handed on (lightpanel.js mapGroups measures how
+//                        near a building is to each main map with them)
 //   mapRows({items, rects, grid, sceneMeta})   (rects: views.js mapRects, worked out when left out)
 //                        per map image (fog/maps.js mapStates, topmost first):
 //                        {id, name, building, buildingKey, kind, kindFrom, painted, mode, auto, override,
@@ -45,15 +47,15 @@
 // The automatic threshold (2 visits plus 10 active minutes, spec section 7) comes after Thursday;
 // it will write the same MEMORY_KEY setRemembered writes, so nothing here changes.
 
-import { EXPLORED_KEY, FOG_LOOK_KEY, MAP_FOG_KEY, MEMORY_KEY, SEEN_KEY } from "../keys.js?v=4556f3c";
-import { mapRects } from "../views.js?v=4556f3c";
-import { count } from "./bitset.js?v=4556f3c";
-import { FOG_MODES, MAP_KINDS, buildingOf, emptySeen, exploredFor, mapFogOf, mapGrid, mapStates, paintedKind, seenOf } from "./maps.js?v=4556f3c";
-import { DEFAULT_SHADE, SHADES, shadeOf } from "./memory.js?v=4556f3c";
-import { drawnMode } from "./mode.js?v=4556f3c";
-import { emptyExplored } from "./shapes.js?v=4556f3c";
+import { EXPLORED_KEY, FOG_LOOK_KEY, MAP_FOG_KEY, MEMORY_KEY, SEEN_KEY } from "../keys.js?v=56bda6c";
+import { mapRects } from "../views.js?v=56bda6c";
+import { count } from "./bitset.js?v=56bda6c";
+import { FOG_MODES, MAP_KINDS, buildingOf, emptySeen, exploredFor, mapFogOf, mapGrid, mapStates, paintedKind, seenOf } from "./maps.js?v=56bda6c";
+import { DEFAULT_SHADE, SHADES, shadeOf } from "./memory.js?v=56bda6c";
+import { drawnMode } from "./mode.js?v=56bda6c";
+import { emptyExplored } from "./shapes.js?v=56bda6c";
 
-export { DEFAULT_SHADE, SHADES, shadeOf };
+export { DEFAULT_SHADE, SHADES, mapRects, shadeOf };
 export const FORGET_ARM_MS = 5000;
 
 export const MODE_WORDS = {

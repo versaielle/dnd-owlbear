@@ -31,8 +31,9 @@
 <div id="said" class="dim"></div>
 <div id="miss"></div>
 <script type="module">
-// The "🔥 Light" right-click menu (any GM screen), on anything selected: a PC, an NPC, a sconce,
-// a brazier, an attached torch, any mix. Tap the light it carries or gives off, or None.
+// 🎲 DND's 🔥 Light tab (any GM screen; tabs.js draws the tab row), on what was right-clicked (else
+// what's selected): a PC, an NPC, a sconce, a brazier, an attached torch, any mix. Tap the light it
+// carries or gives off, or None.
 // Lights redo (docs/lights-redo-spec.md): the tap changes the token's inputs only, through
 // fx/lightmeta.js's setLight (a kind, or the "none" tombstone: put out, so a sconce lit by its
 // name doesn't relight by itself), then fx/lightwriter.js writeNow plans Smoke & Spectre's keys
@@ -41,17 +42,19 @@
 // Below the chips it says what it did ("Ana carries a torch (40 ft)") and what's missing
 // (no table screen heard, a screen on an older build), from the screens this GM copy has heard.
 // A light from a spell cast on the panel is kept apart: shown, never changed here.
-import OBR from "./obr-sdk.js?v=4556f3c";
-import { CH, isLocalOrigin, on, send } from "./bus.js?v=4556f3c";
-import { LIGHT_KEY, PARTY_KEY } from "./keys.js?v=4556f3c";
-import { SOURCES } from "./fx/lights.js?v=4556f3c";
-import * as LM from "./fx/lightmeta.js?v=4556f3c";
-import { readGrid } from "./fx/darkness.js?v=4556f3c";
-import { writeNow } from "./fx/lightwriter.js?v=4556f3c";
-import { cleanParty } from "./gather.js?v=4556f3c";
-import { autoKind, describe, editFor, effectiveLight, lightName, reachOf, screenWarnings, uiCtx } from "./lightui.js?v=4556f3c";
+import OBR from "./obr-sdk.js?v=56bda6c";
+import { CH, isLocalOrigin, on, send } from "./bus.js?v=56bda6c";
+import { LIGHT_KEY, PARTY_KEY } from "./keys.js?v=56bda6c";
+import { SOURCES } from "./fx/lights.js?v=56bda6c";
+import * as LM from "./fx/lightmeta.js?v=56bda6c";
+import { readGrid } from "./fx/darkness.js?v=56bda6c";
+import { writeNow } from "./fx/lightwriter.js?v=56bda6c";
+import { cleanParty } from "./gather.js?v=56bda6c";
+import { autoKind, describe, editFor, effectiveLight, lightName, reachOf, screenWarnings, uiCtx } from "./lightui.js?v=56bda6c";
+import { clickedIds, showTabs } from "./tabs.js?v=56bda6c";
 
 const HOST = isLocalOrigin(location.origin) ? "local" : "pages";
+const clicked = clickedIds(location.search); // the 🎲 DND popover's items; [] elsewhere
 const grid = document.getElementById("grid");
 const word = document.getElementById("word");
 const note = document.getElementById("note");
@@ -66,7 +69,7 @@ let pcIds = null; // the bridge heartbeat's PC ids, from this GM copy's backgrou
 const known = (k) => typeof k === "string" && Object.prototype.hasOwnProperty.call(SOURCES, k);
 
 async function selected() {
-  const ids = (await OBR.player.getSelection()) || [];
+  const ids = clicked.length ? clicked : (await OBR.player.getSelection()) || [];
   return ids.length ? OBR.scene.items.getItems(ids) : [];
 }
 
@@ -214,6 +217,7 @@ fit();
 window.addEventListener("resize", fit);
 
 OBR.onReady(() => {
+  showTabs(OBR, document, location);
   // The screens this GM copy has heard (bridge.js), for "no table screen heard" and older builds;
   // and the heartbeat's PC ids (the same the lights writer plans with).
   on(OBR, CH.LOCAL_STATE, (s) => {

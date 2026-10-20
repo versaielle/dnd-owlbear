@@ -15,20 +15,24 @@
 // Pages copy too, which can never reach interiors.json. Only a map without it yet (interiors
 // not set up since) falls back to interiors.json, on the copy the panel serves.
 //
-// Also "👥 Place townsfolk" (GM only, on the town map): each NPC listed in interiors.json's
-// town.townsfolk goes to its own square in its room, next to its piece of furniture.
+// Also "👥 Place townsfolk" (GM only, on a map image): each NPC listed in interiors.json's
+// town.townsfolk for that map (townsfolkFor) goes to its own square in its room, next to its piece
+// of furniture.
 // check_interiors.mjs tests the pure parts offline.
-import OBR, { MathM } from "./obr-sdk.js?v=4556f3c";
-import { contains, isRoom, outline } from "./areas.js?v=4556f3c";
-import { ask, directBase } from "./bus.js?v=4556f3c";
-import { bounds, listed, loadInteriors, mapToScene, matchImages, normName, toScene } from "./interiors.js?v=4556f3c";
-import { BUBBLES_NAME_KEY, INTERIOR_KEY, MAP_INFO_KEY, PARTY_KEY, PARTY_SENSES_KEY, WHO_KEY } from "./keys.js?v=4556f3c";
-import { nameKey, pcName, tokenLabel } from "./fx/pcs.js?v=4556f3c";
-import { readLine, toWorld } from "./fog/lineread.js?v=4556f3c";
+import OBR, { MathM } from "./obr-sdk.js?v=56bda6c";
+import { contains, isRoom, outline } from "./areas.js?v=56bda6c";
+import { ask, directBase } from "./bus.js?v=56bda6c";
+import { bounds, listed, loadInteriors, mapToScene, matchImages, normName, toScene } from "./interiors.js?v=56bda6c";
+import { BUBBLES_NAME_KEY, INTERIOR_KEY, MAP_INFO_KEY, PARTY_KEY, PARTY_SENSES_KEY, WHO_KEY } from "./keys.js?v=56bda6c";
+import { nameKey, pcName, tokenLabel } from "./fx/pcs.js?v=56bda6c";
+import { readLine, toWorld } from "./fog/lineread.js?v=56bda6c";
 
 const RADIUS = 12; // squares around the spot that are tried
 
-const firstWord = (s) => String(s || "").trim().split(/\s+/)[0].replace(/[^\p{L}\p{N}'-]/gu, "").toLowerCase();
+// A name's first word, leading articles skipped ("the old miller" -> "old"; "" when none is left).
+const ARTICLES = new Set(["the", "a", "an"]);
+const firstWord = (s) => String(s || "").trim().split(/\s+/).map((w) => w.replace(/[^\p{L}\p{N}'-]/gu, "").toLowerCase())
+  .find((w) => w && !ARTICLES.has(w)) || "";
 
 // The name a token shows (Stat Bubbles' name tag, then Owlbear's label, then the item's name),
 // and the PC a token is, or null: the one rule for the whole extension and the panel
@@ -318,9 +322,12 @@ export function gather(json, target, items, party, sceneDpi, { chosen = null, bo
 // ---- 👥 Place townsfolk ----
 
 // The token of each town.townsfolk entry: [{entry, item}] (item null when it isn't in the scene).
-// A token's names (Stat Bubbles' name tag, Owlbear's label, the item's name; case, spacing and a
-// file extension don't matter) the same as the entry's first, then the same first word; each
-// token goes to one entry only. Only root tokens, and never one marked as a PC.
+// In order, each pass over every entry still without one: a token marked as the entry's person
+// (🎲 DND → 🏷 This is…, "npc:<person>"); a token's names (Stat Bubbles' name tag, Owlbear's label, the
+// item's name; case, spacing and a file extension don't matter) the same as the entry's token;
+// the same as its person slug ("old_miller" as "Old Miller"); then the same first word,
+// leading articles skipped. Each token goes to one entry only. Only root tokens, and never one
+// marked as a PC.
 export function findTownsfolk(entries, items) {
   const tokens = items.filter((i) => i.layer === "CHARACTER" && !i.attachedTo
     && !String(i.metadata?.[WHO_KEY] || "").startsWith("pc:"));
@@ -331,17 +338,45 @@ export function findTownsfolk(entries, items) {
   const pass = (same) => {
     for (const o of out) {
       if (o.item) continue;
-      const want = normName(o.entry.token);
-      const t = want && tokens.find((i) => !used.has(i.id) && names.get(i.id).some((n) => same(n, want)));
+      const t = tokens.find((i) => !used.has(i.id) && same(i, o.entry));
       if (t) {
         o.item = t;
         used.add(t.id);
       }
     }
   };
-  pass((n, want) => n === want);
-  pass((n, want) => !!firstWord(n) && firstWord(n) === firstWord(want));
+  const person = (e) => String(e.person || "").trim().toLowerCase();
+  const named = (i, want) => !!want && names.get(i.id).some((n) => n === want);
+  pass((i, e) => !!person(e) && String(i.metadata?.[WHO_KEY] || "").trim().toLowerCase() === `npc:${person(e)}`);
+  pass((i, e) => named(i, normName(e.token)));
+  pass((i, e) => named(i, normName(person(e).replace(/_/g, " "))));
+  pass((i, e) => !!firstWord(e.token) && names.get(i.id).some((n) => firstWord(n) === firstWord(e.token)));
   return out;
+}
+
+// The entries "👥 Place townsfolk" on this map image places (all of them with no image). A building's
+// map (one in interiors.json, by its name or label): the entries on that building's maps, every floor.
+// Any other image is the town (as 🏘 Set up interiors takes it): the entries on the buildings with a
+// spot on the town map and any naming a map interiors.json doesn't have (reported, as before), but
+// none on a map without a town spot (Chapter 3's sites) or on a building in town.townsfolk_own_map
+// (the hideout: placed only from its own map), so a rescued or travelling NPC isn't sent back to
+// their start room from the town.
+export function townsfolkFor(json, image) {
+  const all = json?.town?.townsfolk || [];
+  if (!image) return all;
+  const maps = listed(json || {});
+  const buildingOf = (name) => {
+    const m = maps.find((x) => normName(x.name) === normName(name));
+    return m ? m.building || m.name : null;
+  };
+  const [clicked] = matchImages(maps, [image]).keys();
+  if (clicked) return all.filter((e) => buildingOf(e.map) === buildingOf(clicked));
+  const spots = json?.town?.spots || {};
+  const own = new Set((Array.isArray(json?.town?.townsfolk_own_map) ? json.town.townsfolk_own_map : []).map(normName));
+  return all.filter((e) => {
+    const b = buildingOf(e.map);
+    return b === null || (Object.hasOwn(spots, b) && !own.has(normName(b)));
+  });
 }
 
 // Where an entry's NPC goes on its map's image: the room (the map's room named "… · <room>"), as
@@ -364,17 +399,28 @@ export function townsfolkSpot(map, image, entry, sceneDpi) {
 // The whole placing, without touching Owlbear: {moves: [{id, token, room, cell, position}],
 // notFound: [token names], noMap: [map names], noRoom: ["map · room"]}. Each NPC gets one square
 // in its room, reachable from its spot without crossing a wall line and clear of them, off
-// portals, furniture, every other token and the squares given to the NPCs before it.
-export function townsfolkPlan(json, items, sceneDpi) {
+// portals, furniture, every other token and the squares given to the NPCs before it. `clicked`:
+// the map image the menu was opened on; only its entries move (townsfolkFor), but tokens are
+// matched against every entry, so each token still goes to its own. On the town, `elsewhere`: the
+// maps in the scene with entries it left for a press on their own map.
+export function townsfolkPlan(json, items, sceneDpi, { clicked } = {}) {
   const entries = json?.town?.townsfolk || [];
+  const mine = new Set(townsfolkFor(json, clicked));
   const maps = listed(json || {});
   const images = items.filter((i) => i.layer === "MAP" && i.type === "IMAGE");
-  const found = findTownsfolk(entries, items);
+  const found = findTownsfolk(entries, items).filter((f) => mine.has(f.entry));
   const moving = new Set(found.filter((f) => f.item).map((f) => f.item.id));
   const others = items.filter((i) => i.layer === "CHARACTER" && !i.attachedTo && !moving.has(i.id));
   const fixed = [...portalBoxes(items), ...others.map((i) => tokenArea(i, sceneDpi)), ...propBoxes(json, items, sceneDpi)];
   const walls = wallSegments(items);
-  const out = { moves: [], notFound: [], noMap: [], noRoom: [] };
+  const out = { moves: [], notFound: [], noMap: [], noRoom: [], elsewhere: [] };
+  if (clicked && !matchImages(maps, [clicked]).size) {
+    for (const e of entries) {
+      if (mine.has(e) || out.elsewhere.includes(e.map)) continue;
+      const map = maps.find((m) => normName(m.name) === normName(e.map));
+      if (map && matchImages([map], images).size) out.elsewhere.push(e.map);
+    }
+  }
   const given = [];
   for (const { entry, item } of found) {
     if (!item) {
@@ -403,11 +449,12 @@ export function townsfolkPlan(json, items, sceneDpi) {
   return out;
 }
 
-export function townsfolkText({ moves, notFound, noMap, noRoom }) {
+export function townsfolkText({ moves, notFound, noMap, noRoom, elsewhere = [] }) {
   let s = `👥 ${moves.length} townsfolk placed`;
   if (notFound.length) s += `. Not in the scene: ${notFound.join(", ")}`;
   if (noMap.length) s += `. Map not laid out: ${noMap.join(", ")}`;
   if (noRoom.length) s += `. No room for: ${noRoom.join(", ")}`;
+  if (elsewhere.length) s += `. On their own maps, press there: ${elsewhere.join(", ")}`;
   return s;
 }
 
@@ -525,9 +572,9 @@ export async function rememberParty(fetched, O = OBR, stored, senses) {
 
 // Text for a list with no PC tokens: with no party names at all, how to get them remembered.
 export function noPcsText(party) {
-  return party?.length ? "No PC tokens on this map. Mark one with 🗺 This is…, or name it after the PC."
+  return party?.length ? "No PC tokens on this map. Mark one with 🎲 DND → 🏷 This is…, or name it after the PC."
     : "No PC tokens found. Start the game (or tools\\owlbear_only.py) on the Dell once so the party is "
-      + "remembered in this room, or mark tokens with 🗺 This is…";
+      + "remembered in this room, or mark tokens with 🎲 DND → 🏷 This is…";
 }
 
 // ---- live ----
@@ -630,8 +677,9 @@ async function moveTokens(to, O = OBR) {
   }
 }
 
-// From the town map's menu: every NPC of town.townsfolk that's in the scene to its room.
-export async function placeTownsfolk() {
+// From a map image's menu: every NPC of town.townsfolk for that map (townsfolkFor) that's in the
+// scene to its room.
+export async function placeTownsfolk(clickedId) {
   const json = await loadInteriors();
   if (!json) {
     OBR.notification.show(directBase() ? "👥 No interiors.json on the panel yet (owlbear/maps/interiors.py makes it)"
@@ -644,7 +692,13 @@ export async function placeTownsfolk() {
   }
   const sceneDpi = await OBR.scene.grid.getDpi();
   const items = await OBR.scene.items.getItems();
-  const r = townsfolkPlan(json, items, sceneDpi);
+  const clicked = items.find((i) => i.id === clickedId);
+  if (!clicked) return;
+  if (!townsfolkFor(json, clicked).length) {
+    OBR.notification.show("👥 No townsfolk start on this map", "WARNING");
+    return;
+  }
+  const r = townsfolkPlan(json, items, sceneDpi, { clicked });
   if (r.moves.length) await moveTokens(new Map(r.moves.map((m) => [m.id, m.position])));
   OBR.notification.show(townsfolkText(r), r.notFound.length || r.noMap.length || r.noRoom.length ? "WARNING" : "SUCCESS");
 }

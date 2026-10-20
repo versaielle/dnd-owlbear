@@ -1,0 +1,62 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  body { margin: 0; padding: 6px 8px; font: 13px/1.3 system-ui, sans-serif; color: #fff; background: transparent; }
+  button { display: block; width: 100%; text-align: left; margin: 2px 0; padding: 6px 8px; border: 0;
+           border-radius: 6px; background: rgba(255, 255, 255, .08); color: inherit; font: inherit; cursor: pointer; }
+  button:hover { background: rgba(255, 255, 255, .2); }
+  button:disabled { opacity: .6; cursor: default; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<button id="aim" hidden>📺 Aim the projector here</button>
+<script type="module">
+// 🎲 DND's popover (dndmenu.js). Opened with no tab in its address, it opens one (tabs.js route: the
+// last tab used with the same tabs on this screen, else the first offered). The 📺 Projector here tab
+// is this page: one button doing what the old "📺 Projector here" entry's click did (views.js
+// aimProjector on the item clicked, named as before, and the same notices); then the popover closes.
+import OBR from "./obr-sdk.js?v=56bda6c";
+import { DND_POPOVER_ID, readParams } from "./dndmenu.js?v=56bda6c";
+import { route, showTabs, tabHref } from "./tabs.js?v=56bda6c";
+
+const params = readParams(location.search);
+const aim = document.getElementById("aim");
+
+async function aimHere() {
+  const id = params.ids[0];
+  let item;
+  try {
+    [item] = id ? await OBR.scene.items.getItems([id]) : [];
+  } catch {
+    item = undefined; // named "that", as views.js says when it has no name
+  }
+  try {
+    // views.js and fx/pcs.js load only on the 📺 tap, so a failure there can't stop the other tabs
+    // from opening (review of #201); it lands in the notice below.
+    const [{ aimProjector }, { tokenLabel }] = await Promise.all([import("./views.js?v=56bda6c"), import("./fx/pcs.js?v=56bda6c")]);
+    const r = await aimProjector(OBR, { item: item?.id ?? id, label: tokenLabel(item).replace(/\.(png|jpe?g|webp|gif|avif)$/i, "") });
+    OBR.notification.show(r.text, r.ok ? "SUCCESS" : "WARNING");
+  } catch (e) {
+    OBR.notification.show(`📺 Aiming the projector failed: ${e?.error?.message || e?.message || e}`, "ERROR");
+  }
+}
+
+if (!params.tab) route(location);
+else if (params.tab !== "projector") location.replace(tabHref(location.search, params.tab));
+else {
+  OBR.onReady(() => {
+    showTabs(OBR, document, location);
+    aim.hidden = false;
+    aim.onclick = async () => {
+      aim.disabled = true;
+      await aimHere();
+      await OBR.popover.close(DND_POPOVER_ID);
+    };
+  });
+}
+</script>
+</body>
+</html>

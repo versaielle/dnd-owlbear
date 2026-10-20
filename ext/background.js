@@ -14,24 +14,27 @@
 //
 // Every screen also listens to the bridge (bottom of this file): effects (fx/), the aim tool
 // and the locked templates (aim/), and on a player's device their spells (player/). Where each
-// screen looks (views.js): the projector holds the view the DM aims it at (📺 from the GM's menus),
+// screen looks (views.js): the projector holds the view the DM aims it at (📺 from the GM's 🎲 DND menu),
 // and a player's view follows their PC after a portal trip. Those load with import() and may fail
 // on their own: the map jobs, rings and HP keep working without them.
 import OBR, { buildCurve, buildEffect, buildImage, buildLabel, buildLight, buildPath, buildShape, buildText, buildWall, Math2,
-  MathM } from "./obr-sdk.js?v=4556f3c";
-import { contains, isRoom, size } from "./areas.js?v=4556f3c";
-import { checkPortals, describe, panelLog, setUpInteriors } from "./interiors.js?v=4556f3c";
-import { cleanParty, placeTownsfolk, rememberParty } from "./gather.js?v=4556f3c";
-import { isPcToken, nameKey, pcName, tokenLabel } from "./fx/pcs.js?v=4556f3c";
-import { BADGE_KEY, BADGE_URL, BUBBLES_KEY, BUBBLES_NAME_KEY, COND_KEY, CONDITIONS, DOWN_COLOR, FOE_COLOR, FOG_LOG_LOCAL_CH, GRIMOIRE_KEY, MARK_PREFIX, PARTY_KEY, PARTY_SENSES_KEY, PLACE_KEY, RING_KEY, TARGET_COLOR, WHO_KEY, targetRingColor } from "./keys.js?v=4556f3c";
+  MathM } from "./obr-sdk.js?v=56bda6c";
+import { contains, isRoom, size } from "./areas.js?v=56bda6c";
+import { checkPortals, describe, panelLog, setUpInteriors } from "./interiors.js?v=56bda6c";
+import { cleanParty, placeTownsfolk, rememberParty } from "./gather.js?v=56bda6c";
+import { isPcToken, nameKey, pcName } from "./fx/pcs.js?v=56bda6c";
+import { BADGE_KEY, BADGE_URL, BUBBLES_KEY, BUBBLES_NAME_KEY, COND_KEY, CONDITIONS, DOWN_COLOR, FOE_COLOR, FOG_LOG_LOCAL_CH, GRIMOIRE_KEY, MARK_PREFIX, PARTY_KEY, PARTY_SENSES_KEY, PLACE_KEY, RING_KEY, TARGET_COLOR, WHO_KEY, targetRingColor } from "./keys.js?v=56bda6c";
 import { CH, DEFAULT_SETTINGS, LS, buildOf, forMe, here, isLocalOrigin, kindOf, lsGet, on as busOn, send as busSend,
-  setConnection, setSceneWrite, startSceneReader, tierOf } from "./bus.js?v=4556f3c";
+  setConnection, setSceneWrite, startSceneReader, tierOf } from "./bus.js?v=56bda6c";
+import { DND_FILTER, DND_LABEL, DND_MENU_ID, DND_POPOVER_ID, DND_WIDTH, LOCAL_DND_MENU_ID, MAP_SETUP_FILTER, MAP_SETUP_HEIGHT,
+  MAP_SETUP_LABEL, MAP_SETUP_MENU_ID, MAP_SETUP_NEED, MAP_SETUP_POPOVER_ID, MAP_SETUP_WIDTH, TOP_LEFT, dndQuery, heightOf,
+  popoverAnchor, sectionsFor, setupJobsFor, setupQuery } from "./dndmenu.js?v=56bda6c";
 
 const HEARTBEAT_MS = 10000;
 const DEBOUNCE_MS = 250;
 const TODO_MS = 1000; // how often the Dell's copy asks the panel for map jobs
 const PING_MS = 3000; // how long 📍 rings a token
-const GO_TO_KEY = "J"; // the key for 🎯 Go to PC ("jump")
+const GO_TO_KEY = "J"; // the key for 📍 Go to PC ("jump")
 const TARGET_KEY = "9"; // toggles a BLUE (party target) ring on the selected tokens
 const FOE_KEY = "0"; // toggles a YELLOW (NPC / monster target) ring on the selected tokens
 const RING_KEY_STUCK_MS = 3000; // a ring key still "running" after this long is treated as stuck (an Owlbear call that never settled)
@@ -231,7 +234,9 @@ function soon() {
   timer = setTimeout(send, DEBOUNCE_MS);
 }
 
-// The 🗺 right-click menus open a small list (menu.html) at the top left.
+// 📍 Go to PC's key opens its small list (menu.html) at a fixed spot near the window's top left
+// (dndmenu.js TOP_LEFT): a key has no menu entry to open from. The right-click entries' popovers open
+// on the entry clicked instead (dndmenu.js popoverAnchor).
 function openMenu(kind, context) {
   const ids = context.items.map((i) => i.id).join(",");
   OBR.popover.open({
@@ -239,10 +244,7 @@ function openMenu(kind, context) {
     url: here(`./menu.html?kind=${kind}&ids=${encodeURIComponent(ids)}`, import.meta.url),
     width: 260,
     height: 360,
-    anchorReference: "POSITION",
-    anchorPosition: { left: 70, top: 70 },
-    anchorOrigin: { horizontal: "LEFT", vertical: "TOP" },
-    transformOrigin: { horizontal: "LEFT", vertical: "TOP" },
+    ...TOP_LEFT,
   });
 }
 
@@ -443,15 +445,14 @@ async function todo() {
   }
 }
 
-// The 🗺 menus' ids. Owlbear's ids look room-wide rather than per extension, so the copy served
-// by the panel on this PC uses its own: when it steps aside for the Pages copy on the same tab
+// The right-click menus' ids. Owlbear's ids look room-wide rather than per extension, so the copy
+// served by the panel on this PC uses its own: when it steps aside for the Pages copy on the same tab
 // (the dual install) it can only ever remove its own menus, never the Pages copy's.
-const MENU_IDS = { place: "dnd-npc/mark-place", who: "dnd-npc/this-is", cond: "dnd-npc/conditions", light: "dnd-npc/light",
-                   goto: "dnd-npc/go-to-pc", bring: "dnd-npc/bring-pcs", projector: "dnd-npc/projector-here" };
-const LOCAL_MENU_IDS = { place: "dnd-npc/local/mark-place", who: "dnd-npc/local/this-is", cond: "dnd-npc/local/conditions",
-                         light: "dnd-npc/local/light", goto: "dnd-npc/local/go-to-pc", bring: "dnd-npc/local/bring-pcs",
-                         projector: "dnd-npc/local/projector-here" };
-// 🎯 Go to PC's toolbar button and key (a tool action, removed with tool.removeAction).
+// One entry, 🎲 DND (dndmenu.js): its popover has a tab for each of the seven entries it replaced
+// (🩹 Conditions, 🔥 Light, 🏷 This is…, 🗺 Mark as place, 📍 Go to PC, 🧭 Bring PCs here, 📺 Projector here).
+export const MENU_IDS = { dnd: DND_MENU_ID };
+export const LOCAL_MENU_IDS = { dnd: LOCAL_DND_MENU_ID };
+// 📍 Go to PC's toolbar button and key (a tool action, removed with tool.removeAction).
 const GOTO_KEY_ID = "dnd-npc/go-to-pc-key";
 const LOCAL_GOTO_KEY_ID = "dnd-npc/local/go-to-pc-key";
 // The 9 and 0 ring keys (Owlbear keeps 1 and 2 for itself; DM, 2026-10-19) (toolbar actions too). Owlbear's ids are room-wide, so the copy served by
@@ -461,15 +462,16 @@ const LOCAL_RING_KEY_IDS = { blue: "dnd-npc/local/ring-key-1", yellow: "dnd-npc/
 // 📺 Show my view on the projector: a toolbar button beside it (views.js).
 const PROJECTOR_ACTION_ID = "dnd-npc/projector-view";
 const LOCAL_PROJECTOR_ACTION_ID = "dnd-npc/local/projector-view";
-// 🏘 and 👥 need interiors.json, which only the panel on this PC can hand over (far too big for
-// the bridge's broadcasts): only the copy the panel serves makes these, even when it only relays
-// on the Dell's tab (the Pages copy there can't reach the panel), and never removes them.
-// (🧭 Bring PCs here is one of menus(): what it needs is on the map images, MAP_INFO_KEY.)
-const THIS_PC_MENU_IDS = { interiors: "dnd-npc/local/interiors", portals: "dnd-npc/local/check-portals",
-                           townsfolk: "dnd-npc/local/townsfolk" };
+// 🏘 Map setup (🏘 Set up interiors, 👥 Place townsfolk, 🏘 Check portals) needs interiors.json, which
+// only the panel on this PC can hand over (far too big for the bridge's broadcasts): only the copy the
+// panel serves makes it, even when it only relays on the Dell's tab (the Pages copy there can't reach
+// the panel), and never removes it. (🧭 Bring PCs here is one of 🎲 DND's tabs: what it needs is on
+// the map images, MAP_INFO_KEY.)
+export const THIS_PC_MENU_IDS = { setup: MAP_SETUP_MENU_ID };
 const ICON = here("./icon.svg", import.meta.url);
 const PROJECTOR_ICON = here("./icons/projector.svg", import.meta.url);
-const LIGHT_MENU_HEIGHT = 182; // chips + the "what it did" and "what's missing" lines
+const DND_ICON = here("./icons/dnd.svg", import.meta.url);
+const MAP_SETUP_ICON = here("./icons/mapsetup.svg", import.meta.url);
 
 // 📺 Aim the projector from this GM screen (views.js aimProjector), and say what happened.
 async function aimProjector(how) {
@@ -481,86 +483,36 @@ async function aimProjector(how) {
   }
 }
 
-function menus(ids = MENU_IDS, gotoKeyId = GOTO_KEY_ID, projectorActionId = PROJECTOR_ACTION_ID) {
-  OBR.contextMenu.create({
-    id: ids.place,
-    icons: [{
-      icon: ICON,
-      label: "🗺 Mark as place",
-      filter: { roles: ["GM"], every: [{ key: "layer", value: "DRAWING" }] },
-    }],
-    onClick: (context) => openMenu("place", context),
+// 🎲 DND's click: one popover (dnd.html) unfurling from the entry clicked (elementId, onClick's second
+// argument; dndmenu.js popoverAnchor: the old top-left spot when Owlbear names none), with a tab for
+// each old entry whose filter fits what was clicked (dndmenu.js sectionsFor); dnd.html opens the
+// first, or the last one used.
+function openDnd(context, elementId) {
+  const items = Array.isArray(context?.items) ? context.items : [];
+  const tabs = sectionsFor(items);
+  OBR.popover.open({
+    id: DND_POPOVER_ID,
+    url: here("./dnd.html?" + dndQuery(items.map((i) => i.id), tabs), import.meta.url),
+    width: DND_WIDTH,
+    height: heightOf(tabs[0] || "goto"),
+    ...popoverAnchor(elementId),
   });
+}
+
+export function menus(ids = MENU_IDS, gotoKeyId = GOTO_KEY_ID, projectorActionId = PROJECTOR_ACTION_ID) {
+  // 🎲 DND, on anything for the GM (📍 Go to PC's tab is on anything): what each tab does is the old
+  // entry's (conditions.html, light.html, menu.html; 📺 in dnd.html, with views.js's aim as before).
   OBR.contextMenu.create({
-    id: ids.who,
-    icons: [{
-      icon: ICON,
-      label: "🗺 This is…",
-      filter: { roles: ["GM"], every: [{ key: "layer", value: "CHARACTER" }] },
-    }],
-    onClick: (context) => openMenu("who", context),
+    id: ids.dnd,
+    icons: [{ icon: DND_ICON, label: DND_LABEL, filter: DND_FILTER }],
+    onClick: (context, elementId) => openDnd(context, elementId),
   });
-  // Like Stat Bubbles' Edit Stats: the condition badges to switch on and off, in the menu itself.
-  OBR.contextMenu.create({
-    id: ids.cond,
-    icons: [{
-      icon: ICON,
-      label: "Conditions",
-      filter: { roles: ["GM"], every: [{ key: "layer", value: "CHARACTER" }] },
-    }],
-    embed: { url: here("./conditions.html", import.meta.url), height: 176 },
-  });
-  // 🔥 Light: the light a token carries (a PC's torch) or gives off (a sconce, a brazier), in
-  // the menu itself (light.html): the flame every screen draws, and Smoke & Spectre's range
-  // set from the D&D numbers (fx/lightmeta.js).
-  OBR.contextMenu.create({
-    id: ids.light,
-    // ONE icon for any mix of these layers: every selected item is on one of them (an OR chain;
-    // no type test, so a shape prop can be lit too; our carriers can't be selected, disableHit).
-    icons: [{ icon: ICON, label: "🔥 Light", filter: { roles: ["GM"], every: [
-      { key: "layer", value: "CHARACTER", coordinator: "||" }, { key: "layer", value: "PROP", coordinator: "||" },
-      { key: "layer", value: "MOUNT", coordinator: "||" }, { key: "layer", value: "ATTACHMENT" }] } }],
-    embed: { url: here("./light.html", import.meta.url), height: LIGHT_MENU_HEIGHT },
-  });
-  // On anything at all: the list of PCs (menu.html), one tap pans the view to that one (goto.js).
-  // It only needs the party's names (through the bridge when this copy can't reach the panel).
-  OBR.contextMenu.create({
-    id: ids.goto,
-    icons: [{ icon: ICON, label: "🎯 Go to PC", filter: { roles: ["GM"] } }],
-    onClick: (context) => openMenu("goto", context),
-  });
-  // On a map image, a room drawing or a token: move the PCs' tokens there (gather.js). The list
-  // (menu.html) offers "All PCs" and each PC, one tap each. The first icon whose filter matches
-  // shows. A building map's entry and furniture are on its image (MAP_INFO_KEY), so any copy can.
-  OBR.contextMenu.create({
-    id: ids.bring,
-    icons: [
-      [{ key: "layer", value: "MAP" }, { key: "type", value: "IMAGE" }],
-      [{ key: "layer", value: "DRAWING" }],
-      [{ key: "layer", value: "CHARACTER" }],
-    ].map((every) => ({ icon: ICON, label: "🧭 Bring PCs here", filter: { roles: ["GM"], max: 1, every } })),
-    onClick: (context) => openMenu("bring", context),
-  });
-  // On a map image (all of it, as large as it fits), a room drawing or a token (centred there, its
-  // zoom kept): the projector shows it and holds it (views.js). The same three filters as 🧭 Bring PCs here.
-  OBR.contextMenu.create({
-    id: ids.projector,
-    icons: [
-      [{ key: "layer", value: "MAP" }, { key: "type", value: "IMAGE" }],
-      [{ key: "layer", value: "DRAWING" }],
-      [{ key: "layer", value: "CHARACTER" }],
-    ].map((every) => ({ icon: PROJECTOR_ICON, label: "📺 Projector here", filter: { roles: ["GM"], max: 1, every } })),
-    onClick: (context) => {
-      const item = context.items[0];
-      return aimProjector({ item: item?.id, label: tokenLabel(item).replace(/\.(png|jpe?g|webp|gif|avif)$/i, "") });
-    },
-  });
-  // ...and the same list from a key, with nothing selected: a button on every tool's bar.
+  // ...and 📍 Go to PC's list from a key, with nothing selected: a button on every tool's bar.
   try {
     Promise.resolve(OBR.tool.createAction({
       id: gotoKeyId,
       shortcut: GO_TO_KEY,
-      icons: [{ icon: ICON, label: `🎯 Go to PC (${GO_TO_KEY})`, filter: { roles: ["GM"] } }],
+      icons: [{ icon: ICON, label: `📍 Go to PC (${GO_TO_KEY})`, filter: { roles: ["GM"] } }],
       onClick: () => openMenu("goto", { items: [] }),
     })).catch((e) => console.warn("dnd-npc: the Go to PC key", e));
   } catch (e) {
@@ -578,55 +530,62 @@ function menus(ids = MENU_IDS, gotoKeyId = GOTO_KEY_ID, projectorActionId = PROJ
   }
 }
 
-// The copy served by this PC only (see THIS_PC_MENU_IDS).
-function thisPcMenus() {
-  // On the town map: lay the building maps out beside it and mark them up (interiors.js).
+// 🏘 Map setup's three jobs, run as their own right-click entries ran them. Its page (mapsetup.html)
+// asks this copy's background (CH.LOCAL_ASK, need "map-setup"): the job runs here, so closing the
+// popover doesn't stop it.
+// On the town map: lay the building maps out beside it and mark them up (interiors.js).
+async function runInteriors(id) {
+  try {
+    await setUpInteriors(id);
+  } catch (e) {
+    console.warn("dnd-npc interiors failed", e);
+    OBR.notification.show(`🏘 Setting up interiors failed: ${describe(e)}`, "ERROR");
+    // ...and the whole error to the panel's window, where it can be read
+    panelLog({ what: "interiors", error: describe(e), stack: String(e?.stack || ""),
+               detail: JSON.stringify(e, Object.getOwnPropertyNames(e || {})).slice(0, 4000) });
+  }
+}
+// On a map image: each NPC of interiors.json's town.townsfolk for that map to its room (gather.js
+// townsfolkFor: a building's map places its own; the town, the town's).
+async function runTownsfolk(id) {
+  try {
+    await placeTownsfolk(id);
+  } catch (e) {
+    console.warn("dnd-npc townsfolk failed", e);
+    OBR.notification.show(`👥 Placing townsfolk failed: ${describe(e)}`, "ERROR");
+    panelLog({ what: "townsfolk", error: describe(e), stack: String(e?.stack || ""), detail: "" });
+  }
+}
+function runPortals(id) {
+  return checkPortals(id).catch((e) =>
+    OBR.notification.show(`🏘 Check failed: ${describe(e)}`, "ERROR"));
+}
+const MAP_SETUP_RUN = { interiors: runInteriors, townsfolk: runTownsfolk, portals: runPortals };
+
+// One 🏘 Map setup button's ask: {need: "map-setup", job, id (the map image clicked)}. The job tells
+// the DM how it went, as before; nothing is sent back.
+export function mapSetup(msg) {
+  const run = Object.prototype.hasOwnProperty.call(MAP_SETUP_RUN, msg?.job) ? MAP_SETUP_RUN[msg.job] : null;
+  if (!run || typeof msg.id !== "string" || !msg.id) return null;
+  return run(msg.id);
+}
+
+// The copy served by this PC only (see THIS_PC_MENU_IDS): 🏘 Map setup on a map image, its popover
+// (mapsetup.html) with a button for each job, unfurling from the entry clicked as 🎲 DND's does.
+export function thisPcMenus() {
   OBR.contextMenu.create({
-    id: THIS_PC_MENU_IDS.interiors,
-    icons: [{
-      icon: ICON,
-      label: "🏘 Set up interiors",
-      filter: { roles: ["GM"], max: 1, every: [{ key: "layer", value: "MAP" }, { key: "type", value: "IMAGE" }] },
-    }],
-    onClick: async (context) => {
-      try {
-        await setUpInteriors(context.items[0].id);
-      } catch (e) {
-        console.warn("dnd-npc interiors failed", e);
-        OBR.notification.show(`🏘 Setting up interiors failed: ${describe(e)}`, "ERROR");
-        // ...and the whole error to the panel's window, where it can be read
-        panelLog({ what: "interiors", error: describe(e), stack: String(e?.stack || ""),
-                   detail: JSON.stringify(e, Object.getOwnPropertyNames(e || {})).slice(0, 4000) });
-      }
+    id: THIS_PC_MENU_IDS.setup,
+    icons: [{ icon: MAP_SETUP_ICON, label: MAP_SETUP_LABEL, filter: MAP_SETUP_FILTER }],
+    onClick: (context, elementId) => {
+      const items = Array.isArray(context?.items) ? context.items : [];
+      OBR.popover.open({
+        id: MAP_SETUP_POPOVER_ID,
+        url: here("./mapsetup.html?" + setupQuery(items[0]?.id, setupJobsFor(items)), import.meta.url),
+        width: MAP_SETUP_WIDTH,
+        height: MAP_SETUP_HEIGHT,
+        ...popoverAnchor(elementId),
+      });
     },
-  });
-  // On the town map: each NPC of interiors.json's town.townsfolk to its room (gather.js).
-  OBR.contextMenu.create({
-    id: THIS_PC_MENU_IDS.townsfolk,
-    icons: [{
-      icon: ICON,
-      label: "👥 Place townsfolk",
-      filter: { roles: ["GM"], max: 1, every: [{ key: "layer", value: "MAP" }, { key: "type", value: "IMAGE" }] },
-    }],
-    onClick: async () => {
-      try {
-        await placeTownsfolk();
-      } catch (e) {
-        console.warn("dnd-npc townsfolk failed", e);
-        OBR.notification.show(`👥 Placing townsfolk failed: ${describe(e)}`, "ERROR");
-        panelLog({ what: "townsfolk", error: describe(e), stack: String(e?.stack || ""), detail: "" });
-      }
-    },
-  });
-  OBR.contextMenu.create({
-    id: THIS_PC_MENU_IDS.portals,
-    icons: [{
-      icon: ICON,
-      label: "🏘 Check portals",
-      filter: { roles: ["GM"], max: 1, every: [{ key: "layer", value: "MAP" }, { key: "type", value: "IMAGE" }] },
-    }],
-    onClick: (context) => checkPortals(context.items[0].id).catch((e) =>
-      OBR.notification.show(`🏘 Check failed: ${describe(e)}`, "ERROR")),
   });
 }
 
@@ -660,18 +619,18 @@ const JOBS = {
 // The parts that load on their own (R4): a broken one is left out and the rest carry on.
 // Literal paths, so the publisher can stamp each with the build.
 const MODULES = {
-  bridge: () => import("./bridge.js?v=4556f3c"),
-  fx: () => import("./fx/engine.js?v=4556f3c"),
-  samples: () => import("./fx/samples.js?v=4556f3c"),
-  aim: () => import("./aim/tool.js?v=4556f3c"),
-  geometry: () => import("./aim/geometry.js?v=4556f3c"),
-  rings: () => import("./aim/rings.js?v=4556f3c"),
-  player: () => import("./player/state.js?v=4556f3c"),
-  lights: () => import("./fx/lighting.js?v=4556f3c"),
-  lightjobs: () => import("./fx/lightjobs.js?v=4556f3c"),
-  lightwriter: () => import("./fx/lightwriter.js?v=4556f3c"),
-  views: () => import("./views.js?v=4556f3c"),
-  fog: () => import("./fog/fog.js?v=4556f3c"),
+  bridge: () => import("./bridge.js?v=56bda6c"),
+  fx: () => import("./fx/engine.js?v=56bda6c"),
+  samples: () => import("./fx/samples.js?v=56bda6c"),
+  aim: () => import("./aim/tool.js?v=56bda6c"),
+  geometry: () => import("./aim/geometry.js?v=56bda6c"),
+  rings: () => import("./aim/rings.js?v=56bda6c"),
+  player: () => import("./player/state.js?v=56bda6c"),
+  lights: () => import("./fx/lighting.js?v=56bda6c"),
+  lightjobs: () => import("./fx/lightjobs.js?v=56bda6c"),
+  lightwriter: () => import("./fx/lightwriter.js?v=56bda6c"),
+  views: () => import("./views.js?v=56bda6c"),
+  fog: () => import("./fog/fog.js?v=56bda6c"),
 };
 
 const HELLO_MS = 30000; // each screen says hello this often, so the panel's screens list stays fresh
@@ -969,7 +928,7 @@ export async function boot(api = sdk, opts = {}) {
     }
     // One press at a time (two at once would read the same rings and write the same sizes or doubles). A
     // second press of the SAME key while one runs does nothing (a double tap, a held key repeating); a press
-    // of the OTHER key waits and runs right after (one slot: a fast "1 then 2" does both). A key held down is
+    // of the OTHER key waits and runs right after (one slot: a fast "9 then 0" does both). A key held down is
     // also ignored for RING_KEY_GAP_MS after its last press finished, so it toggles once, not on and off. A
     // press that never settles is given up on after RING_KEY_STUCK_MS, so the keys can't stay dead.
     let running = null; // {color, at}
@@ -1382,6 +1341,11 @@ export async function boot(api = sdk, opts = {}) {
     // The GM popover asks; a player's popover talks to player/state.js instead.
     busOn(api, CH.LOCAL_ASK, async (msg) => {
       if (!mine(msg)) return;
+      // A 🏘 Map setup button (mapsetup.html, this PC's copy's page): the job runs here, not awaited.
+      if (msg.need === MAP_SETUP_NEED) {
+        if (local && msg.host === "local") mapSetup(msg);
+        return;
+      }
       let note;
       if (msg.need === "log") return sendLog(true); // the 🪵 Live log, now (a GM box just opened)
       if (msg.need === "find-panel") bridge?.retry();
@@ -1499,7 +1463,7 @@ export async function boot(api = sdk, opts = {}) {
               local ? LOCAL_PROJECTOR_ACTION_ID : PROJECTOR_ACTION_ID);
         ringKeys(local ? LOCAL_RING_KEY_IDS : RING_KEY_IDS);
       }
-      if (local) thisPcMenus(); // 🏘 and 👥: on this copy even when it only relays (THIS_PC_MENU_IDS)
+      if (local) thisPcMenus(); // 🏘 Map setup: on this copy even when it only relays (THIS_PC_MENU_IDS)
       if (local) keepParty();
       O.scene.items.onChange(soon);
       O.scene.grid.onChange(soon);

@@ -41,9 +41,9 @@
 // The deletes below (migrate, adoptInto, planItem, release) all work on COPIES (`clone`), which
 // reach a draft only through writeLightPart (or lightui.js applyMeta, which writes the same nulls).
 
-import { BUBBLES_NAME_KEY, CARRIER_KEY, LIGHT_BASE_KEY, LIGHT_KEY, SMOKE, SPELL_LIGHT_KEY, VISION_KEY } from "../keys.js?v=4556f3c";
-import { SOURCES } from "./lights.js?v=4556f3c";
-import { farLight, lightsFor, regionAt } from "./darkness.js?v=4556f3c";
+import { BUBBLES_NAME_KEY, CARRIER_KEY, LIGHT_BASE_KEY, LIGHT_KEY, SMOKE, SPELL_LIGHT_KEY, VISION_KEY } from "../keys.js?v=56bda6c";
+import { SOURCES } from "./lights.js?v=56bda6c";
+import { farLight, lightsFor, regionAt } from "./darkness.js?v=56bda6c";
 
 const K = (name) => `${SMOKE}/${name}`;
 // The Smoke keys we write (and so may have to remove), by their short names.

@@ -19,20 +19,25 @@
 <body>
 <div id="app" class="note">Loading…</div>
 <script type="module">
-// The list behind the 🗺 right-click menus: "Mark as place" on a drawing, "This is…" on a token.
-// The choice is saved on the Owlbear item itself, so it stays with the room. The places, party
-// and NPCs come from the DND panel: straight from it when served by the panel, else through the
-// bridge (LOCAL on the Dell's own tab, sealed for this device only elsewhere: bus.js rpc()).
+// The lists behind four of 🎲 DND's tabs (dndmenu.js; tabs.js draws the tab row when it's open there):
+// "🗺 Mark as place" on a drawing, "🏷 This is…" on a token. The choice is saved on the Owlbear item
+// itself, so it stays with the room. The places, party and NPCs come from the DND panel: straight
+// from it when served by the panel, else through the bridge (LOCAL on the Dell's own tab, sealed for
+// this device only elsewhere: bus.js rpc()).
 // Also "🧭 Bring PCs here" (kind=bring): All PCs, or one PC, in one tap; tick several for "Bring these".
-// And "🎯 Go to PC" (kind=goto): one tap pans the DM's view to that PC's token.
-import OBR from "./obr-sdk.js?v=4556f3c";
-import { isRoom } from "./areas.js?v=4556f3c";
-import { bringPcs, findPcs, noPcsText, partyNames, rememberParty } from "./gather.js?v=4556f3c";
-import { goToPc, pcLabel, scenePcs } from "./goto.js?v=4556f3c";
-import { PLACE_KEY, WHO_KEY } from "./keys.js?v=4556f3c";
-import { ask } from "./bus.js?v=4556f3c";
+// And "📍 Go to PC" (kind=goto): one tap pans the DM's view to that PC's token (also from the J key,
+// in its own popover).
+import OBR from "./obr-sdk.js?v=56bda6c";
+import { isRoom } from "./areas.js?v=56bda6c";
+import { bringPcs, findPcs, noPcsText, partyNames, rememberParty } from "./gather.js?v=56bda6c";
+import { goToPc, pcLabel, scenePcs } from "./goto.js?v=56bda6c";
+import { PLACE_KEY, WHO_KEY } from "./keys.js?v=56bda6c";
+import { ask } from "./bus.js?v=56bda6c";
+import { showTabs } from "./tabs.js?v=56bda6c";
 
 const kind = new URLSearchParams(location.search).get("kind");
+// The popover this list is in: 🎲 DND's (its `pop`), else the J key's.
+const POP = new URLSearchParams(location.search).get("pop") || "dnd-npc/menu";
 const app = document.getElementById("app");
 
 function add(label, on, click) {
@@ -51,7 +56,7 @@ function heading(text) {
 
 async function done(message) {
   OBR.notification.show(message);
-  await OBR.popover.close("dnd-npc/menu");
+  await OBR.popover.close(POP);
 }
 
 // "✕" writes an explicit null, never a deleted key: an Owlbear JSON-patch "remove" of a key
@@ -82,7 +87,7 @@ async function setWho(tokens, who, name) {
       else clearKey(d, WHO_KEY);
     }
   });
-  await done(who ? `🗺 This is ${name}` : "🗺 Matched by its name again");
+  await done(who ? `🏷 This is ${name}` : "🏷 Matched by its name again");
 }
 
 // The list stays open after a bring, so the DM can bring the next PC (clicking away closes it).
@@ -145,9 +150,9 @@ async function goTo(id) {
   try {
     await goToPc(id);
   } catch (e) {
-    OBR.notification.show(`🎯 Going to the PC failed: ${e?.error?.message || e?.message || e}`, "ERROR");
+    OBR.notification.show(`📍 Going to the PC failed: ${e?.error?.message || e?.message || e}`, "ERROR");
   }
-  await OBR.popover.close("dnd-npc/menu");
+  await OBR.popover.close(POP);
 }
 
 async function goToMenu() {
@@ -157,14 +162,15 @@ async function goToMenu() {
   if (!pcs.length) {
     app.className = "note";
     app.textContent = noPcsText(party);
-    OBR.notification.show("🎯 No PC tokens found", "WARNING");
+    OBR.notification.show("📍 No PC tokens found", "WARNING");
     return;
   }
-  heading("🎯 Go to");
+  heading("📍 Go to");
   for (const pc of pcs) add(pcLabel(pc), false, () => goTo(pc.item.id));
 }
 
 OBR.onReady(async () => {
+  showTabs(OBR, document, location);
   if (kind === "goto") {
     await goToMenu();
     return;
@@ -199,6 +205,7 @@ OBR.onReady(async () => {
     add("✕ Not a place", false, () => setPlace(rooms, null));
   } else {
     const current = items.length === 1 ? items[0].metadata?.[WHO_KEY] : null;
+    if (items.length > 1) heading(`🏷 This is… for ${items.length} tokens`);
     heading("Party");
     for (const name of catalog.party) add(name, current === `pc:${name}`, () => setWho(items, `pc:${name}`, name));
     heading("NPCs");

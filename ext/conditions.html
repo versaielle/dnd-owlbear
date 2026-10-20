@@ -18,20 +18,22 @@
 <div id="grid"></div>
 <div id="name"></div>
 <script type="module">
-// The "Conditions" right-click menu on a token (any GM screen): tap a badge to switch that
-// condition on or off for the selected tokens. Lit = on. The badges on the map follow
-// (background.js), and the panel hears about it with the next map report.
-import OBR from "./obr-sdk.js?v=4556f3c";
-import { BADGE_URL, COND_KEY, CONDITIONS } from "./keys.js?v=4556f3c";
+// 🎲 DND's 🩹 Conditions tab on a token (any GM screen; tabs.js draws the tab row): tap a badge to
+// switch that condition on or off for the tokens right-clicked (else the selected ones). Lit = on.
+// The badges on the map follow (background.js), and the panel hears about it with the next map report.
+import OBR from "./obr-sdk.js?v=56bda6c";
+import { BADGE_URL, COND_KEY, CONDITIONS } from "./keys.js?v=56bda6c";
+import { clickedIds, showTabs } from "./tabs.js?v=56bda6c";
 
 const grid = document.getElementById("grid");
 const nameBox = document.getElementById("name");
 const buttons = {};
+const clicked = clickedIds(location.search); // the 🎲 DND popover's items; [] elsewhere
 
 const conditionsOf = (i) => (Array.isArray(i.metadata?.[COND_KEY]) ? i.metadata[COND_KEY] : []);
 
 async function selected() {
-  const ids = (await OBR.player.getSelection()) || [];
+  const ids = clicked.length ? clicked : (await OBR.player.getSelection()) || [];
   return ids.length ? OBR.scene.items.getItems(ids) : [];
 }
 
@@ -68,6 +70,7 @@ for (const c of CONDITIONS) {
 }
 
 OBR.onReady(() => {
+  showTabs(OBR, document, location);
   show();
   OBR.scene.items.onChange(show);
 });

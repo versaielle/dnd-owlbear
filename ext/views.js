@@ -15,8 +15,8 @@
 // No SDK import: every Owlbear call goes through `api`, so check_views.mjs runs it against a fake
 // room and a fake clock. background.js starts the parts each screen needs; the GM box
 // (popover.html), the right-click menu and the toolbar button aim.
-import { PROJECTOR_KEY } from "./keys.js?v=4556f3c";
-import { footprint } from "./fx/place.js?v=4556f3c";
+import { PROJECTOR_KEY } from "./keys.js?v=56bda6c";
+import { footprint } from "./fx/place.js?v=56bda6c";
 
 export const POLL_MS = 250; // the table screen looks at its view this often
 const SETTLE_MS = 200; // after setting the view: looked at again once it has settled
@@ -587,7 +587,7 @@ export function projectorLines({ lock = null, screens = [], ownSync = false, now
   const out = [];
   const on = !!lock?.on;
   const aimed = on && lock.at ? ` (aimed ${ago((now - lock.at) / 1000)})` : "";
-  if (!on) out.push({ cls: "dim", text: "🔓 Not locked: Sync View from any screen moves it. Tap 📺 Show my view, or right-click a map → 📺 Projector here." });
+  if (!on) out.push({ cls: "dim", text: "🔓 Not locked: Sync View from any screen moves it. Tap 📺 Show my view, or right-click a map → 🎲 DND → 📺." });
   const list = Array.isArray(screens) ? screens : [];
   if (on && !list.length) {
     out.push({ cls: "warn", text: `🔒 Locked${aimed}, but no projector has answered yet. Is the cast running? After a publish, restart the cast.` });
