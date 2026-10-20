@@ -1,6 +1,31 @@
 // Where the extension keeps its links in Owlbear (item metadata, saved with the room).
 export const PLACE_KEY = "dnd-npc/place"; // on a drawing: the narrator's place key
 export const WHO_KEY = "dnd-npc/who"; // on a token: "pc:<character name>" or "npc:<persona slug>"
+// The layers whose items are tokens. The DM, 2026-10-20: "we need to treat mounts (owlbear mounts) as tokens too"
+// (a creature attached to a PC's token moves with it). The public extension names no NPC, so none here.
+// So a creature on Owlbear's MOUNT layer is in the map report, its rooms, the panel, HP, conditions, attacks and the
+// 9/0 rings like any token. Only a CHARACTER token is ever a PC (fx/pcs.js), and only CHARACTER tokens are moved by
+// 🧭 Bring PCs and 👥 Place townsfolk. aim/geometry.js (which imports nothing) and map_state.py keep a copy.
+export const TOKEN_LAYERS = ["CHARACTER", "MOUNT"];
+export const onTokenLayer = (i) => TOKEN_LAYERS.includes(i?.layer);
+// Is this item drawn hidden because of what it hangs from? Owlbear draws an attachment hidden while its parent
+// is hidden (unless its own disableAttachmentBehavior has "VISIBLE"), though the attachment's `visible` stays
+// true: a visible wolf mounted on a hidden goblin is as secret as the goblin (R1). A PC stops the climb (a
+// hidden PC is public, and so is what rides on it); so does a parent `parentOf(id)` doesn't know (gone, or not
+// in the list). Attached deeper than 8, or in a loop: hidden, to be safe. lighting.js publicChain and
+// lightmeta.js isSecret climb the same way; aim/geometry.js (which imports nothing) keeps a copy.
+export function hiddenAbove(item, parentOf, isPc = () => false) {
+  let i = item;
+  for (let n = 0; n < 8; n++) {
+    if (!i || i.attachedTo == null) return false;
+    if (Array.isArray(i.disableAttachmentBehavior) && i.disableAttachmentBehavior.includes("VISIBLE")) return false;
+    const up = parentOf(i.attachedTo);
+    if (!up || isPc(up)) return false;
+    if (up.visible === false) return true;
+    i = up;
+  }
+  return true;
+}
 // Owlbear's own "Colored Rings" extension: a ring is a circle attached to a token, tagged
 // with this key, its colour in style.strokeColor. A BLUE ring marks a spell's target.
 export const RING_KEY = "rodeo.owlbear.colored-rings/metadata";
@@ -40,6 +65,11 @@ export const INTERIOR_KEY = "dnd-npc/interior";
 // Numbers only, never a name (the room's metadata reaches every device).
 export const MAP_INFO_KEY = "dnd-npc/map";
 export const MARK_PREFIX = "dnd-npc-mark-"; // + token id: the hidden note on a monster ("Hexed · hurt")
+// On a text label 🏘 Map setup's 🎨 Copy label style changed (labelstyle.js): what ↩ Undo label style puts
+// back, {v: 1, runs: [{run, group, before: {fillColor, ...}} | null]}: always UNDO_DEPTH slots, oldest first,
+// the empty ones null, so undoing never removes a key or a slot (the never-remove-a-key rule). Colours,
+// numbers, a font name and a map id only.
+export const LABEL_STYLE_KEY = "dnd-npc/label-style";
 // GM's Grimoire on a token: {hp, maxHp, armorClass, stats: {tempHp}}. Only read once, to copy
 // a monster's HP and AC over to Stat Bubbles (the DM switched to Stat Bubbles on 2026-10-03).
 export const GRIMOIRE_KEY = "com.bitperfect-software.hp-tracker/data";

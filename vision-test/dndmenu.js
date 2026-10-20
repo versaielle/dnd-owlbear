@@ -2,12 +2,14 @@
 // Owlbear regroup, R1). Nothing a button does changed: only where it is reached.
 //
 // 🎲 DND replaces the seven entries menus() made (🗺 This is…, Conditions, 🔥 Light, 🎯 Go to PC,
-// 🧭 Bring PCs here, 📺 Projector here, 🗺 Mark as place). Its click opens one popover at the top
-// left (dnd.html) with a tab for each of those that fits what was clicked: each tab keeps the old
-// entry's filter word for word (TABS below), and each tab is the old page (conditions.html,
-// light.html, menu.html) or, for 📺, one button in dnd.html. tabs.js draws the tab row.
+// 🧭 Bring PCs here, 📺 Projector here, 🗺 Mark as place). Its click opens one popover where the DM
+// right-clicked, unfurling from the entry clicked (popoverAnchor below; dnd.html) with a tab for each
+// of those that fits what was clicked: each tab keeps the old entry's filter word for word (TABS
+// below), and each tab is the old page (conditions.html, light.html, menu.html) or, for 📺, one button
+// in dnd.html. tabs.js draws the tab row.
 // 🏘 Map setup replaces thisPcMenus()' three (Set up interiors, Place townsfolk, Check portals): its
-// small page (mapsetup.html) asks this copy's background to run the job, as the old entry did.
+// small page (mapsetup.html), opened the same way, asks this copy's background to run the job, as the
+// old entry did. On one text label it offers 🎨 Copy label style and ↩ Undo label style instead.
 //
 // Pure: no SDK import, so the node checks import it (check_menus.mjs).
 
@@ -37,14 +39,15 @@ const ONE_MAP_ROOM_OR_TOKEN = () => [
 // tab shows when any matches, as Owlbear shows the first icon whose filter matches) }.
 export const TABS = [
   // Like Stat Bubbles' Edit Stats: the condition badges to switch on and off. 190: the badges at 280 px wide.
+  // 🩹 and 🏷 take any token, a mount too (keys.js TOKEN_LAYERS; the DM, 2026-10-20): every item on one of the two.
   { key: "cond", emoji: "🩹", name: "Conditions", page: "./conditions.html", height: 190,
-    filters: [{ roles: GM, every: [layer("CHARACTER")] }] },
+    filters: [{ roles: GM, every: [layer("CHARACTER", "||"), layer("MOUNT")] }] },
   // ONE icon for any mix of these layers: every item is on one of them (an OR chain; no type test,
   // so a shape prop can be lit too, and our door icons and portal circles, on PROP, are offered it).
   { key: "light", emoji: "🔥", name: "Light", page: "./light.html", height: 182,
     filters: [{ roles: GM, every: [layer("CHARACTER", "||"), layer("PROP", "||"), layer("MOUNT", "||"), layer("ATTACHMENT")] }] },
   { key: "who", emoji: "🏷", name: "This is…", page: "./menu.html", kind: "who", height: 360,
-    filters: [{ roles: GM, every: [layer("CHARACTER")] }] },
+    filters: [{ roles: GM, every: [layer("CHARACTER", "||"), layer("MOUNT")] }] },
   { key: "place", emoji: "🗺", name: "Mark as place", page: "./menu.html", kind: "place", height: 360,
     filters: [{ roles: GM, every: [layer("DRAWING")] }] },
   { key: "goto", emoji: "📍", name: "Go to PC", page: "./menu.html", kind: "goto", height: 360,
@@ -91,6 +94,32 @@ export function filterMatches(filter, items = [], role = "GM") {
 export function sectionsFor(items, role = "GM") {
   const list = Array.isArray(items) ? items.filter((i) => i && typeof i === "object") : [];
   return TABS.filter((t) => t.filters.some((f) => filterMatches(f, list, role))).map((t) => t.key);
+}
+
+// ---- where a popover opens ----
+
+// A fixed spot near the window's top left: the J key's 📍 Go to PC list (a toolbar key, no menu entry
+// to open from), and a right-click popover when Owlbear names no entry.
+export const TOP_LEFT = {
+  anchorReference: "POSITION",
+  anchorPosition: { left: 70, top: 70 },
+  anchorOrigin: { horizontal: "LEFT", vertical: "TOP" },
+  transformOrigin: { horizontal: "LEFT", vertical: "TOP" },
+};
+
+// Where a right-click entry's popover opens (🎲 DND, 🏘 Map setup): on the entry clicked, the element
+// Owlbear hands the entry's onClick (its second argument), so it unfurls from where the DM
+// right-clicked (DM, 2026-10-19: "the right click menu needs to unfurl from where the right click
+// context menu originated"). The popover's top-left corner sits on the entry's top-left corner and it
+// opens down and to the right; Owlbear keeps it on the screen. No element named: TOP_LEFT, as before.
+export function popoverAnchor(elementId) {
+  if (typeof elementId !== "string" || !elementId) return { ...TOP_LEFT };
+  return {
+    anchorElementId: elementId,
+    anchorReference: "ELEMENT",
+    anchorOrigin: { horizontal: "LEFT", vertical: "TOP" },
+    transformOrigin: { horizontal: "LEFT", vertical: "TOP" },
+  };
 }
 
 // ---- the popover's address ----
@@ -160,14 +189,20 @@ export const MAP_SETUP_POPOVER_ID = "dnd-npc/local/map-setup";
 export const MAP_SETUP_LABEL = "🏘 Map setup";
 export const MAP_SETUP_NEED = "map-setup"; // its LOCAL_ASK to this copy's background
 const ONE_MAP_IMAGE = () => ({ roles: GM, max: 1, every: [{ key: "layer", value: "MAP" }, { key: "type", value: "IMAGE" }] });
-// The three old entries: each button keeps its label and its filter.
+// One text label: an Owlbear TEXT item (the Text tool's, plain or rich) or a LABEL.
+const ONE_TEXT_LABEL = () => ({ roles: GM, max: 1, every: [{ key: "type", value: "TEXT", coordinator: "||" }, { key: "type", value: "LABEL" }] });
+// The three old entries: each button keeps its label and its filter. Then the DM's 🎨 (2026-10-20): on one
+// text label, its colours, outline and font copied to the rest of its map's labels, and its undo (labelstyle.js).
 export const MAP_SETUP_JOBS = [
   { key: "interiors", label: "🏘 Set up interiors", filter: ONE_MAP_IMAGE() },
   { key: "townsfolk", label: "👥 Place townsfolk", filter: ONE_MAP_IMAGE() },
   { key: "portals", label: "🏘 Check portals", filter: ONE_MAP_IMAGE() },
+  { key: "labelstyle", label: "🎨 Copy label style", filter: ONE_TEXT_LABEL() },
+  { key: "labelundo", label: "↩ Undo label style", filter: ONE_TEXT_LABEL() },
 ];
-// The union of the three: they're the same filter (one map image).
-export const MAP_SETUP_FILTER = ONE_MAP_IMAGE();
+// The entry's icons' filters (Owlbear shows it when either matches): one map image (the old three's), or
+// one text label (🎨 and ↩).
+export const MAP_SETUP_FILTERS = [ONE_MAP_IMAGE(), ONE_TEXT_LABEL()];
 export const MAP_SETUP_WIDTH = 260;
 export const MAP_SETUP_HEIGHT = 150;
 

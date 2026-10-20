@@ -27,13 +27,13 @@
 // screen can't tell, so no creature is named, listed or counted there; a tap still picks one
 // ("→ a target") and its ring stays below the fog. A creature's name on a player's screen is
 // only one the players see on the map (geometry.tokenLabel publicOnly). PCs are always named.
-import * as F from "./fog.js?v=4710872";
-import * as G from "./geometry.js?v=4710872";
+import * as F from "./fog.js?v=87e7be7";
+import * as G from "./geometry.js?v=87e7be7";
 import {
   ACTION_CANCEL, ACTION_LOCK, AIM_KEY, AMBER, CH, DEFAULT_COLOR, DRAW_MS, FADE_MS, FALLBACK_TOOL, FILL_OPACITY,
   HIGHLIGHT_SCALE, HUD_HEIGHT, HUD_HEIGHT_PICK, HUD_ID, HUD_WIDTH, MODE_PICK, MODE_PLACE, SECRET_OPACITY,
   SHOW_TTL_MS, STROKE_CELLS, STROKE_OPACITY, TOOL_ID,
-} from "./consts.js?v=4710872";
+} from "./consts.js?v=87e7be7";
 
 const MOVE = 0, LINE = 1, CLOSE = 5; // Path commands
 // The template's outline, label and range ring sit above the fog, so a player aiming into the
@@ -88,7 +88,7 @@ export function installAim(api = {}, ctx = {}, hooks = {}) {
   let sdk = null;
   async function B() {
     if (api.buildShape && api.buildLabel && api.buildPath) return api;
-    sdk ||= import("../obr-sdk.js?v=4710872").catch((e) => {
+    sdk ||= import("../obr-sdk.js?v=87e7be7").catch((e) => {
       sdk = null;
       throw e;
     });
@@ -98,7 +98,8 @@ export function installAim(api = {}, ctx = {}, hooks = {}) {
   const maybe = (b, name, ...v) => (typeof b[name] === "function" ? b[name](...v) : b);
 
   // ---- what's on the map ----
-  // CHARACTER items by id. It is only right while we follow the map (an aim, or a template on
+  // Tokens by id (CHARACTER and MOUNT layers: G.onTokenLayer, a mounted wolf is caught like any
+  // token, the DM 2026-10-20). It is only right while we follow the map (an aim, or a template on
   // show): the list is fetched fresh when aiming starts and for every template shown, kept up
   // by the map's change events in between, and forgotten when nothing is on screen.
   let chars = new Map();
@@ -113,7 +114,7 @@ export function installAim(api = {}, ctx = {}, hooks = {}) {
   }
 
   function setChars(items) {
-    chars = new Map((items || []).filter((i) => i?.layer === "CHARACTER").map((i) => [i.id, i]));
+    chars = new Map((items || []).filter(G.onTokenLayer).map((i) => [i.id, i]));
     boundsOf.clear();
     for (const i of chars.values()) if (!i.image) placeBounds(i);
   }
@@ -168,7 +169,7 @@ export function installAim(api = {}, ctx = {}, hooks = {}) {
 
   async function loadChars() {
     const player = !gm();
-    const items = await OBR.scene.items.getItems((i) => i.layer === "CHARACTER" || (player && i.layer === "FOG"));
+    const items = await OBR.scene.items.getItems((i) => G.onTokenLayer(i) || (player && i.layer === "FOG"));
     boundsAt.clear();
     setScene(items);
     fogFilled = await readFill();
@@ -186,7 +187,7 @@ export function installAim(api = {}, ctx = {}, hooks = {}) {
     } catch {
       return; // drawn with what we have
     }
-    const live = new Map((got || []).filter((i) => i?.layer === "CHARACTER").map((i) => [i.id, i]));
+    const live = new Map((got || []).filter(G.onTokenLayer).map((i) => [i.id, i]));
     for (const id of ids) {
       if (live.has(id)) chars.set(id, live.get(id));
       else chars.delete(id); // deleted, or not a token any more
@@ -221,8 +222,18 @@ export function installAim(api = {}, ctx = {}, hooks = {}) {
     // R1: hidden and not a PC = secret. On a player's screen their own PC token (the one in
     // their roster entry, or the one they're aiming from) counts as public before the first
     // heartbeat names the PC tokens; nothing else does.
+    // A visible token hanging from a hidden one that isn't a PC (a wolf mounted on a hidden goblin) is
+    // hidden too: G.hiddenAbove, its parents looked up in this screen's token list; one hanging from
+    // something that isn't a token (a prop, a map) asks ctx.isPublic, which knows every item.
     if (!item) return false;
-    if (item.visible !== false || pcSet().has(item.id)) return true;
+    if (pcSet().has(item.id)) return true;
+    const pcHere = (i) => {
+      if (pcSet().has(i.id) || (!gm() && (own.has(i.id) || s?.spec?.caster_token === i.id))) return true;
+      try { return !!ctx.isPc?.(i.id, i); } catch { return false; }
+    };
+    let unknown = false;
+    const parentOf = (id) => chars.get(id) || ((unknown = true), undefined);
+    if (item.visible !== false && !G.hiddenAbove(item, parentOf, pcHere) && !(unknown && typeof ctx.isPublic === "function")) return true;
     try {
       if (ctx.isPublic?.(item.id, item)) return true;
     } catch {
@@ -823,7 +834,15 @@ export function installAim(api = {}, ctx = {}, hooks = {}) {
     if (!sess || sess.ending || !e?.pointerPosition) return;
     const p = e.pointerPosition;
     if (sess.mode === "pick") {
-      const id = G.pickAt(p, candidates(sess), sess.grid);
+      const all = candidates(sess);
+      let id = G.pickAt(p, all, sess.grid);
+      // A wolf or a pet mounted under the caster's own token can't be tapped past it (pickAt prefers the
+      // rider): for a spell aimed at others, a tap there means the one under it.
+      if (id && id === sess.spec.caster_token && !sess.spec.self_ok) {
+        const under = all.filter((t) => t.item?.attachedTo === id && t.fp
+          && t.fp.minX <= p.x && p.x <= t.fp.maxX && t.fp.minY <= p.y && p.y <= t.fp.maxY);
+        id = G.pickAt(p, under, sess.grid) || id;
+      }
       if (id) choose(id);
       return;
     }

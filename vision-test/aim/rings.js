@@ -1,8 +1,8 @@
 // BLUE (party) and YELLOW (NPC / monster) target rings, written the way Owlbear's Colored Rings extension writes them, so the
 // panel's ring reader (_take_target_pick) and the DM's own clicks treat them like any other.
 // The bridge rings what a locked aim caught; a GM aimer does it itself when the bridge is gone.
-import { DOWN_COLOR, FOE_COLOR, RING_KEY, TARGET_COLOR } from "../keys.js?v=4710872";
-import { footprint } from "./geometry.js?v=4710872";
+import { DOWN_COLOR, FOE_COLOR, RING_KEY, TARGET_COLOR, onTokenLayer } from "../keys.js?v=87e7be7";
+import { footprint } from "./geometry.js?v=87e7be7";
 
 const NEST_STEP = 0.14; // a ring on top of another of ours is this much smaller (of the token's diameter)
 const NEST_MIN = 0.55;
@@ -10,7 +10,7 @@ const NEST_MIN = 0.55;
 let sdk = null;
 async function shapeBuilder(api) {
   if (api.buildShape) return api.buildShape;
-  sdk ||= import("../obr-sdk.js?v=4710872");
+  sdk ||= import("../obr-sdk.js?v=87e7be7");
   return (await sdk).buildShape;
 }
 
@@ -100,7 +100,7 @@ export async function toggleTargetRing(api, color, { selection } = {}) {
   const sel = selection ?? (await OBR.player.getSelection());
   if (!Array.isArray(sel) || !sel.length) return { action: "none", ids: [], why: "nothing selected" };
   const items = await OBR.scene.items.getItems(sel);
-  const ids = items.filter((i) => i.layer === "CHARACTER" && i.image && i.grid).map((i) => i.id);
+  const ids = items.filter((i) => onTokenLayer(i) && i.image && i.grid).map((i) => i.id); // a mount too (keys.js)
   if (!ids.length) return { action: "none", ids: [], why: "no token selected" };
   const rings = await OBR.scene.items.getItems(
     (i) => !!i.attachedTo && ids.includes(i.attachedTo) && i.metadata?.[RING_KEY]?.enabled

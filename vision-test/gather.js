@@ -19,13 +19,13 @@
 // town.townsfolk for that map (townsfolkFor) goes to its own square in its room, next to its piece
 // of furniture.
 // check_interiors.mjs tests the pure parts offline.
-import OBR, { MathM } from "./obr-sdk.js?v=4710872";
-import { contains, isRoom, outline } from "./areas.js?v=4710872";
-import { ask, directBase } from "./bus.js?v=4710872";
-import { bounds, listed, loadInteriors, mapToScene, matchImages, normName, toScene } from "./interiors.js?v=4710872";
-import { BUBBLES_NAME_KEY, INTERIOR_KEY, MAP_INFO_KEY, PARTY_KEY, PARTY_SENSES_KEY, WHO_KEY } from "./keys.js?v=4710872";
-import { nameKey, pcName, tokenLabel } from "./fx/pcs.js?v=4710872";
-import { readLine, toWorld } from "./fog/lineread.js?v=4710872";
+import OBR, { MathM } from "./obr-sdk.js?v=87e7be7";
+import { contains, isRoom, outline } from "./areas.js?v=87e7be7";
+import { ask, directBase } from "./bus.js?v=87e7be7";
+import { bounds, listed, loadInteriors, mapToScene, matchImages, normName, toScene } from "./interiors.js?v=87e7be7";
+import { BUBBLES_NAME_KEY, INTERIOR_KEY, MAP_INFO_KEY, PARTY_KEY, PARTY_SENSES_KEY, WHO_KEY, onTokenLayer } from "./keys.js?v=87e7be7";
+import { nameKey, pcName, tokenLabel } from "./fx/pcs.js?v=87e7be7";
+import { readLine, toWorld } from "./fog/lineread.js?v=87e7be7";
 
 const RADIUS = 12; // squares around the spot that are tried
 
@@ -306,7 +306,8 @@ export function gather(json, target, items, party, sceneDpi, { chosen = null, bo
   if (chosen) pcs = pcs.filter((p) => chosen.includes(p.item.id));
   if (!pcs.length) return { name: t.name, moves: [], pcs: [] };
   const moving = new Set(pcs.map((p) => p.item.id));
-  const others = items.filter((i) => i.layer === "CHARACTER" && !i.attachedTo && !moving.has(i.id) && i.id !== target.id);
+  // Tokens nobody lands on: a loose mount too (keys.js TOKEN_LAYERS; read only, never moved). An attached one rides along.
+  const others = items.filter((i) => onTokenLayer(i) && !i.attachedTo && !moving.has(i.id) && i.id !== target.id);
   const avoid = [...t.avoid, ...portalBoxes(items), ...others.map((i) => tokenArea(i, sceneDpi)),
                  ...propBoxes(json, items, sceneDpi)];
   const cells = arrange(pcs.length, { point: t.point, anchor, dpi: sceneDpi, allowed: t.allowed, avoid,
@@ -410,7 +411,7 @@ export function townsfolkPlan(json, items, sceneDpi, { clicked } = {}) {
   const images = items.filter((i) => i.layer === "MAP" && i.type === "IMAGE");
   const found = findTownsfolk(entries, items).filter((f) => mine.has(f.entry));
   const moving = new Set(found.filter((f) => f.item).map((f) => f.item.id));
-  const others = items.filter((i) => i.layer === "CHARACTER" && !i.attachedTo && !moving.has(i.id));
+  const others = items.filter((i) => onTokenLayer(i) && !i.attachedTo && !moving.has(i.id)); // a loose mount too
   const fixed = [...portalBoxes(items), ...others.map((i) => tokenArea(i, sceneDpi)), ...propBoxes(json, items, sceneDpi)];
   const walls = wallSegments(items);
   const out = { moves: [], notFound: [], noMap: [], noRoom: [], elsewhere: [] };

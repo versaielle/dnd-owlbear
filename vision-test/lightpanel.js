@@ -9,8 +9,10 @@
 //                and "Released to Smoke" when it is
 //   ▸ Maps       each MAP-layer image ☀/🌒/🌑/as scene (MAP_DARKNESS_KEY on it;
 //                docs/lights-darkness-spec.md: darkness comes from light, per point), in folds:
-//                ▸ Main maps, and ▸ one per building holding ▸ one per floor (mapGroups: a building
-//                floor is an interior, the DM's 🏠 or what 🏘 Set up interiors laid out); while 🌫 Our
+//                ▸ one per main map (named by the map), holding its own row, then ▸ each building nearest
+//                it holding ▸ one per floor (mapGroups: a building floor is an interior, the DM's 🏠 or
+//                what 🏘 Set up interiors laid out, or an unmarked map named "<Building> - <Floor>";
+//                with no main map the buildings sit right under ▸ Maps); while 🌫 Our
 //                fog is on, also its explored-memory controls (fog/mapui.js, docs/vision-layer-b4.md
 //                section 6, docs/vision-layer-2024.md section 6): the mode (auto (→ what auto is
 //                now) / fog / remembered / clear; "remembered" writes "dim"), 🏠 / 🌳, "Forget
@@ -50,13 +52,13 @@
 // with the lights writer's own ctx, in one write (fx/lightwriter.js writeNow): the writer's next
 // pass plans nothing more. Any control here that changes an input takes a scene released to
 // Smoke back (SCENE_LIGHTING_KEY.managed true); "Release lights to Smoke" sets it false.
-import { FOG_KEY, MAP_DARKNESS_KEY, PARTY_KEY, SCENE_LIGHTING_KEY } from "./keys.js?v=4710872";
-import { SOURCES } from "./fx/lights.js?v=4710872";
-import { isMap, mapDarkness, readGrid, sceneDarkness } from "./fx/darkness.js?v=4710872";
-import { writeNow } from "./fx/lightwriter.js?v=4710872";
-import { cleanParty } from "./gather.js?v=4710872";
+import { FOG_KEY, MAP_DARKNESS_KEY, PARTY_KEY, SCENE_LIGHTING_KEY } from "./keys.js?v=87e7be7";
+import { SOURCES } from "./fx/lights.js?v=87e7be7";
+import { isMap, mapDarkness, readGrid, sceneDarkness } from "./fx/darkness.js?v=87e7be7";
+import { writeNow } from "./fx/lightwriter.js?v=87e7be7";
+import { cleanParty } from "./gather.js?v=87e7be7";
 import { DARKNESS, applyMeta, autoKind, carriers, describe, editFor, lightingOf, lightingRows, managed, releaseItem,
-         screenLine, screenWarnings, uiCtx } from "./lightui.js?v=4710872";
+         screenLine, screenWarnings, uiCtx } from "./lightui.js?v=87e7be7";
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 const COMMON = ["candle", "torch", "lamp", "hooded_lantern", "brazier"].filter((k) => SOURCES[k]);
@@ -161,12 +163,17 @@ export function startLiveLog(el) {
 
 // Each fold's open or closed state, kept in JS across every redraw and remembered on this screen
 // (this browser's localStorage for this copy; every read and write in try/catch, so the box works
-// without it). Keys: "maps", "maps/main", "maps/b:<building key>", "maps/b:<key>/f:<floor key>",
-// "lights", "lights/pcs", "lights/npcs", "lights/objects".
+// without it). Keys (mapFoldKeys): "maps"; "maps/m:<main map id>" (the id URI-encoded), then
+// "<that>/b:<building key>" and "<that>/b:<key>/f:<floor key>"; "maps/b:<key>" and
+// "maps/b:<key>/f:<floor key>" when the scene has no main map; "lights", "lights/pcs", "lights/npcs",
+// "lights/objects".
 export const FOLD_KEY = "dnd-npc/box-folds";
-// Open until the DM folds them: Main maps inside ▸ Maps and PCs inside ▸ Lights. Every other fold
-// (▸ Maps and ▸ Lights themselves, NPCs & monsters, Objects, each building and each floor) starts closed.
-export const FOLD_OPEN = { "maps/main": true, "lights/pcs": true };
+// Open until the DM folds them: each main map's fold inside ▸ Maps (as ▸ Main maps was) and PCs inside
+// ▸ Lights. Every other fold (▸ Maps and ▸ Lights themselves, NPCs & monsters, Objects, each building and
+// each floor) starts closed; a 🏠 / 🌳 tap opens the folds that hold its map (revealMap).
+export const FOLD_OPEN = { "lights/pcs": true };
+const MAIN_MAP_FOLD = /^maps\/m:[^/]+$/;
+export const openAtFirst = (k) => FOLD_OPEN[k] === true || MAIN_MAP_FOLD.test(String(k));
 const FOLD_KEEP = 300; // the most fold states remembered (buildings and floors come and go with scenes)
 
 export function foldStore(key = FOLD_KEY) {
@@ -176,7 +183,7 @@ export function foldStore(key = FOLD_KEY) {
     if (v && typeof v === "object" && !Array.isArray(v)) saved = v;
   } catch { /* storage blocked or junk: the defaults */ }
   return {
-    isOpen: (k) => (typeof saved[k] === "boolean" ? saved[k] : FOLD_OPEN[k] === true),
+    isOpen: (k) => (typeof saved[k] === "boolean" ? saved[k] : openAtFirst(k)),
     set(k, open) {
       delete saved[k]; // the newest last, so the oldest go first past FOLD_KEEP
       saved[k] = !!open;
@@ -187,53 +194,117 @@ export function foldStore(key = FOLD_KEY) {
   };
 }
 
-// ---- ▸ Maps: main maps, and buildings → floors ----
+// ---- ▸ Maps: each main map, holding its buildings → floors ----
 
 // A map's name made comparable, as fog/maps.js normName does (check_box.mjs pins that they agree): no
 // file extension, one kind of dash, one space; case kept.
 const normName = (s) => String(s ?? "").trim().replace(/\.(png|jpe?g|webp|gif|avif)$/i, "")
   .replace(/[–—]/g, "-").replace(/\s+/g, " ").trim();
+const finite = (...xs) => xs.every((x) => typeof x === "number" && Number.isFinite(x));
 
-// The ▸ Maps folds for the scene's map images, in their order: {main: [item], buildings: [{key, name,
-// floors: [{key, name, maps: [item]}]}]}. A map is a building's floor when it's an interior: the DM's 🏠
-// (MAP_FOG_KEY.kind), else what 🏘 Set up interiors laid out (fog/mapui.js kindOf: the same rule that
-// gives a map "Remember building", mapRows canRemember). Its building is the name before " - " (mapui
-// buildingName), its floor the rest of the name, or all of it when there's no " - ". Every other map,
-// an unnamed one too, is a main map. ui: fog/mapui.js; null without it (▸ Maps is one flat list then).
-export function mapGroups(maps, ui) {
+// Where one map image goes in ▸ Maps: {building, floor} when it's a building's floor, else null (a main
+// map). A floor is an interior by fog/mapui.js kindOf (the DM's 🏠, MAP_FOG_KEY.kind, else what 🏘 Set up
+// interiors laid out: the rule that gives a map "Remember building"), or a map nobody marked either way
+// (kindFrom "default") whose name reads "<Building> - <Floor>", as every authored interior map is
+// (interiors.json: the DM's room had none set up yet, live 2026-10-19). A map the DM or Set up interiors
+// marked outdoor is a main map whatever its name. Its building is the name before " - " (mapui
+// buildingName), its floor the rest of the name, or all of it when there's no " - " (the DM's 🏠 "Hut").
+function floorOf(m, ui) {
+  const k = ui.kindOf(m) || {};
+  const n = normName(m?.name);
+  const cut = n.indexOf(" - ");
+  const rest = cut > 0 ? n.slice(cut + 3).trim() : "";
+  if (!(k.kind === "interior" || (k.kindFrom === "default" && rest))) return null;
+  const building = ui.buildingName(m);
+  return building ? { building, floor: rest || n } : null;
+}
+
+// Each map's middle on the scene: its rectangle's (fog/mapui.js mapRects, views.js's), else its position.
+function middles(maps, ui, dpi) {
+  const at = new Map();
+  try {
+    if (typeof ui?.mapRects === "function") {
+      for (const r of ui.mapRects(maps, dpi) || []) {
+        if (finite(r?.x0, r?.y0, r?.x1, r?.y1)) at.set(r.id, { x: (r.x0 + r.x1) / 2, y: (r.y0 + r.y1) / 2 });
+      }
+    }
+  } catch { /* the positions, then */ }
+  return (m) => at.get(m?.id) ?? (finite(m?.position?.x, m?.position?.y) ? m.position : null);
+}
+
+// The ▸ Maps folds for the scene's map images (DM, 2026-10-19: "maps->main maps->lighting/fog options,
+// maps->building name->floor name->lighting/fog options"; the town map on top, its buildings under it,
+// each unfurling to its floors):
+//   {main: [{id, name, map, buildings: [B]}], buildings: [B]}, B = {key, name, floors: [{key, name, maps: [item]}]}
+// main: one per main map (floorOf null; an unnamed map too), in the scene's order, named by the map
+// ("Map" when unnamed), holding the buildings nearest it: each building goes under the main map whose
+// middle is nearest its first floor map's (the first main map on a tie or when nothing can be measured;
+// with one main map, all of them). buildings: the buildings directly under ▸ Maps, only when the scene
+// has no main map. Buildings and floors in the scene's order; a building's key is its name lowercased,
+// a floor's its name lowercased. ui: fog/mapui.js; null without it (▸ Maps is one flat list then).
+// dpi: the scene grid's (mapRects measures with it).
+export function mapGroups(maps, ui, { dpi } = {}) {
   if (typeof ui?.kindOf !== "function" || typeof ui?.buildingName !== "function") return null;
+  const list = (Array.isArray(maps) ? maps : []).filter((m) => m && typeof m === "object");
   const main = [], byKey = new Map();
-  for (const m of maps || []) {
-    const name = ui.kindOf(m)?.kind === "interior" ? ui.buildingName(m) : null;
-    if (!name) {
-      main.push(m);
+  for (const m of list) {
+    const at = floorOf(m, ui);
+    if (!at) {
+      main.push({ id: m.id, name: normName(m.name) || "Map", map: m, buildings: [] });
       continue;
     }
-    const key = name.toLowerCase();
-    if (!byKey.has(key)) byKey.set(key, { key, name, floors: [], byFloor: new Map() });
+    const key = at.building.toLowerCase();
+    if (!byKey.has(key)) byKey.set(key, { key, name: at.building, floors: [], byFloor: new Map() });
     const b = byKey.get(key);
-    const n = normName(m?.name);
-    const k = n.indexOf(" - ");
-    const floor = (k > 0 ? n.slice(k + 3).trim() : "") || n;
-    const fk = floor.toLowerCase();
+    const fk = at.floor.toLowerCase();
     if (!b.byFloor.has(fk)) {
-      const f = { key: fk, name: floor, maps: [] };
+      const f = { key: fk, name: at.floor, maps: [] };
       b.byFloor.set(fk, f);
       b.floors.push(f);
     }
     b.byFloor.get(fk).maps.push(m);
   }
-  return { main, buildings: [...byKey.values()].map(({ byFloor, ...b }) => b) };
+  const buildings = [...byKey.values()].map(({ byFloor, ...b }) => b);
+  if (!main.length) return { main, buildings };
+  const middle = middles(list, ui, finite(dpi) && dpi > 0 ? dpi : 150);
+  const far = (a, b) => (a && b ? Math.hypot(a.x - b.x, a.y - b.y) : Infinity);
+  for (const b of buildings) {
+    const from = middle(b.floors[0].maps[0]);
+    let best = main[0], bestD = far(from, middle(best.map));
+    for (const mm of main.slice(1)) {
+      const d = far(from, middle(mm.map));
+      if (d < bestD) [best, bestD] = [mm, d];
+    }
+    best.buildings.push(b);
+  }
+  return { main, buildings: [] };
 }
 
-// The folds that hold one map, outermost first ([] when it isn't in the groups).
+// The fold keys (see FOLD_KEY): a main map's, a building's under its parent fold, a floor's.
+export const mainFoldKey = (mm) => `maps/m:${encodeURIComponent(String(mm?.id ?? ""))}`;
+const buildingFoldKey = (parent, b) => `${parent}/b:${b.key}`;
+const floorFoldKey = (bk, f) => `${bk}/f:${f.key}`;
+
+// The folds that hold one map, outermost first ([] when it isn't in the groups): a main map's own row
+// ["maps", its fold]; a floor's ["maps", its main map's fold, its building's, its floor's] (no main
+// map's fold when the scene has no main map).
 export function mapFoldKeys(groups, id) {
   if (!groups) return [];
-  if (groups.main.some((m) => m?.id === id)) return ["maps", "maps/main"];
-  for (const b of groups.buildings) {
-    for (const f of b.floors) if (f.maps.some((m) => m?.id === id)) return ["maps", `maps/b:${b.key}`, `maps/b:${b.key}/f:${f.key}`];
+  const inBuildings = (parent, buildings) => {
+    for (const b of buildings || []) {
+      const bk = buildingFoldKey(parent, b);
+      for (const f of b.floors) if (f.maps.some((m) => m?.id === id)) return [bk, floorFoldKey(bk, f)];
+    }
+    return null;
+  };
+  for (const mm of groups.main || []) {
+    const mk = mainFoldKey(mm);
+    if (mm.id === id) return ["maps", mk];
+    const chain = inBuildings(mk, mm.buildings);
+    if (chain) return ["maps", mk, ...chain];
   }
-  return [];
+  const chain = inBuildings("maps", groups.buildings);
+  return chain ? ["maps", ...chain] : [];
 }
 
 // el: {scene, pcs?, lit?, screens, said, release, fog?, maps?, lights?, npcs?, objects?} elements; OBR:
@@ -469,7 +540,7 @@ export function startLighting(OBR, el, { build = "", ask = null } = {}) {
   const setFogKind = (row, kind) => fogWrite(async () => {
     const r = await mapUi.setMapFog(OBR, row.id, { kind });
     await load();
-    revealMap(row.id); // 🏠 / 🌳 can move it between Main maps and its building: open the folds it lands in
+    revealMap(row.id); // 🏠 / 🌳 can make it a main map or a building's floor: open the folds it lands in
     const now = rowOf(row.id);
     note(`${row.name || "Map"}: ${kind === null ? `as painted (${now?.kind || "outdoor"})` : kind === "interior" ? "🏠 interior" : "🌳 outdoor"}`
       + `${r.wrote ? "" : " (already so)"} · now ${modeSaid(now)}`);
@@ -510,7 +581,7 @@ export function startLighting(OBR, el, { build = "", ask = null } = {}) {
   // The folds that hold a map, opened (only the folds: nothing is written).
   function revealMap(id) {
     try {
-      for (const k of mapFoldKeys(mapGroups(items.filter(isMap), mapUi), id)) folds.set(k, true);
+      for (const k of mapFoldKeys(mapGroups(items.filter(isMap), mapUi, { dpi: sceneGrid?.dpi }), id)) folds.set(k, true);
     } catch { /* the folds only */ }
   }
 
@@ -792,39 +863,46 @@ export function startLighting(OBR, el, { build = "", ask = null } = {}) {
     return row;
   }
 
-  // ▸ Maps: each MAP-layer image's own darkness (a 🌑 cellar inside a ☀ town scene), folded as Main maps
-  // and each building's floors (mapGroups); one flat list inside ▸ Maps if fog/mapui.js didn't load.
+  // ▸ Maps: each MAP-layer image's own darkness (a 🌑 cellar inside a ☀ town scene), folded by main map
+  // (its own row first, then its buildings → floors; mapGroups); one flat list inside ▸ Maps if
+  // fog/mapui.js didn't load.
   function renderMaps(target) {
     const maps = items.filter(isMap);
     if (!maps.length) return;
     const fogRows = new Map(mapRowsNow().map((r) => [r.id, r])); // 🌫 on: each map's memory facts
     const top = fold("maps", `Maps (${maps.length})`);
     target.append(top.box);
-    const groups = mapGroups(maps, mapUi);
+    const groups = mapGroups(maps, mapUi, { dpi: sceneGrid?.dpi });
     if (!groups) {
       for (const m of maps) top.body.append(mapRow(m, fogRows.get(m.id)));
       return;
     }
-    if (groups.main.length) {
-      const main = fold("maps/main", `Main maps (${groups.main.length})`);
-      for (const m of groups.main) main.body.append(mapRow(m, fogRows.get(m.id)));
-      top.body.append(main.box);
-    }
-    for (const b of groups.buildings) {
+    // One building's fold under `parent` (a main map's fold, or ▸ Maps), holding a fold per floor.
+    const buildingBox = (b, parent) => {
       // Remember building once, on the building's row: the chip each of its floors had (fog/mapui.js
       // chipsFor; the same write, every floor of the building at once).
       const fr = b.floors.flatMap((f) => f.maps).map((m) => fogRows.get(m.id)).find((r) => r && mapUi.chipsFor(r).remember);
       const rem = fr ? mapUi.chipsFor(fr).remember : null;
       const extra = rem ? [chip(rem.label, fr.remembered, rem.title, () => setBuilding(fr, rem.on))] : [];
       const n = b.floors.length;
-      const bf = fold(`maps/b:${b.key}`, `🏠 ${b.name} · ${n} floor${n === 1 ? "" : "s"}`, extra);
+      const bk = buildingFoldKey(parent, b);
+      const bf = fold(bk, `🏠 ${b.name} · ${n} floor${n === 1 ? "" : "s"}`, extra);
       for (const f of b.floors) {
-        const ff = fold(`maps/b:${b.key}/f:${f.key}`, f.name + (f.maps.length > 1 ? ` (${f.maps.length})` : ""));
+        const ff = fold(floorFoldKey(bk, f), f.name + (f.maps.length > 1 ? ` (${f.maps.length})` : ""));
         for (const m of f.maps) ff.body.append(mapRow(m, fogRows.get(m.id), { remember: !rem }));
         bf.body.append(ff.box);
       }
-      top.body.append(bf.box);
+      return bf.box;
+    };
+    for (const mm of groups.main) {
+      const n = mm.buildings.length;
+      const mk = mainFoldKey(mm);
+      const mf = fold(mk, mm.name + (n ? ` · ${n} building${n === 1 ? "" : "s"}` : ""));
+      mf.body.append(mapRow(mm.map, fogRows.get(mm.id)));
+      for (const b of mm.buildings) mf.body.append(buildingBox(b, mk));
+      top.body.append(mf.box);
     }
+    for (const b of groups.buildings) top.body.append(buildingBox(b, "maps"));
   }
 
   // One NPC's, monster's or object's row: its name and tags, then its light chips.
@@ -1000,8 +1078,8 @@ export function startLighting(OBR, el, { build = "", ask = null } = {}) {
     }
   }
 
-  import("./fog/fog.js?v=4710872").then((m) => { fogMod = m; render(); }, (e) => { fogErr = String(e?.message || e); renderFog(); });
-  import("./fog/mapui.js?v=4710872").then((m) => { mapUi = m; render(); }, (e) => console.warn("dnd-npc: 🌫 map controls", e));
+  import("./fog/fog.js?v=87e7be7").then((m) => { fogMod = m; render(); }, (e) => { fogErr = String(e?.message || e); renderFog(); });
+  import("./fog/mapui.js?v=87e7be7").then((m) => { mapUi = m; render(); }, (e) => console.warn("dnd-npc: 🌫 map controls", e));
   OBR.scene.items.onChange(() => refresh());
   OBR.scene.onMetadataChange?.(() => refresh());
   OBR.scene.onReadyChange?.(() => refresh());
