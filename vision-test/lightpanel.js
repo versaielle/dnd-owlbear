@@ -38,8 +38,11 @@
 //                A tap asks this device's background to write the whole switch (fog.js setOn: the
 //                fill, prev, Smoke's door state) at once; with no answer in SWITCH_WAIT_MS this box
 //                writes it itself (fog.js writeSwitch)
-//   🛖 Roofs     (beside 🌫) the scene switch for the building roofs (fog/roofs.js: ROOFS_KEY.on; one tap
-//                either way, asked of the background as 🌫 is, writeRoofs as the fallback)
+//   🛖 Roofs     (beside 🌫) the scene switch for the building roofs (fog/roofs.js: ROOFS_KEY.on). As 🌫:
+//                on takes two taps, off one; asked of the background (fog.js setRoofs), writeRoofs as
+//                the fallback. With 🌫 off and roof pieces dropped in the scene (roofOriginals), the box
+//                says "🌫 is off: roofs do nothing", and so does the 🪵 Live log, once per new count
+//                (fog.js reads nothing while 🌫 is off, so this box is where it's seen)
 //   🪵 Live log   (on the ⚙ Setup tab, startLiveLog) every screen's fog and door log lines, newest first,
 //                each with the screen it came from, and a Copy button (fog/livelog.js)
 //
@@ -47,13 +50,13 @@
 // with the lights writer's own ctx, in one write (fx/lightwriter.js writeNow): the writer's next
 // pass plans nothing more. Any control here that changes an input takes a scene released to
 // Smoke back (SCENE_LIGHTING_KEY.managed true); "Release lights to Smoke" sets it false.
-import { FOG_KEY, MAP_DARKNESS_KEY, PARTY_KEY, SCENE_LIGHTING_KEY } from "./keys.js?v=e1dd89c";
-import { SOURCES } from "./fx/lights.js?v=e1dd89c";
-import { isMap, mapDarkness, readGrid, sceneDarkness } from "./fx/darkness.js?v=e1dd89c";
-import { writeNow } from "./fx/lightwriter.js?v=e1dd89c";
-import { cleanParty } from "./gather.js?v=e1dd89c";
+import { FOG_KEY, MAP_DARKNESS_KEY, PARTY_KEY, SCENE_LIGHTING_KEY } from "./keys.js?v=8f4acd5";
+import { SOURCES } from "./fx/lights.js?v=8f4acd5";
+import { isMap, mapDarkness, readGrid, sceneDarkness } from "./fx/darkness.js?v=8f4acd5";
+import { writeNow } from "./fx/lightwriter.js?v=8f4acd5";
+import { cleanParty } from "./gather.js?v=8f4acd5";
 import { DARKNESS, applyMeta, autoKind, carriers, describe, editFor, lightingOf, lightingRows, managed, releaseItem,
-         screenLine, screenWarnings, uiCtx } from "./lightui.js?v=e1dd89c";
+         screenLine, screenWarnings, uiCtx } from "./lightui.js?v=8f4acd5";
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 const COMMON = ["candle", "torch", "lamp", "hooded_lantern", "brazier"].filter((k) => SOURCES[k]);
@@ -246,7 +249,8 @@ export function startLighting(OBR, el, { build = "", ask = null } = {}) {
   // background's fog status on this screen (its LOCAL_STATE); the switch-on tap waiting for a second;
   // the tap the background is writing ({id, on, timer}).
   let fogMod = null, fogErr = "", fogStatus = null, fogArmed = 0, fogAsked = null;
-  let roofsAsked = null; // 🛖 Roofs: the tap the background is writing ({id, on, timer})
+  let roofsArmed = 0, roofsAsked = null; // 🛖 Roofs, as 🌫: the switch-on tap waiting for a second; the tap the background is writing
+  let roofsIdle = null; // the "🌫 is off: roofs do nothing" count last said in the 🪵 Live log
   // The maps' explored-memory controls (fog/mapui.js, loaded on its own as fog.js is), the scene grid
   // load() reads (mapRows needs its dpi), and the "Forget explored" tap waiting for a second ({id, at}).
   let mapUi = null, sceneGrid = null, forgetArmed = null;
@@ -598,7 +602,8 @@ export function startLighting(OBR, el, { build = "", ask = null } = {}) {
       () => toggleFog(!f.on)));
     if (typeof fogMod.roofsOn === "function") {
       const r = fogMod.roofsOn(sceneMeta);
-      box.append(chip(r ? "✓ 🛖 Roofs" : "🛖 Roofs", r,
+      const rArming = !r && Date.now() - roofsArmed < 5000;
+      box.append(chip(r ? "✓ 🛖 Roofs" : rArming ? "🛖 Tap again: on for every screen" : "🛖 Roofs", r,
         r ? "The building roofs are on in this scene (they show while 🌫 Our fog is on). Tap to hide every roof"
           : "Painted roofs over the rooms no PC is in, on every screen, while 🌫 Our fog is on too (not for game night until rehearsed)",
         () => toggleRoofs(!r)));
@@ -612,6 +617,18 @@ export function startLighting(OBR, el, { build = "", ask = null } = {}) {
       el.fog.append(p);
       return p;
     };
+    // Roof pieces dropped while 🌫 is off: nothing takes them in (fog.js reads nothing now). Said here,
+    // and in the 🪵 Live log once per new count.
+    const idle = !f.on && typeof fogMod.roofOriginals === "function" ? fogMod.roofOriginals(items).length : 0;
+    if (idle) line("warn", `🌫 is off: roofs do nothing (${idle} roof piece${idle === 1 ? "" : "s"} dropped in this scene wait for 🌫 Our fog and 🛖 Roofs)`);
+    if ((idle || null) !== roofsIdle) {
+      roofsIdle = idle || null;
+      if (idle) {
+        try {
+          if (typeof ask === "function") ask("fog-log", { kind: "roofs", text: `🛖 🌫 is off: roofs do nothing (${idle} roof piece${idle === 1 ? "" : "s"} dropped)` });
+        } catch { /* the log is optional */ }
+      }
+    }
     if (!f.on) return line("dim", "Off: our fog draws nothing in this scene (the scene's own fog fill shows as it is).");
     // The memory shade (fog/mapui.js shadeChips; FOG_LOOK_KEY): one value for the whole scene.
     if (mapUi?.shadeChips) {
@@ -693,29 +710,40 @@ export function startLighting(OBR, el, { build = "", ask = null } = {}) {
     render();
   }
 
-  // 🛖 Roofs: one tap either way, written whole by this device's background (fog.js setRoofs: off also
-  // parks every roof piece); with no answer in SWITCH_WAIT_MS this box writes it (fog.js writeRoofs).
+  // 🛖 Roofs, as 🌫: on takes two taps (it changes every screen at once); off takes one. This device's
+  // background writes the whole switch (fog.js setRoofs: off also parks every roof piece); with no
+  // answer in SWITCH_WAIT_MS, this box does (fog.js writeRoofs).
   async function toggleRoofs(on) {
     if (!ready) return say("Open a scene first", "warn");
     if (!fogMod?.writeRoofs) return say("🌫 Our fog didn't load", "bad");
+    if (on && Date.now() - roofsArmed > 5000) {
+      roofsArmed = Date.now();
+      renderFog();
+      setTimeout(() => { if (Date.now() - roofsArmed >= 5000) renderFog(); }, 5100);
+      return;
+    }
+    roofsArmed = 0;
     if (roofsAsked) return say("🛖 Still switching…", "dim");
     if (typeof ask === "function") {
       const id = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
       roofsAsked = { id, on, timer: setTimeout(() => roofsHere(on, id), SWITCH_WAIT_MS) };
-      say(on ? "🛖 Switching the roofs on…" : "🛖 Switching the roofs off…", "dim");
+      say(on ? "🛖 Switching on…" : "🛖 Switching off…", "dim");
       ask("roofs-switch", { on, id });
       return;
     }
     await roofsHere(on, null);
   }
 
+  // The background didn't answer (or there is none to ask): this box writes the switch itself.
   async function roofsHere(on, id) {
     if (id && roofsAsked?.id !== id) return; // answered meanwhile
     if (roofsAsked) clearTimeout(roofsAsked.timer);
     roofsAsked = null;
     try {
-      await fogMod.writeRoofs(OBR, on, Date.now());
-      say(on ? "🛖 Roofs are on (they show while 🌫 Our fog is on)" : "🛖 Roofs are off: every roof piece is hidden");
+      const res = await fogMod.writeRoofs(OBR, on, Date.now());
+      const words = typeof fogMod.roofsWords === "function" ? fogMod.roofsWords(on, fogMod.cleanFog(sceneMeta?.[FOG_KEY]).on)
+        : on ? "🛖 Roofs are on" : "🛖 Roofs are off: every roof piece is hidden";
+      say(words + (res?.parkError ? ` (parking them from here failed: ${res.parkError})` : ""));
     } catch (e) {
       say(`🛖 The switch failed: ${e?.error?.message || e?.message || e}`, "bad");
     }
@@ -972,8 +1000,8 @@ export function startLighting(OBR, el, { build = "", ask = null } = {}) {
     }
   }
 
-  import("./fog/fog.js?v=e1dd89c").then((m) => { fogMod = m; render(); }, (e) => { fogErr = String(e?.message || e); renderFog(); });
-  import("./fog/mapui.js?v=e1dd89c").then((m) => { mapUi = m; render(); }, (e) => console.warn("dnd-npc: 🌫 map controls", e));
+  import("./fog/fog.js?v=8f4acd5").then((m) => { fogMod = m; render(); }, (e) => { fogErr = String(e?.message || e); renderFog(); });
+  import("./fog/mapui.js?v=8f4acd5").then((m) => { mapUi = m; render(); }, (e) => console.warn("dnd-npc: 🌫 map controls", e));
   OBR.scene.items.onChange(() => refresh());
   OBR.scene.onMetadataChange?.(() => refresh());
   OBR.scene.onReadyChange?.(() => refresh());

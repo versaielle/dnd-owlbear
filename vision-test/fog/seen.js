@@ -58,17 +58,17 @@
 // kind). api: {OBR}; the checks may pass clip (the library, already loaded) or loadClip() (a promise
 // of it).
 
-import { EXPLORED_KEY, RULES_KEY, SEEN_KEY } from "../keys.js?v=e1dd89c";
-import { visionOf } from "../fx/lightmeta.js?v=e1dd89c";
-import { centreOf, mapRects } from "../views.js?v=e1dd89c";
-import { createBits, decode, encode, getBit, setBits } from "./bitset.js?v=e1dd89c";
-import { seenCells, visibilityPolygon } from "./los.js?v=e1dd89c";
-import { seenOf } from "./maps.js?v=e1dd89c";
+import { EXPLORED_KEY, RULES_KEY, SEEN_KEY } from "../keys.js?v=8f4acd5";
+import { visionOf } from "../fx/lightmeta.js?v=8f4acd5";
+import { centreOf, mapRects } from "../views.js?v=8f4acd5";
+import { createBits, decode, encode, getBit, setBits } from "./bitset.js?v=8f4acd5";
+import { seenCells, visibilityPolygon } from "./los.js?v=8f4acd5";
+import { seenOf } from "./maps.js?v=8f4acd5";
 import { EXPLORED_CALL_MAX_BYTES, areaOf, clipOk, darkReachFt, decodeRings, litLights, litLightsOn, mergeExplored, pcViews, readValue,
-  rectSize, seenShapes, sightBlockersOf, uniteRings } from "./shapes.js?v=e1dd89c";
-import { sightReachFt } from "./sight.js?v=e1dd89c";
+  rectSize, seenShapes, sightBlockersOf, uniteRings } from "./shapes.js?v=8f4acd5";
+import { sightReachFt } from "./sight.js?v=8f4acd5";
 
-export { darkReachFt } from "./shapes.js?v=e1dd89c";
+export { darkReachFt } from "./shapes.js?v=8f4acd5";
 
 export const SEEN_EVERY_MS = 1000;
 export const SEEN_WRITE_MS = 5000;
@@ -195,7 +195,7 @@ export function createSeen(api = {}, ctx = {}) {
   const log = (text) => { try { ctx.log?.(text, "seen"); } catch { /* nowhere to say it */ } };
   const answerer = () => !!safe(() => ctx.isAnswerer?.(), false);
   const clock = () => (typeof performance !== "undefined" && performance?.now ? performance.now() : Date.now());
-  const loadClip = typeof api.loadClip === "function" ? api.loadClip : () => import("./clipper.js?v=e1dd89c").then((m) => m.default);
+  const loadClip = typeof api.loadClip === "function" ? api.loadClip : () => import("./clipper.js?v=8f4acd5").then((m) => m.default);
 
   let epoch = 0; // a clear()/forget() moves it on: anything in flight from before is dropped
   let alive = false; // a sync ran since the last clear()

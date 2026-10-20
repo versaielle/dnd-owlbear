@@ -18,17 +18,17 @@
 // and a player's view follows their PC after a portal trip. Those load with import() and may fail
 // on their own: the map jobs, rings and HP keep working without them.
 import OBR, { buildCurve, buildEffect, buildImage, buildLabel, buildLight, buildPath, buildShape, buildText, buildWall, Math2,
-  MathM } from "./obr-sdk.js?v=e1dd89c";
-import { contains, isRoom, size } from "./areas.js?v=e1dd89c";
-import { checkPortals, describe, panelLog, setUpInteriors } from "./interiors.js?v=e1dd89c";
-import { cleanParty, placeTownsfolk, rememberParty } from "./gather.js?v=e1dd89c";
-import { isPcToken, nameKey, pcName } from "./fx/pcs.js?v=e1dd89c";
-import { BADGE_KEY, BADGE_URL, BUBBLES_KEY, BUBBLES_NAME_KEY, COND_KEY, CONDITIONS, DOWN_COLOR, FOE_COLOR, FOG_LOG_LOCAL_CH, GRIMOIRE_KEY, MARK_PREFIX, PARTY_KEY, PARTY_SENSES_KEY, PLACE_KEY, RING_KEY, TARGET_COLOR, WHO_KEY, targetRingColor } from "./keys.js?v=e1dd89c";
+  MathM } from "./obr-sdk.js?v=8f4acd5";
+import { contains, isRoom, size } from "./areas.js?v=8f4acd5";
+import { checkPortals, describe, panelLog, setUpInteriors } from "./interiors.js?v=8f4acd5";
+import { cleanParty, placeTownsfolk, rememberParty } from "./gather.js?v=8f4acd5";
+import { isPcToken, nameKey, pcName } from "./fx/pcs.js?v=8f4acd5";
+import { BADGE_KEY, BADGE_URL, BUBBLES_KEY, BUBBLES_NAME_KEY, COND_KEY, CONDITIONS, DOWN_COLOR, FOE_COLOR, FOG_LOG_LOCAL_CH, GRIMOIRE_KEY, MARK_PREFIX, PARTY_KEY, PARTY_SENSES_KEY, PLACE_KEY, RING_KEY, TARGET_COLOR, WHO_KEY, targetRingColor } from "./keys.js?v=8f4acd5";
 import { CH, DEFAULT_SETTINGS, LS, buildOf, forMe, here, isLocalOrigin, kindOf, lsGet, on as busOn, send as busSend,
-  setConnection, setSceneWrite, startSceneReader, tierOf } from "./bus.js?v=e1dd89c";
+  setConnection, setSceneWrite, startSceneReader, tierOf } from "./bus.js?v=8f4acd5";
 import { DND_FILTER, DND_LABEL, DND_MENU_ID, DND_POPOVER_ID, DND_WIDTH, LOCAL_DND_MENU_ID, MAP_SETUP_FILTER, MAP_SETUP_HEIGHT,
   MAP_SETUP_LABEL, MAP_SETUP_MENU_ID, MAP_SETUP_NEED, MAP_SETUP_POPOVER_ID, MAP_SETUP_WIDTH, dndQuery, heightOf, sectionsFor,
-  setupJobsFor, setupQuery } from "./dndmenu.js?v=e1dd89c";
+  setupJobsFor, setupQuery } from "./dndmenu.js?v=8f4acd5";
 
 const HEARTBEAT_MS = 10000;
 const DEBOUNCE_MS = 250;
@@ -621,18 +621,18 @@ const JOBS = {
 // The parts that load on their own (R4): a broken one is left out and the rest carry on.
 // Literal paths, so the publisher can stamp each with the build.
 const MODULES = {
-  bridge: () => import("./bridge.js?v=e1dd89c"),
-  fx: () => import("./fx/engine.js?v=e1dd89c"),
-  samples: () => import("./fx/samples.js?v=e1dd89c"),
-  aim: () => import("./aim/tool.js?v=e1dd89c"),
-  geometry: () => import("./aim/geometry.js?v=e1dd89c"),
-  rings: () => import("./aim/rings.js?v=e1dd89c"),
-  player: () => import("./player/state.js?v=e1dd89c"),
-  lights: () => import("./fx/lighting.js?v=e1dd89c"),
-  lightjobs: () => import("./fx/lightjobs.js?v=e1dd89c"),
-  lightwriter: () => import("./fx/lightwriter.js?v=e1dd89c"),
-  views: () => import("./views.js?v=e1dd89c"),
-  fog: () => import("./fog/fog.js?v=e1dd89c"),
+  bridge: () => import("./bridge.js?v=8f4acd5"),
+  fx: () => import("./fx/engine.js?v=8f4acd5"),
+  samples: () => import("./fx/samples.js?v=8f4acd5"),
+  aim: () => import("./aim/tool.js?v=8f4acd5"),
+  geometry: () => import("./aim/geometry.js?v=8f4acd5"),
+  rings: () => import("./aim/rings.js?v=8f4acd5"),
+  player: () => import("./player/state.js?v=8f4acd5"),
+  lights: () => import("./fx/lighting.js?v=8f4acd5"),
+  lightjobs: () => import("./fx/lightjobs.js?v=8f4acd5"),
+  lightwriter: () => import("./fx/lightwriter.js?v=8f4acd5"),
+  views: () => import("./views.js?v=8f4acd5"),
+  fog: () => import("./fog/fog.js?v=8f4acd5"),
 };
 
 const HELLO_MS = 30000; // each screen says hello this often, so the panel's screens list stays fresh

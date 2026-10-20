@@ -70,7 +70,11 @@
 // works only on the answerer (fog/doors.js isAnswerer); memory goes last of the six, and a seen write
 // echoes back as an item change, so the next pass draws it. After them (ALL_PARTS) 🛖 Roofs
 // (fog/roofs.js): the roof pieces, taken in and written by the answerer only, never awaited by the
-// pass; 🌫 off parks them all from the tapping screen (writeSwitch) and from the writer. The map images'
+// pass; 🌫 off parks them all from the tapping screen (writeSwitch) and from the writer. Roofs keeps
+// its own back-off and says its own errors (OWN_RETRY): its failure never fails the pass (no ⚠, no
+// retry of the pass). An uploaded roof original (its name parses as a piece's) is no map rectangle,
+// so the memory never writes on it before it's taken in. A GM screen that isn't the writer tells
+// roofs.js why (partCtx.writerWhy: its doors not started or settling, or another screen's name). The map images'
 // own metadata (SEEN_KEY, MAP_FOG_KEY, MEMORY_KEY, MAP_DARKNESS_KEY) arrive as item changes; the
 // scene's fog colour (OBR.scene.fog getColor/onChange, guarded) gives a pass when it changes. A GM
 // screen also looks every ANSWER_WATCH_MS whether it became (or stopped being) the answerer, and
@@ -85,23 +89,23 @@
 // the answerer watch, at most every SMOKE_CHECK_MS (one OBR.scene.local.getItems), never on a
 // player's screen. Smoke's leftover shared data (its sceneId, a token's hasVision) never counts.
 
-import { FOG_KEY, FOG_LOCAL_KEY, FOG_LOOK_KEY, PARTY_KEY, PARTY_SENSES_KEY, ROOFS_KEY, RULES_KEY, SCENE_LIGHTING_KEY, SMOKE, WEATHER_KEY } from "../keys.js?v=e1dd89c";
-import { planCtx } from "../fx/lightwriter.js?v=e1dd89c";
-import { readGrid } from "../fx/darkness.js?v=e1dd89c";
-import { mapRects } from "../views.js?v=e1dd89c";
-import { doorEdit, drift, occupiedMaps, readLines } from "./lines.js?v=e1dd89c";
-import { mapStates } from "./maps.js?v=e1dd89c";
-import { createSight } from "./sight.js?v=e1dd89c";
-import { createWalls } from "./walls.js?v=e1dd89c";
-import { ANSWERER_SETTLE_MS, createDoors } from "./doors.js?v=e1dd89c";
-import { createSeen } from "./seen.js?v=e1dd89c";
-import { createMemory } from "./memory.js?v=e1dd89c";
-import { createCover } from "./cover.js?v=e1dd89c";
-import { createRoofs, parkAll, roofsOn, roofsWords, writeRoofs } from "./roofs.js?v=e1dd89c";
-import { createLiveLog, lineText } from "./livelog.js?v=e1dd89c";
+import { FOG_KEY, FOG_LOCAL_KEY, FOG_LOOK_KEY, PARTY_KEY, PARTY_SENSES_KEY, ROOFS_KEY, RULES_KEY, SCENE_LIGHTING_KEY, SMOKE, WEATHER_KEY } from "../keys.js?v=8f4acd5";
+import { planCtx } from "../fx/lightwriter.js?v=8f4acd5";
+import { readGrid } from "../fx/darkness.js?v=8f4acd5";
+import { mapRects } from "../views.js?v=8f4acd5";
+import { doorEdit, drift, occupiedMaps, readLines } from "./lines.js?v=8f4acd5";
+import { mapStates } from "./maps.js?v=8f4acd5";
+import { createSight } from "./sight.js?v=8f4acd5";
+import { createWalls } from "./walls.js?v=8f4acd5";
+import { ANSWERER_SETTLE_MS, createDoors } from "./doors.js?v=8f4acd5";
+import { createSeen } from "./seen.js?v=8f4acd5";
+import { createMemory } from "./memory.js?v=8f4acd5";
+import { createCover } from "./cover.js?v=8f4acd5";
+import { createRoofs, parkAll, parseRoofName, roofsOn, roofsWords, writeRoofs } from "./roofs.js?v=8f4acd5";
+import { createLiveLog, lineText } from "./livelog.js?v=8f4acd5";
 
 export { lineText }; // a live-log line as text (background.js sends them to the GM box)
-export { cleanRoofs, roofsOn, writeRoofs } from "./roofs.js?v=e1dd89c"; // 🛖 Roofs' switch (lightpanel.js: its chip and its fallback)
+export { cleanRoofs, roofOriginals, roofsOn, roofsWords, writeRoofs } from "./roofs.js?v=8f4acd5"; // 🛖 Roofs' switch (lightpanel.js: its chip, its fallback, its "🌫 is off" line)
 
 export const SETTLE_MS = 150; // item changes settle this long before a pass
 export const MAX_WAIT_MS = 750; // ...but a long drag still gets a pass this often
@@ -111,6 +115,8 @@ export const ANSWER_WATCH_MS = 5000; // a GM screen checks this often whether it
 export const PARTS = ["cover", "walls", "sight", "doors", "seen", "memory"]; // the sync order of each pass
 // ...and after them 🛖 Roofs (fog/roofs.js: the roof pieces, written by the explored memory's writer)
 export const ALL_PARTS = [...PARTS, "roofs"];
+// The parts that keep their own back-off and say their own errors: a failure of theirs never fails the pass.
+export const OWN_RETRY = ["roofs"];
 export const SMOKE_VISION_OFF = `${SMOKE}/disableVision`;
 export const SMOKE_CHECK_MS = 5000; // a GM screen looks for Smoke's running local items at most this often
 // The Smoke warning's last words: Smoke's local lights and walls may outlive its switch-off on a tab
@@ -261,7 +267,8 @@ export function buildSnapshot(items, sceneMeta, roomMeta, grid, ctx = {}, at = 0
   const rm = isObj(roomMeta) ? roomMeta : {};
   const g = grid && finite(grid.dpi) && grid.dpi > 0 ? grid : { dpi: 150, ftPerCell: 5, pxPerFt: 30 };
   const isPc = (i) => { try { return !!ctx.isPc?.(i); } catch { return false; } };
-  const rects = mapRects(list, g.dpi);
+  // An uploaded 🛖 roof original isn't a map (until the take-in removes it): no rect, no map state.
+  const rects = mapRects(list.filter((i) => !(i?.layer === "MAP" && parseRoofName(i.name))), g.dpi);
   const party = Array.isArray(ctx.party) && ctx.party.length ? ctx.party : undefined;
   return {
     items: list, byId: new Map(list.map((i) => [i.id, i])), sceneMeta: sm, roomMeta: rm, grid: g,
@@ -309,6 +316,7 @@ export function createFog(api = {}, ctx = {}, opts = {}) {
   let parts = null; // {walls, cover, sight, doors, seen, memory}, made the first time the switch is seen on
   let fogColor = null; // the scene's own fog colour (snap.fogColor), null until read
   let watchT = null, wasAnswerer = false; // the GM screen's answerer watch (ANSWER_WATCH_MS)
+  let doorsAt = null; // when this screen's doors started (T.now()): the writer is known ANSWERER_SETTLE_MS later
   const partErrors = {};
   let unsubs = [], drawUnsubs = [];
   let busy = false, again = false, passes = 0, current = null; // current: the run in flight
@@ -338,6 +346,12 @@ export function createFog(api = {}, ctx = {}, opts = {}) {
         return !!(typeof d?.isSeenWriter === "function" ? d.isSeenWriter() : d?.isAnswerer?.());
       } catch { return false; }
     },
+    // Why this GM screen isn't that writer (fog/roofs.js says it while roof pieces wait): {kind, text},
+    // or null when it is. kind: "start" (its doors haven't started), "settle" (ANSWERER_SETTLE_MS not
+    // over yet: the seconds left), "none" (no GM screen says it can write), "other" (another one does: its name).
+    writerWhy: () => {
+      try { return writerWhy(); } catch (e) { return { kind: "start", text: `this screen can't tell who writes (${describe(e)})` }; }
+    },
     get memoryOnGm() { return opts.memoryOnGm !== false; },
     get dimOpacity() { return opts.dimOpacity; },
     snapshot: () => snap,
@@ -345,6 +359,23 @@ export function createFog(api = {}, ctx = {}, opts = {}) {
     timers: T,
     log: (t, kind = "fog") => say(kind, t),
   };
+
+  function writerWhy() {
+    if (partCtx.isAnswerer()) return null;
+    const d = parts?.doors;
+    if (!d || doorsAt == null) {
+      return { kind: "start", text: partErrors.doors ? `this screen's door menus didn't start (${partErrors.doors})` : "this screen's door menus haven't started yet" };
+    }
+    const left = ANSWERER_SETTLE_MS - (T.now() - doorsAt);
+    if (left > 0) return { kind: "settle", text: `this screen is still listening for the other GM screens (${Math.ceil(left / 1000)} s left)` };
+    const w = typeof d.status === "function" ? d.status()?.seen_writer : null;
+    if (!w) return { kind: "none", text: "no GM screen here can write them (reload every DM browser onto this copy)" };
+    if (!w.here) {
+      return { kind: "other", who: String(w.name || w.conn || "?"),
+               text: `another GM screen ("${String(w.name || w.conn || "?").slice(0, 40)}") writes the roofs (reload every DM browser onto this copy)` };
+    }
+    return { kind: "start", text: "this screen is picked to write but hasn't started" };
+  }
 
   function makeParts() {
     if (parts) return parts;
@@ -456,7 +487,7 @@ export function createFog(api = {}, ctx = {}, opts = {}) {
       } catch (e) {
         r = { failed: true, error: describe(e) };
       }
-      if (r?.failed) failed = `${name}: ${r.error || "failed"}`;
+      if (r?.failed && !OWN_RETRY.includes(name)) failed = `${name}: ${r.error || "failed"}`;
     }
     lastError = failed;
     if (failed) {
@@ -512,6 +543,7 @@ export function createFog(api = {}, ctx = {}, opts = {}) {
     }));
     await readFogColor();
     try {
+      doorsAt = T.now();
       await parts.doors?.start?.();
     } catch (e) {
       partErrors.doors = describe(e);
@@ -583,6 +615,7 @@ export function createFog(api = {}, ctx = {}, opts = {}) {
     if (watchT) T.clearTimeout(watchT);
     settleT = retryT = watchT = null;
     wasAnswerer = false;
+    doorsAt = null;
     fogColor = null;
     firstAt = null;
     retryMs = RETRY_MS;
