@@ -18,17 +18,17 @@
 // and a player's view follows their PC after a portal trip. Those load with import() and may fail
 // on their own: the map jobs, rings and HP keep working without them.
 import OBR, { buildCurve, buildEffect, buildImage, buildLabel, buildLight, buildPath, buildShape, buildText, buildWall, Math2,
-  MathM } from "./obr-sdk.js?v=56bda6c";
-import { contains, isRoom, size } from "./areas.js?v=56bda6c";
-import { checkPortals, describe, panelLog, setUpInteriors } from "./interiors.js?v=56bda6c";
-import { cleanParty, placeTownsfolk, rememberParty } from "./gather.js?v=56bda6c";
-import { isPcToken, nameKey, pcName } from "./fx/pcs.js?v=56bda6c";
-import { BADGE_KEY, BADGE_URL, BUBBLES_KEY, BUBBLES_NAME_KEY, COND_KEY, CONDITIONS, DOWN_COLOR, FOE_COLOR, FOG_LOG_LOCAL_CH, GRIMOIRE_KEY, MARK_PREFIX, PARTY_KEY, PARTY_SENSES_KEY, PLACE_KEY, RING_KEY, TARGET_COLOR, WHO_KEY, targetRingColor } from "./keys.js?v=56bda6c";
+  MathM } from "./obr-sdk.js?v=b88563f";
+import { contains, isRoom, size } from "./areas.js?v=b88563f";
+import { checkPortals, describe, panelLog, setUpInteriors } from "./interiors.js?v=b88563f";
+import { cleanParty, placeTownsfolk, rememberParty } from "./gather.js?v=b88563f";
+import { isPcToken, nameKey, pcName } from "./fx/pcs.js?v=b88563f";
+import { BADGE_KEY, BADGE_URL, BUBBLES_KEY, BUBBLES_NAME_KEY, COND_KEY, CONDITIONS, DOWN_COLOR, FOE_COLOR, FOG_LOG_LOCAL_CH, GRIMOIRE_KEY, MARK_PREFIX, PARTY_KEY, PARTY_SENSES_KEY, PLACE_KEY, RING_KEY, TARGET_COLOR, WHO_KEY, targetRingColor } from "./keys.js?v=b88563f";
 import { CH, DEFAULT_SETTINGS, LS, buildOf, forMe, here, isLocalOrigin, kindOf, lsGet, on as busOn, send as busSend,
-  setConnection, setSceneWrite, startSceneReader, tierOf } from "./bus.js?v=56bda6c";
+  setConnection, setSceneWrite, startSceneReader, tierOf } from "./bus.js?v=b88563f";
 import { DND_FILTER, DND_LABEL, DND_MENU_ID, DND_POPOVER_ID, DND_WIDTH, LOCAL_DND_MENU_ID, MAP_SETUP_FILTER, MAP_SETUP_HEIGHT,
   MAP_SETUP_LABEL, MAP_SETUP_MENU_ID, MAP_SETUP_NEED, MAP_SETUP_POPOVER_ID, MAP_SETUP_WIDTH, TOP_LEFT, dndQuery, heightOf,
-  popoverAnchor, sectionsFor, setupJobsFor, setupQuery } from "./dndmenu.js?v=56bda6c";
+  popoverAnchor, sectionsFor, setupJobsFor, setupQuery } from "./dndmenu.js?v=b88563f";
 
 const HEARTBEAT_MS = 10000;
 const DEBOUNCE_MS = 250;
@@ -533,7 +533,8 @@ export function menus(ids = MENU_IDS, gotoKeyId = GOTO_KEY_ID, projectorActionId
 // 🏘 Map setup's three jobs, run as their own right-click entries ran them. Its page (mapsetup.html)
 // asks this copy's background (CH.LOCAL_ASK, need "map-setup"): the job runs here, so closing the
 // popover doesn't stop it.
-// On the town map: lay the building maps out beside it and mark them up (interiors.js).
+// On the town map: lay the building maps out beside it and mark them up (interiors.js); on a Chapter 3
+// site map (interiors.json town.scenes), lay out and mark up that scene's site maps instead.
 async function runInteriors(id) {
   try {
     await setUpInteriors(id);
@@ -619,18 +620,18 @@ const JOBS = {
 // The parts that load on their own (R4): a broken one is left out and the rest carry on.
 // Literal paths, so the publisher can stamp each with the build.
 const MODULES = {
-  bridge: () => import("./bridge.js?v=56bda6c"),
-  fx: () => import("./fx/engine.js?v=56bda6c"),
-  samples: () => import("./fx/samples.js?v=56bda6c"),
-  aim: () => import("./aim/tool.js?v=56bda6c"),
-  geometry: () => import("./aim/geometry.js?v=56bda6c"),
-  rings: () => import("./aim/rings.js?v=56bda6c"),
-  player: () => import("./player/state.js?v=56bda6c"),
-  lights: () => import("./fx/lighting.js?v=56bda6c"),
-  lightjobs: () => import("./fx/lightjobs.js?v=56bda6c"),
-  lightwriter: () => import("./fx/lightwriter.js?v=56bda6c"),
-  views: () => import("./views.js?v=56bda6c"),
-  fog: () => import("./fog/fog.js?v=56bda6c"),
+  bridge: () => import("./bridge.js?v=b88563f"),
+  fx: () => import("./fx/engine.js?v=b88563f"),
+  samples: () => import("./fx/samples.js?v=b88563f"),
+  aim: () => import("./aim/tool.js?v=b88563f"),
+  geometry: () => import("./aim/geometry.js?v=b88563f"),
+  rings: () => import("./aim/rings.js?v=b88563f"),
+  player: () => import("./player/state.js?v=b88563f"),
+  lights: () => import("./fx/lighting.js?v=b88563f"),
+  lightjobs: () => import("./fx/lightjobs.js?v=b88563f"),
+  lightwriter: () => import("./fx/lightwriter.js?v=b88563f"),
+  views: () => import("./views.js?v=b88563f"),
+  fog: () => import("./fog/fog.js?v=b88563f"),
 };
 
 const HELLO_MS = 30000; // each screen says hello this often, so the panel's screens list stays fresh

@@ -9,6 +9,9 @@
 //   portals  the "Portals" extension: town spot <-> building entry, stairs <-> stairs
 // Everything it makes is attached to its map image (so it moves with it) and tagged with
 // INTERIOR_KEY, so a re-run deletes it all and starts over.
+// Buildings in a scene group (interiors.json's town.scenes: Chapter 3's sites, in a "Chapter 3"
+// scene) are left out of the town's run: 🏘 on one of their maps lays out that group's maps in its
+// own scene, with no town (scenePlan), and replaces only that group's marks.
 //
 // Coordinates in interiors.json are pixels of that map's image, origin top-left.
 // check_interiors.mjs tests the pure parts offline.
@@ -20,11 +23,11 @@
 // imports gather.js, which imports this) but never fetches anything there. What 🧭 Bring PCs here
 // needs of it (each map's entry, stairs and furniture: numbers, no names) is written on the map
 // images themselves (MAP_INFO_KEY, mapInfo()), so 🧭 works on every copy.
-import OBR, { buildCurve, buildShape } from "./obr-sdk.js?v=56bda6c";
-import { directBase } from "./bus.js?v=56bda6c";
-import { INTERIOR_KEY, MAP_INFO_KEY, PLACE_KEY } from "./keys.js?v=56bda6c";
+import OBR, { buildCurve, buildShape } from "./obr-sdk.js?v=b88563f";
+import { directBase } from "./bus.js?v=b88563f";
+import { INTERIOR_KEY, MAP_INFO_KEY, PLACE_KEY } from "./keys.js?v=b88563f";
 
-const GAP_FLOORS = 2, GAP_ROWS = 3, GAP_TOWN = 6, GAP_COLUMNS = 6; // in squares
+const GAP_FLOORS = 2, GAP_ROWS = 3, GAP_TOWN = 6, GAP_COLUMNS = 6, GAP_SITES = 6; // in squares
 // Owlbear rate-limits requests ("RateLimitHit: Too many requests" with 20-item batches, live
 // 2026-10-07): fewer, bigger calls, a pause between them, and a wait-and-retry when it says so.
 const BATCH = 80; // items per addItems call
@@ -226,14 +229,33 @@ export function mapInfo(map) {
   return info(props);
 }
 
-// Everything the action does, worked out without touching Owlbear: the image moves
-// (updates, each with its map's mapInfo; `townInfo` for the town's own) and the items to add, in groups that must go in the same addItems call
-// (the two ends of a portal: Portals strips an origin whose destination isn't there).
-export function plan(json, town, images, sceneDpi, newId) {
-  const pps = json.px_per_square;
-  const maps = listed(json);
-  const found = matchImages(maps, images, town.id);
-  const at = layout(maps, pps, bounds(town, sceneDpi), sceneDpi);
+// Scenes of their own (interiors.json's town.scenes: {"<scene>": [building, ...]}, from the town's
+// maps/*.py TOWN["scenes"]): those buildings' maps go in that Owlbear scene, not the town's. [{name, buildings}],
+// the buildings as normName keys, in the file's order.
+export function sceneGroups(json) {
+  const s = json?.town?.scenes;
+  if (!s || typeof s !== "object" || Array.isArray(s)) return [];
+  return Object.entries(s).filter(([, b]) => Array.isArray(b))
+    .map(([name, b]) => ({ name, buildings: b.map(normName).filter(Boolean) }));
+}
+
+const buildingKey = (m) => normName(m.building || m.name);
+
+// The scene group a map image belongs to ({name, buildings, maps: its listed maps, in the scene's
+// building order}), or null: the image is no listed map, or its building is in no group.
+export function groupOf(json, image) {
+  const maps = listed(json || {});
+  const [name] = image ? matchImages(maps, [image]).keys() : [];
+  const m = name && maps.find((x) => x.name === name);
+  const g = m && sceneGroups(json).find((x) => x.buildings.includes(buildingKey(m)));
+  if (!g) return null;
+  const order = (x) => g.buildings.indexOf(buildingKey(x));
+  return { ...g, maps: maps.filter((x) => order(x) >= 0).sort((a, b) => order(a) - order(b)) };
+}
+
+// Each map image found -> laid at `at`, its grid at 1 square = pps file px: the image moves (updates)
+// and what its marks are worked out from (placed).
+function place(maps, found, at, pps, sceneDpi) {
   const placed = new Map();
   const updates = [];
   for (const m of maps) {
@@ -246,22 +268,11 @@ export function plan(json, town, images, sceneDpi, newId) {
     const image = { ...img, position: at[m.name], rotation: 0, scale: { x: 1, y: 1 }, grid };
     placed.set(m.name, { map: m, image, here: mapToScene(m, image, sceneDpi) });
   }
-  const counts = { maps: placed.size, town: 0, townWall: 0, rooms: 0, walls: 0, doors: 0, windows: 0, portals: 0 };
-  const groups = [], notes = [];
-  // The town map is an area too: one room over the whole image. Not clickable (disableHit), so
-  // a right-click on the town still finds the map image under it.
-  const townName = json.town?.name || town.name;
-  if (town.image?.width && town.image?.height) {
-    const w = town.image.width, h = town.image.height;
-    const corners = [[0, 0], [w, 0], [w, h], [0, h]].map((c) => toScene(town, c, sceneDpi));
-    groups.push([roomItem(newId(), { name: townName }, corners, { name: townName, place: json.town?.place }, town,
-      sceneDpi, { disableHit: true })]);
-    counts.town = 1;
-    // ...and a wall all the way round its edge: an open line back to its first corner (closed
-    // the way Smoke draws a line, rather than with style.closed).
-    groups.push([wallItem(newId(), "wall", [...corners, corners[0]], { name: townName }, town)]);
-    counts.townWall = 1;
-  }
+  return { placed, updates };
+}
+
+// Every placed map's rooms, walls, doors and windows.
+function markUp(placed, groups, counts, sceneDpi, newId) {
   for (const { map, image, here } of placed.values()) {
     for (const room of map.rooms || []) {
       if ((room.points || []).length < 3) continue;
@@ -276,26 +287,12 @@ export function plan(json, town, images, sceneDpi, newId) {
       }
     }
   }
-  // Town spot <-> the building's entry.
-  const townRatio = json.town?.width ? town.image.width / json.town.width : 1;
-  const townPx = (sceneDpi / town.grid.dpi) * Math.abs(town.scale?.x ?? 1);
-  for (const { map, image, here } of placed.values()) {
-    if (!map.entry) continue;
-    const spot = json.town?.spots?.[map.building];
-    if (!spot) {
-      notes.push(`no town spot for ${map.building}`);
-      continue;
-    }
-    const centre = toScene(town, { x: spot.x * townRatio, y: spot.y * townRatio }, sceneDpi);
-    groups.push(link(
-      circle(newId(), centre, 2 * spot.r * townRatio * townPx, town.id, townName, map.name),
-      circle(newId(), here(map.entry), sceneDpi, image.id, map.name, townName),
-    ));
-    counts.portals++;
-  }
-  // Stairs: each link is listed on both floors, so each pair is made once. A link the other map
-  // doesn't list back is one-way (a doorway between two room maps): a trigger here, and a landing
-  // there with no destination of its own, so a token that arrives doesn't bounce back.
+}
+
+// Stairs: each link is listed on both floors, so each pair is made once. A link the other map
+// doesn't list back is one-way (a doorway between two room maps): a trigger here, and a landing
+// there with no destination of its own, so a token that arrives doesn't bounce back.
+function stairs(placed, groups, counts, sceneDpi, newId) {
   const seen = new Set();
   const same = (p, q) => Array.isArray(p) && Array.isArray(q) && Math.abs(p[0] - q[0]) < 0.5 && Math.abs(p[1] - q[1]) < 0.5;
   for (const { map, image, here } of placed.values()) {
@@ -320,9 +317,144 @@ export function plan(json, town, images, sceneDpi, newId) {
       counts.portals++;
     }
   }
+}
+
+// Everything the action does, worked out without touching Owlbear: the image moves
+// (updates, each with its map's mapInfo; `townInfo` for the town's own) and the items to add, in groups that must go in the same addItems call
+// (the two ends of a portal: Portals strips an origin whose destination isn't there).
+// A scene group's maps (town.scenes) are neither moved nor marked: they are laid out in their own scene
+// (scenePlan). Their spots in the town's layout stay empty, so every other map keeps the spot it had
+// before the groups existed (a town scene still holding them from an older run doesn't overlap).
+export function plan(json, town, images, sceneDpi, newId) {
+  const pps = json.px_per_square;
+  const grouped = new Set(sceneGroups(json).flatMap((g) => g.buildings));
+  const maps = listed(json).filter((m) => !grouped.has(buildingKey(m)));
+  const found = matchImages(maps, images, town.id);
+  const at = layout(listed(json), pps, bounds(town, sceneDpi), sceneDpi);
+  const { placed, updates } = place(maps, found, at, pps, sceneDpi);
+  const counts = { maps: placed.size, town: 0, townWall: 0, rooms: 0, walls: 0, doors: 0, windows: 0, portals: 0 };
+  const groups = [], notes = [];
+  // The town map is an area too: one room over the whole image. Not clickable (disableHit), so
+  // a right-click on the town still finds the map image under it.
+  const townName = json.town?.name || town.name;
+  if (town.image?.width && town.image?.height) {
+    const w = town.image.width, h = town.image.height;
+    const corners = [[0, 0], [w, 0], [w, h], [0, h]].map((c) => toScene(town, c, sceneDpi));
+    groups.push([roomItem(newId(), { name: townName }, corners, { name: townName, place: json.town?.place }, town,
+      sceneDpi, { disableHit: true })]);
+    counts.town = 1;
+    // ...and a wall all the way round its edge: an open line back to its first corner (closed
+    // the way Smoke draws a line, rather than with style.closed).
+    groups.push([wallItem(newId(), "wall", [...corners, corners[0]], { name: townName }, town)]);
+    counts.townWall = 1;
+  }
+  markUp(placed, groups, counts, sceneDpi, newId);
+  // Town spot <-> the building's entry.
+  const townRatio = json.town?.width ? town.image.width / json.town.width : 1;
+  const townPx = (sceneDpi / town.grid.dpi) * Math.abs(town.scale?.x ?? 1);
+  for (const { map, image, here } of placed.values()) {
+    if (!map.entry) continue;
+    const spot = json.town?.spots?.[map.building];
+    if (!spot) {
+      notes.push(`no town spot for ${map.building}`);
+      continue;
+    }
+    const centre = toScene(town, { x: spot.x * townRatio, y: spot.y * townRatio }, sceneDpi);
+    groups.push(link(
+      circle(newId(), centre, 2 * spot.r * townRatio * townPx, town.id, townName, map.name),
+      circle(newId(), here(map.entry), sceneDpi, image.id, map.name, townName),
+    ));
+    counts.portals++;
+  }
+  stairs(placed, groups, counts, sceneDpi, newId);
   const missing = maps.filter((m) => !found.has(m.name)).map((m) => m.name);
   const townInfo = mapInfo({ width: json.town?.width });
   return { updates, townInfo, groups, counts, missing, notes };
+}
+
+// A scene group's layout (top-left corner on the scene of every map in it): each building's floors
+// left to right as one block, blocks in the group's order filling rows GAP_SITES apart, a new row
+// when one would pass 1.5 x the larger of the widest block and the square root of their whole area
+// (two rows for Chapter 3's five sites). All of it is moved so `anchorMap` keeps its top-left corner
+// at `anchor` (scene px), snapped to the grid: only the file and the clicked map decide it, so a
+// re-run on the same map gives the same.
+export function sceneLayout(maps, pps, anchorMap, anchor, dpi) {
+  const cells = (px) => Math.ceil(px / pps - 1e-9);
+  const blocks = [];
+  for (const m of maps) {
+    const key = buildingKey(m);
+    let b = blocks.find((x) => x.key === key);
+    if (!b) blocks.push((b = { key, maps: [] }));
+    b.maps.push(m);
+  }
+  for (const b of blocks) {
+    b.w = b.maps.reduce((s, m) => s + cells(m.width), 0) + GAP_FLOORS * (b.maps.length - 1);
+    b.h = Math.max(...b.maps.map((m) => cells(m.height)));
+  }
+  const limit = 1.5 * Math.max(0, ...blocks.map((b) => b.w), Math.sqrt(blocks.reduce((s, b) => s + b.w * b.h, 0)));
+  const rel = {};
+  let x = 0, y = 0, rowH = 0;
+  for (const b of blocks) {
+    if (x > 0 && x + b.w > limit) {
+      x = 0;
+      y += rowH + GAP_SITES;
+      rowH = 0;
+    }
+    let fx = x;
+    for (const m of b.maps) {
+      rel[m.name] = { x: fx, y };
+      fx += cells(m.width) + GAP_FLOORS;
+    }
+    x += b.w + GAP_SITES;
+    rowH = Math.max(rowH, b.h);
+  }
+  const a = rel[anchorMap] || { x: 0, y: 0 };
+  const ox = Math.round(anchor.x / dpi) - a.x, oy = Math.round(anchor.y / dpi) - a.y;
+  const at = {};
+  for (const [name, r] of Object.entries(rel)) at[name] = { x: (r.x + ox) * dpi, y: (r.y + oy) * dpi };
+  return at;
+}
+
+// 🏘 Set up interiors on a map of a scene group (groupOf): the group's maps in this scene laid out
+// round the clicked one (it keeps its top-left corner), marked up as the town's buildings are (rooms,
+// walls, doors, windows, stairs within a building, each map's mapInfo), with no town area, town
+// portals or town-spot notes. `missing`: the group's maps not in this scene.
+export function scenePlan(json, group, clicked, images, sceneDpi, newId) {
+  const pps = json.px_per_square;
+  const maps = group.maps;
+  const found = matchImages(maps, images, clicked.id);
+  const [mine] = matchImages(maps, [clicked]).keys();
+  if (mine) found.set(mine, clicked);
+  const at = sceneLayout(maps, pps, mine, bounds(clicked, sceneDpi).min, sceneDpi);
+  const { placed, updates } = place(maps, found, at, pps, sceneDpi);
+  const counts = { maps: placed.size, town: 0, townWall: 0, rooms: 0, walls: 0, doors: 0, windows: 0, portals: 0 };
+  const groups = [];
+  markUp(placed, groups, counts, sceneDpi, newId);
+  stairs(placed, groups, counts, sceneDpi, newId);
+  const missing = maps.filter((m) => !found.has(m.name)).map((m) => m.name);
+  return { scene: group.name, updates, townInfo: null, groups, counts, missing, notes: [] };
+}
+
+// True when this scene holds the town map (an image named or labelled json.town.name): a scene group's
+// 🏘 refuses there, since its maps belong in their own scene.
+export function townInScene(json, images) {
+  const want = normName(json?.town?.name);
+  return !!want && images.some((i) => [i.name, i.text?.plainText].some((n) => normName(n) === want));
+}
+
+// The old marks a run replaces (this scene's INTERIOR_KEY items): a scene group's run only its own
+// maps'; the town's run all but a scene group's maps', so a group set up in the town's scene by
+// mistake keeps its marks.
+export function oldMarks(items, json, group) {
+  const names = (maps) => new Set(maps.map((m) => m.name));
+  const mine = group ? names(group.maps) : null;
+  const all = sceneGroups(json).flatMap((g) => g.buildings);
+  const grouped = names(listed(json || {}).filter((m) => all.includes(buildingKey(m))));
+  return items.filter((i) => {
+    const tag = i.metadata?.[INTERIOR_KEY];
+    if (!tag) return false;
+    return mine ? mine.has(tag.map) : !grouped.has(tag.map);
+  });
 }
 
 // Groups packed into addItems calls of at most n items, a group never split.
@@ -340,7 +472,14 @@ export function batches(groups, n) {
   return out;
 }
 
-export function summaryText({ counts: c, missing, notes }) {
+export function summaryText({ counts: c, missing, notes, scene }) {
+  if (scene) {
+    // A scene group's run (scenePlan): no town, and its missing maps belong in this scene.
+    let s = `🏘 ${scene}: ${c.maps} maps laid out, ${c.rooms} rooms, ${c.walls} walls, ${c.doors} doors`
+      + `${c.windows ? `, ${c.windows} windows` : ""}${c.portals ? `, ${c.portals} portals` : ""}`;
+    if (missing.length) s += `. Not in this scene yet: ${missing.join(", ")} (upload ${missing.length > 1 ? "them" : "it"} here, then run 🏘 again)`;
+    return s;
+  }
   const town = c.town ? `the town area${c.townWall ? " and its wall" : ""} + ` : c.townWall ? "the town wall + " : "";
   let s = `🏘 ${c.maps} maps laid out, ${town}${c.rooms} rooms, ${c.walls} walls, ${c.doors} doors`
     + `${c.windows ? `, ${c.windows} windows` : ""}, ${c.portals} portals`;
@@ -454,6 +593,9 @@ export async function checkPortals(townId) {
 const newId = () => (crypto.randomUUID ? crypto.randomUUID()
   : `dnd-npc-interior-${Date.now()}-${Math.random().toString(36).slice(2)}`);
 
+// On the town map (an image interiors.json doesn't list): the town's buildings beside it. On a map of a
+// scene group (town.scenes, Chapter 3's sites): that group's maps in this scene, round the clicked one,
+// with no town. On any other listed map: refused.
 export async function setUpInteriors(townId) {
   const json = await loadInteriors();
   if (!json) {
@@ -463,24 +605,31 @@ export async function setUpInteriors(townId) {
   }
   const [town] = await OBR.scene.items.getItems([townId]);
   if (!town?.image) return;
-  if (listed(json).some((m) => normName(m.name) === normName(town.name))) {
+  const group = groupOf(json, town);
+  if (!group && listed(json).some((m) => normName(m.name) === normName(town.name))) {
     OBR.notification.show("🏘 That's a building map. Run this on the town map.", "WARNING");
     return;
   }
-  OBR.notification.show("🏘 Setting up interiors… (about half a minute)", "INFO");
-  const sceneDpi = await OBR.scene.grid.getDpi();
   const images = await OBR.scene.items.getItems((i) => i.layer === "MAP" && i.type === "IMAGE");
-  const p = plan(json, town, images, sceneDpi, newId);
-  const old = await OBR.scene.items.getItems((i) => i.metadata?.[INTERIOR_KEY]);
+  if (group && townInScene(json, images)) {
+    OBR.notification.show(`🏘 This scene has the town map; set up ${group.name} in its own scene.`, "WARNING");
+    return;
+  }
+  OBR.notification.show(group ? `🏘 Setting up the ${group.name} maps… (about half a minute)`
+    : "🏘 Setting up interiors… (about half a minute)", "INFO");
+  const sceneDpi = await OBR.scene.grid.getDpi();
+  const p = group ? scenePlan(json, group, town, images, sceneDpi, newId) : plan(json, town, images, sceneDpi, newId);
+  const old = oldMarks(await OBR.scene.items.getItems((i) => i.metadata?.[INTERIOR_KEY]), json, group);
   if (old.length) await step("removing the old marks", () => OBR.scene.items.deleteItems(old.map((i) => i.id)));
   // Every map goes (back) to its spot: one the DM has moved by hand since is moved back too.
   // Each gets what 🧭 Bring PCs here needs (MAP_INFO_KEY), and so does the town (no entry, no
-  // props), so a bring on any copy finds everything on the images.
+  // props), so a bring on any copy finds everything on the images. (A scene group has no town:
+  // the clicked map is one of its maps.)
   const to = new Map(p.updates.map((u) => [u.id, u]));
   if (to.size) {
-    await step(`moving ${to.size} maps`, () => OBR.scene.items.updateItems([...to.keys(), town.id], (items) => {
+    await step(`moving ${to.size} maps`, () => OBR.scene.items.updateItems(group ? [...to.keys()] : [...to.keys(), town.id], (items) => {
       for (const i of items) {
-        if (i.id === town.id) {
+        if (!group && i.id === town.id) {
           i.metadata[MAP_INFO_KEY] = p.townInfo;
           continue;
         }
