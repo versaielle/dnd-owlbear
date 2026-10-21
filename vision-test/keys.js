@@ -180,7 +180,8 @@ export const FOG_LOG_LOCAL_CH = "dnd-npc/local/fog-log";
 // encode; the grid is fog/maps.js mapGrid: scene-grid squares over the map's rectangle). Tracked on
 // every map whatever its mode. Written by ONE GM screen (the doors' answerer, fog/seen.js): the
 // draft's own value united with the new squares, at most once every 5 s per map, only when it
-// grew. "Forget explored" (the GM screen tapped) writes the empty set of the same size. A value
+// grew. "Forget explored" (the GM screen tapped) writes the empty set of the same size, and "Forget
+// explored on every map" (fog/mapui.js forgetAllExplored) the same on every map at once. A value
 // that isn't one of the map's current size reads as empty (the map was resized: it starts again).
 export const SEEN_KEY = "dnd-npc/seen";
 // MAP_FOG_KEY: the DM's choices for that map, {mode: "auto" | "fog" | "dim" | "lit" | "clear",
@@ -204,7 +205,8 @@ export const MEMORY_KEY = "dnd-npc/memory";
 // of the rectangle in thousandths (0-1000); rings: base64 of the rings (outer and hole rings in whole
 // scene px from the rectangle's top-left, each a point count then zigzag-varint steps), "" for none.
 // fog/shapes.js reads and encodes it. Written by the seen writer (fog/seen.js) with SEEN_KEY in the same
-// draft; "Forget explored" (fog/mapui.js) writes its empty value and SEEN_KEY's empty in one draft.
+// draft; "Forget explored" (fog/mapui.js) writes its empty value and SEEN_KEY's empty in one draft, and
+// "Forget explored on every map" writes the same values on every map, each in its own draft, in one write.
 export const EXPLORED_KEY = "dnd-npc/explored";
 // FOG_LOOK_KEY, on the SCENE: {v: 1, shade}, shade 0.55 | 0.65 | 0.75: the dim layer's opacity over
 // remembered ground and "clear" maps (missing or junk reads as 0.65). The "Memory shade" row's tap.
