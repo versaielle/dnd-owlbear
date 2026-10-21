@@ -27,13 +27,13 @@
 // Also "🧭 Bring PCs here" (kind=bring): All PCs, or one PC, in one tap; tick several for "Bring these".
 // And "📍 Go to PC" (kind=goto): one tap pans the DM's view to that PC's token (also from the J key,
 // in its own popover).
-import OBR from "./obr-sdk.js?v=b88563f";
-import { isRoom } from "./areas.js?v=b88563f";
-import { bringPcs, findPcs, noPcsText, partyNames, rememberParty } from "./gather.js?v=b88563f";
-import { goToPc, pcLabel, scenePcs } from "./goto.js?v=b88563f";
-import { PLACE_KEY, WHO_KEY } from "./keys.js?v=b88563f";
-import { ask } from "./bus.js?v=b88563f";
-import { showTabs } from "./tabs.js?v=b88563f";
+import OBR from "./obr-sdk.js?v=90a5d4e";
+import { isRoom } from "./areas.js?v=90a5d4e";
+import { bringPcs, findPcs, noPcsText, partyNames, rememberParty } from "./gather.js?v=90a5d4e";
+import { goToPc, pcLabel, scenePcs } from "./goto.js?v=90a5d4e";
+import { PLACE_KEY, WHO_KEY } from "./keys.js?v=90a5d4e";
+import { ask } from "./bus.js?v=90a5d4e";
+import { showTabs } from "./tabs.js?v=90a5d4e";
 
 const kind = new URLSearchParams(location.search).get("kind");
 // The popover this list is in: 🎲 DND's (its `pop`), else the J key's.
@@ -206,8 +206,11 @@ OBR.onReady(async () => {
   } else {
     const current = items.length === 1 ? items[0].metadata?.[WHO_KEY] : null;
     if (items.length > 1) heading(`🏷 This is… for ${items.length} tokens`);
-    heading("Party");
-    for (const name of catalog.party) add(name, current === `pc:${name}`, () => setWho(items, `pc:${name}`, name));
+    // A mount (a wolf or a pet on the MOUNT layer) is never a PC (fx/pcs.js), so no Party list for it.
+    if (items.every((i) => i.layer === "CHARACTER")) {
+      heading("Party");
+      for (const name of catalog.party) add(name, current === `pc:${name}`, () => setWho(items, `pc:${name}`, name));
+    }
     heading("NPCs");
     for (const n of catalog.npcs) add(n.name, current === `npc:${n.slug}`, () => setWho(items, `npc:${n.slug}`, n.name));
     heading("Or");

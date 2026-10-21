@@ -7,9 +7,9 @@
 // Moonbeam stays put). Every screen then decorates each outline it may see with a local
 // ATTACHMENT effect: the zone's look, clipped to the outline, following it when it's dragged or
 // when the outline follows its caster's token. A player's screen skips hidden outlines.
-import { ZONE_LOOKS, colors } from "./archetypes.js?v=b88563f";
-import { finite, footprint, gridOf, placeRect } from "./place.js?v=b88563f";
-import { customUniforms, fillUniforms, shaderFor } from "./shaders.js?v=b88563f";
+import { ZONE_LOOKS, colors } from "./archetypes.js?v=90a5d4e";
+import { finite, footprint, gridOf, placeRect } from "./place.js?v=90a5d4e";
+import { customUniforms, fillUniforms, shaderFor } from "./shaders.js?v=90a5d4e";
 
 export const ZONE_KEY = "dnd-npc/zone"; // on the shared outline: {id, zid, spell, look, color, power, seed, sig}
 export const DECO_KEY = "dnd-npc/fx-zone"; // on a local decoration: {outline, sig}

@@ -5,8 +5,8 @@
 // talks to the panel.
 //
 // The bridge, after every change on the map (a drop, a room drawn or marked) and every few
-// seconds as a heartbeat, sends the panel (/api/map) each character token and which marked
-// rooms it stands in. map_state.py turns that into who is where.
+// seconds as a heartbeat, sends the panel (/api/map) each token (character or mount layer:
+// keys.js TOKEN_LAYERS) and which marked rooms it stands in. map_state.py turns that into who is where.
 //
 // It also carries out what the panel asks of the map (HP in Stat Bubbles, the hidden
 // notes on monsters, 📍 rings), and reports which tokens wear a BLUE Colored Rings ring:
@@ -18,17 +18,18 @@
 // and a player's view follows their PC after a portal trip. Those load with import() and may fail
 // on their own: the map jobs, rings and HP keep working without them.
 import OBR, { buildCurve, buildEffect, buildImage, buildLabel, buildLight, buildPath, buildShape, buildText, buildWall, Math2,
-  MathM } from "./obr-sdk.js?v=b88563f";
-import { contains, isRoom, size } from "./areas.js?v=b88563f";
-import { checkPortals, describe, panelLog, setUpInteriors } from "./interiors.js?v=b88563f";
-import { cleanParty, placeTownsfolk, rememberParty } from "./gather.js?v=b88563f";
-import { isPcToken, nameKey, pcName } from "./fx/pcs.js?v=b88563f";
-import { BADGE_KEY, BADGE_URL, BUBBLES_KEY, BUBBLES_NAME_KEY, COND_KEY, CONDITIONS, DOWN_COLOR, FOE_COLOR, FOG_LOG_LOCAL_CH, GRIMOIRE_KEY, MARK_PREFIX, PARTY_KEY, PARTY_SENSES_KEY, PLACE_KEY, RING_KEY, TARGET_COLOR, WHO_KEY, targetRingColor } from "./keys.js?v=b88563f";
+  MathM } from "./obr-sdk.js?v=90a5d4e";
+import { contains, isRoom, size } from "./areas.js?v=90a5d4e";
+import { checkPortals, describe, panelLog, setUpInteriors } from "./interiors.js?v=90a5d4e";
+import { copyLabelStyle, undoLabelStyle } from "./labelstyle.js?v=90a5d4e";
+import { cleanParty, placeTownsfolk, rememberParty } from "./gather.js?v=90a5d4e";
+import { isPcToken, nameKey, pcName } from "./fx/pcs.js?v=90a5d4e";
+import { BADGE_KEY, BADGE_URL, BUBBLES_KEY, BUBBLES_NAME_KEY, COND_KEY, CONDITIONS, DOWN_COLOR, FOE_COLOR, FOG_LOG_LOCAL_CH, GRIMOIRE_KEY, MARK_PREFIX, PARTY_KEY, PARTY_SENSES_KEY, PLACE_KEY, RING_KEY, TARGET_COLOR, WHO_KEY, hiddenAbove, onTokenLayer, targetRingColor } from "./keys.js?v=90a5d4e";
 import { CH, DEFAULT_SETTINGS, LS, buildOf, forMe, here, isLocalOrigin, kindOf, lsGet, on as busOn, send as busSend,
-  setConnection, setSceneWrite, startSceneReader, tierOf } from "./bus.js?v=b88563f";
-import { DND_FILTER, DND_LABEL, DND_MENU_ID, DND_POPOVER_ID, DND_WIDTH, LOCAL_DND_MENU_ID, MAP_SETUP_FILTER, MAP_SETUP_HEIGHT,
+  setConnection, setSceneWrite, startSceneReader, tierOf } from "./bus.js?v=90a5d4e";
+import { DND_FILTER, DND_LABEL, DND_MENU_ID, DND_POPOVER_ID, DND_WIDTH, LOCAL_DND_MENU_ID, MAP_SETUP_FILTERS, MAP_SETUP_HEIGHT,
   MAP_SETUP_LABEL, MAP_SETUP_MENU_ID, MAP_SETUP_NEED, MAP_SETUP_POPOVER_ID, MAP_SETUP_WIDTH, TOP_LEFT, dndQuery, heightOf,
-  popoverAnchor, sectionsFor, setupJobsFor, setupQuery } from "./dndmenu.js?v=b88563f";
+  popoverAnchor, sectionsFor, setupJobsFor, setupQuery } from "./dndmenu.js?v=90a5d4e";
 
 const HEARTBEAT_MS = 10000;
 const DEBOUNCE_MS = 250;
@@ -59,7 +60,7 @@ async function fromGrimoire(items) {
   // One-time move to Stat Bubbles: a token GM's Grimoire tracks but Stat Bubbles doesn't yet
   // gets its HP, max HP, temp HP and AC copied over, hidden from the players like a monster's
   // should be. Once copied, Stat Bubbles has it, so this never touches that token again.
-  const ids = items.filter((i) => i.layer === "CHARACTER" && typeof i.metadata?.[GRIMOIRE_KEY]?.hp === "number"
+  const ids = items.filter((i) => onTokenLayer(i) && typeof i.metadata?.[GRIMOIRE_KEY]?.hp === "number"
                                   && !(num(i.metadata?.[BUBBLES_KEY]?.["max health"]) > 0)).map((i) => i.id);
   if (!ids.length) return 0;
   await OBR.scene.items.updateItems(ids, (found) => {
@@ -115,7 +116,7 @@ async function syncBadges(items) {
   // Make the badges on the map match each token's conditions. Only what's out of date is
   // changed, so running it after every change on the map costs nothing once it matches.
   const dpi = await OBR.scene.grid.getDpi();
-  const tokens = new Map(items.filter((i) => i.layer === "CHARACTER").map((i) => [i.id, i]));
+  const tokens = new Map(items.filter(onTokenLayer).map((i) => [i.id, i])); // a mount too (keys.js TOKEN_LAYERS)
   const badges = items.filter((i) => i.metadata?.[BADGE_KEY]);
   const remove = badges.filter((b) => !tokens.has(b.attachedTo)).map((b) => b.id);
   const add = [];
@@ -174,16 +175,26 @@ async function summary() {
       (rings[i.attachedTo] ||= []).push(String(i.style.strokeColor).toLowerCase());
     }
   }
+  // Every token, a mount (a wolf or a pet attached to a PC) too: keys.js TOKEN_LAYERS. Its `layer` goes along,
+  // so the panel knows only a CHARACTER token can be a PC. An attached mount's position is where it stands now:
+  // Owlbear moves an attachment with its parent, and any item change brings a new report (soon(), at the bottom).
+  // R1 as the players see it: a visible token hanging from a hidden one that isn't a PC (a wolf mounted on a
+  // hidden goblin) is drawn hidden, so it goes as hidden (keys.js hiddenAbove); what rides on a PC doesn't.
+  const byId = new Map(items.map((i) => [i.id, i]));
+  const isPc = (i) => {
+    try { return isPcNow ? !!isPcNow(i) : isPcToken(i); } catch { return false; }
+  };
   const tokens = items
-    .filter((i) => i.layer === "CHARACTER")
+    .filter(onTokenLayer)
     .map((i) => {
       return {
         id: i.id,
+        layer: i.layer,
         // Stat Bubbles' name tag first, then Owlbear's own label.
         label: String(i.metadata?.[BUBBLES_NAME_KEY] || "").trim() || i.text?.plainText || "",
         name: i.name,
         link: i.metadata?.[WHO_KEY] || "",
-        visible: i.visible,
+        visible: i.visible !== false && hiddenAbove(i, (id) => byId.get(id), isPc) ? false : i.visible,
         position: i.position,
         rings: rings[i.id] || [],
         conditions: conditionsOf(i),
@@ -462,7 +473,7 @@ const LOCAL_RING_KEY_IDS = { blue: "dnd-npc/local/ring-key-1", yellow: "dnd-npc/
 // 📺 Show my view on the projector: a toolbar button beside it (views.js).
 const PROJECTOR_ACTION_ID = "dnd-npc/projector-view";
 const LOCAL_PROJECTOR_ACTION_ID = "dnd-npc/local/projector-view";
-// 🏘 Map setup (🏘 Set up interiors, 👥 Place townsfolk, 🏘 Check portals) needs interiors.json, which
+// 🏘 Map setup (🏘 Set up interiors, 👥 Place townsfolk, 🏘 Check portals; 🎨 and ↩ on a text label) needs interiors.json, which
 // only the panel on this PC can hand over (far too big for the bridge's broadcasts): only the copy the
 // panel serves makes it, even when it only relays on the Dell's tab (the Pages copy there can't reach
 // the panel), and never removes it. (🧭 Bring PCs here is one of 🎲 DND's tabs: what it needs is on
@@ -530,7 +541,7 @@ export function menus(ids = MENU_IDS, gotoKeyId = GOTO_KEY_ID, projectorActionId
   }
 }
 
-// 🏘 Map setup's three jobs, run as their own right-click entries ran them. Its page (mapsetup.html)
+// 🏘 Map setup's jobs: the three old ones run as their own right-click entries ran them. Its page (mapsetup.html)
 // asks this copy's background (CH.LOCAL_ASK, need "map-setup"): the job runs here, so closing the
 // popover doesn't stop it.
 // On the town map: lay the building maps out beside it and mark them up (interiors.js); on a Chapter 3
@@ -561,7 +572,20 @@ function runPortals(id) {
   return checkPortals(id).catch((e) =>
     OBR.notification.show(`🏘 Check failed: ${describe(e)}`, "ERROR"));
 }
-const MAP_SETUP_RUN = { interiors: runInteriors, townsfolk: runTownsfolk, portals: runPortals };
+// On one text label (the DM, 2026-10-20): 🎨 its colours, outline and font copied to the rest of its map's
+// labels (on a building's map: every building map's), never its size; ↩ that group's last copy undone
+// (labelstyle.js).
+async function runLabelStyle(id, undo) {
+  try {
+    await (undo ? undoLabelStyle(id) : copyLabelStyle(id));
+  } catch (e) {
+    console.warn("dnd-npc label style failed", e);
+    OBR.notification.show(`${undo ? "↩ Undoing" : "🎨 Copying"} the label style failed: ${describe(e)}`, "ERROR");
+    panelLog({ what: undo ? "label-undo" : "label-style", error: describe(e), stack: String(e?.stack || ""), detail: "" });
+  }
+}
+const MAP_SETUP_RUN = { interiors: runInteriors, townsfolk: runTownsfolk, portals: runPortals,
+                        labelstyle: (id) => runLabelStyle(id, false), labelundo: (id) => runLabelStyle(id, true) };
 
 // One 🏘 Map setup button's ask: {need: "map-setup", job, id (the map image clicked)}. The job tells
 // the DM how it went, as before; nothing is sent back.
@@ -571,12 +595,12 @@ export function mapSetup(msg) {
   return run(msg.id);
 }
 
-// The copy served by this PC only (see THIS_PC_MENU_IDS): 🏘 Map setup on a map image, its popover
-// (mapsetup.html) with a button for each job, unfurling from the entry clicked as 🎲 DND's does.
+// The copy served by this PC only (see THIS_PC_MENU_IDS): 🏘 Map setup on a map image or one text label,
+// its popover (mapsetup.html) with a button for each job, unfurling from the entry clicked as 🎲 DND's does.
 export function thisPcMenus() {
   OBR.contextMenu.create({
     id: THIS_PC_MENU_IDS.setup,
-    icons: [{ icon: MAP_SETUP_ICON, label: MAP_SETUP_LABEL, filter: MAP_SETUP_FILTER }],
+    icons: MAP_SETUP_FILTERS.map((filter) => ({ icon: MAP_SETUP_ICON, label: MAP_SETUP_LABEL, filter })),
     onClick: (context, elementId) => {
       const items = Array.isArray(context?.items) ? context.items : [];
       OBR.popover.open({
@@ -620,18 +644,18 @@ const JOBS = {
 // The parts that load on their own (R4): a broken one is left out and the rest carry on.
 // Literal paths, so the publisher can stamp each with the build.
 const MODULES = {
-  bridge: () => import("./bridge.js?v=b88563f"),
-  fx: () => import("./fx/engine.js?v=b88563f"),
-  samples: () => import("./fx/samples.js?v=b88563f"),
-  aim: () => import("./aim/tool.js?v=b88563f"),
-  geometry: () => import("./aim/geometry.js?v=b88563f"),
-  rings: () => import("./aim/rings.js?v=b88563f"),
-  player: () => import("./player/state.js?v=b88563f"),
-  lights: () => import("./fx/lighting.js?v=b88563f"),
-  lightjobs: () => import("./fx/lightjobs.js?v=b88563f"),
-  lightwriter: () => import("./fx/lightwriter.js?v=b88563f"),
-  views: () => import("./views.js?v=b88563f"),
-  fog: () => import("./fog/fog.js?v=b88563f"),
+  bridge: () => import("./bridge.js?v=90a5d4e"),
+  fx: () => import("./fx/engine.js?v=90a5d4e"),
+  samples: () => import("./fx/samples.js?v=90a5d4e"),
+  aim: () => import("./aim/tool.js?v=90a5d4e"),
+  geometry: () => import("./aim/geometry.js?v=90a5d4e"),
+  rings: () => import("./aim/rings.js?v=90a5d4e"),
+  player: () => import("./player/state.js?v=90a5d4e"),
+  lights: () => import("./fx/lighting.js?v=90a5d4e"),
+  lightjobs: () => import("./fx/lightjobs.js?v=90a5d4e"),
+  lightwriter: () => import("./fx/lightwriter.js?v=90a5d4e"),
+  views: () => import("./views.js?v=90a5d4e"),
+  fog: () => import("./fog/fog.js?v=90a5d4e"),
 };
 
 const HELLO_MS = 30000; // each screen says hello this often, so the panel's screens list stays fresh
@@ -732,13 +756,16 @@ export async function boot(api = sdk, opts = {}) {
     return n ? ctx.partySenses[nameKey(n)] ?? null : null;
   };
   // R1: a token is secret only when it's hidden AND not a player character. One this screen
-  // hasn't seen yet (any layer) counts as secret until it has: fail closed.
+  // hasn't seen yet (any layer) counts as secret until it has: fail closed. Hidden also when
+  // what it hangs from is hidden and isn't a PC (a visible wolf mounted on a hidden goblin):
+  // Owlbear draws it hidden (keys.js hiddenAbove), its parents as this screen last saw them.
   ctx.isPublic = (x, item) => {
     if (ctx.isPc(x, item)) return true;
     const id = typeof x === "string" ? x : x?.id;
     const it = itemOf(x, item);
     const vis = it && "visible" in it ? it.visible : seen.get(id)?.visible;
-    return vis !== undefined && vis !== false;
+    if (vis === undefined || vis === false) return false;
+    return !hiddenAbove(it || seen.get(id), (pid) => seen.get(pid), (p) => ctx.isPc(p));
   };
   const remember = (items) => {
     seen.clear();
@@ -846,6 +873,19 @@ export async function boot(api = sdk, opts = {}) {
       r = fog ? await fog.setOn(msg?.on === true) : { ok: false, text: `🌫 Our fog didn't load here${errors.fog ? `: ${errors.fog}` : ""}` };
     } catch (e) {
       r = { ok: false, text: `🌫 The switch failed: ${String(e?.message || e)}` };
+    }
+    fogSaid = { id: String(msg?.id ?? ""), ok: !!r?.ok, text: String(r?.text || "") };
+    return fogSaid;
+  }
+  // The GM box's tap on 🛖 Roofs: this screen writes ROOFS_KEY whole (fog/fog.js setRoofs; off parks every
+  // roof piece). Its answer goes back as fog_said too, matched by the tap's id.
+  async function roofsSwitch(msg) {
+    let r;
+    try {
+      r = typeof fog?.setRoofs === "function" ? await fog.setRoofs(msg?.on === true)
+        : { ok: false, text: `🛖 Our fog didn't load here${errors.fog ? `: ${errors.fog}` : ""}` };
+    } catch (e) {
+      r = { ok: false, text: `🛖 The switch failed: ${String(e?.message || e)}` };
     }
     fogSaid = { id: String(msg?.id ?? ""), ok: !!r?.ok, text: String(r?.text || "") };
     return fogSaid;
@@ -1353,6 +1393,7 @@ export async function boot(api = sdk, opts = {}) {
       else if (msg.need === "force") await bridge?.force();
       else if (msg.need === "test") note = await playTest();
       else if (msg.need === "fog-switch") await fogSwitch(msg); // 🌫 Our fog, tapped in this device's GM box
+      else if (msg.need === "roofs-switch") await roofsSwitch(msg); // 🛖 Roofs, tapped in this device's GM box
       else if (msg.need === "fog-log") { // a fog chip tapped in this device's GM box (fog/mapui.js): its line in the 🪵 Live log
         try { fog?.log?.(String(msg.kind || "map").slice(0, 20), String(msg.text ?? "").slice(0, 220)); } catch { /* the log is optional */ }
       }

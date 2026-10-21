@@ -16,9 +16,28 @@
 export const CONE_HALF = Math.atan(0.5); // 2024 cone: as wide at its end as it is long
 export const EPS_CELLS = 0.05;
 export const SHAPES = ["sphere", "cylinder", "emanation", "cube", "square", "cone", "line"];
+// The layers whose items are tokens an area can catch: keys.js TOKEN_LAYERS (a copy: this file imports nothing;
+// check_mounts.mjs holds the two equal). A mount (a wolf attached to a PC, the DM 2026-10-20) is caught like any token.
+export const TOKEN_LAYERS = ["CHARACTER", "MOUNT"];
+export const onTokenLayer = (i) => TOKEN_LAYERS.includes(i?.layer);
+// Drawn hidden because what it hangs from is hidden (a visible wolf mounted on a hidden goblin): keys.js
+// hiddenAbove, a copy (check_mounts holds the two to the same answers).
+export function hiddenAbove(item, parentOf, isPc = () => false) {
+  let i = item;
+  for (let n = 0; n < 8; n++) {
+    if (!i || i.attachedTo == null) return false;
+    if (Array.isArray(i.disableAttachmentBehavior) && i.disableAttachmentBehavior.includes("VISIBLE")) return false;
+    const up = parentOf(i.attachedTo);
+    if (!up || isPc(up)) return false;
+    if (up.visible === false) return true;
+    i = up;
+  }
+  return true;
+}
 
 const DEG = Math.PI / 180;
 const TINY = 1e-7;
+const PICK_TIE = 1; // px: pickAt's near tie, where a character token beats a mount
 
 // Feet per grid unit. Owlbear's scale is free text ("5ft", "1.5m"); D&D on a metric grid
 // counts 1.5 m as 5 ft, so a metre is 10/3 ft. Anything unknown is taken as a 5-ft square.
@@ -139,18 +158,29 @@ export function shrink(rect, eps) {
   return box(rect.cx, rect.cy, rect.w - 2 * ex, rect.h - 2 * ey);
 }
 
-// Character tokens as records, with R1's secret flag: a token is secret when it is hidden
+// Tokens (character and mount layers) as records, with R1's secret flag: a token is secret when it is hidden
 // and isn't a PC (a hidden PC token is public; the DM hides those so they don't draw under
-// the minis). isPublic(id, item) and pcTokens come from the background's heartbeat.
+// the minis). isPublic(id, item) and pcTokens come from the background's heartbeat. Only a
+// CHARACTER token is ever a PC (fx/pcs.js), so a hidden mount is secret even if a list names it.
+// A visible token hanging from a hidden one that isn't a PC (a wolf mounted on a hidden goblin) is
+// secret too: Owlbear draws it hidden (hiddenAbove). Its parents are looked up in `items`; one that
+// isn't there (a prop or a map, when only tokens are handed in) leaves it to isPublic.
 export function tokensOf(items, grid, { bounds = null, isPublic = null, pcTokens = null } = {}) {
   const g = gridInfo(grid);
   const pcs = pcTokens instanceof Set ? pcTokens : new Set(pcTokens || []);
+  const byId = new Map();
+  for (const i of items || []) if (i?.id != null) byId.set(i.id, i);
+  // A parent that is a PC: the list names it, or it's hidden and R1 still calls it public (only a PC is).
+  const isPcHere = (i) => i.layer === "CHARACTER" && (pcs.has(i.id) || (i.visible === false && !!safeCall(isPublic, i.id, i)));
   const out = [];
   for (const item of items || []) {
-    if (!item || item.layer !== "CHARACTER") continue;
+    if (!item || !onTokenLayer(item)) continue;
     const fp = footprint(item, g.dpi, bounds instanceof Map ? bounds.get(item.id) : bounds?.[item.id]);
     if (!fp) continue;
-    const pub = item.visible !== false || pcs.has(item.id) || !!safeCall(isPublic, item.id, item);
+    let unknown = false;
+    const parentOf = (id) => byId.get(id) || ((unknown = true), undefined);
+    const shown = item.visible !== false && !hiddenAbove(item, parentOf, isPcHere) && !(unknown && typeof isPublic === "function");
+    const pub = shown || (item.layer === "CHARACTER" && pcs.has(item.id)) || !!safeCall(isPublic, item.id, item);
     out.push({ id: item.id, fp, item, secret: !pub, label: tokenLabel(item) });
   }
   return out;
@@ -486,18 +516,24 @@ export function inRange(feet, rangeFt, longFt = null) {
 export function pickAt(point, tokens, grid) {
   // The token under a tap: one whose space holds the point (the nearest centre if several
   // do), else the nearest within half a cell. Picks by geometry, never by Owlbear's own hit
-  // target, so a player can pick a hidden PC (their screen doesn't draw it).
+  // target, so a player can pick a hidden PC (their screen doesn't draw it). On a near tie (within
+  // PICK_TIE px) a character token beats a mount: a wolf or a pet attached under its rider has the
+  // same centre, and Owlbear's item order would otherwise decide who a tap on the rider picks. A mount
+  // whose centre is clearly nearer (a pet at its rider's feet) is still picked.
   const g = gridInfo(grid);
-  let best = null, bestScore = Infinity;
+  let best = null, bestScore = Infinity, bestMount = false;
   for (const t of tokens || []) {
     if (!t?.fp) continue;
     const gap = gapOf(t.fp, { minX: point.x, maxX: point.x, minY: point.y, maxY: point.y });
     const out = Math.hypot(gap.x, gap.y);
     if (out > g.cell / 2 + TINY) continue;
+    const mount = t.item?.layer === "MOUNT";
     const score = out > TINY ? 1e9 + out : dist(t.fp, point);
-    if (score < bestScore) {
+    const tie = best !== null && Math.abs(score - bestScore) <= PICK_TIE;
+    if (tie ? (bestMount && !mount) || (bestMount === mount && score < bestScore) : score < bestScore) {
       bestScore = score;
       best = t.id;
+      bestMount = mount;
     }
   }
   return best;

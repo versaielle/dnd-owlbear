@@ -42,10 +42,10 @@
 //                        override. mode: the one drawn (fog/mode.js fogMode: "fog" on 🌑 whatever the
 //                        override). hidden: the DM hid the map image (visible false): nothing drawn for it
 
-import { MAP_DARKNESS_KEY, MAP_FOG_KEY, MAP_INFO_KEY, MEMORY_KEY, SCENE_LIGHTING_KEY, SEEN_KEY } from "../keys.js?v=b88563f";
-import { MODES, darkLocked, drawnMode, fogMode, resolveDarkness } from "./mode.js?v=b88563f";
-import { createBits, encode, load } from "./bitset.js?v=b88563f";
-import { readExplored } from "./shapes.js?v=b88563f";
+import { MAP_DARKNESS_KEY, MAP_FOG_KEY, MAP_INFO_KEY, MEMORY_KEY, SCENE_LIGHTING_KEY, SEEN_KEY } from "../keys.js?v=90a5d4e";
+import { MODES, darkLocked, drawnMode, fogMode, resolveDarkness } from "./mode.js?v=90a5d4e";
+import { createBits, encode, load } from "./bitset.js?v=90a5d4e";
+import { readExplored } from "./shapes.js?v=90a5d4e";
 
 export const FOG_MODES = ["auto", ...MODES];
 export const MAP_KINDS = ["interior", "outdoor"];

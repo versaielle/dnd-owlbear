@@ -1,15 +1,15 @@
 {
   "name": "DND NPC",
-  "version": "2.1341.0",
+  "version": "2.1417.0",
   "manifest_version": 1,
   "author": "dnd-npc",
   "description": "Spell effects, aiming and map sync for the DND NPC table.",
   "icon": "https://versaielle.github.io/dnd-owlbear/ext/icon.svg",
-  "background_url": "https://versaielle.github.io/dnd-owlbear/ext/background.html?v=b88563f",
+  "background_url": "https://versaielle.github.io/dnd-owlbear/ext/background.html?v=90a5d4e",
   "action": {
     "title": "DND NPC",
     "icon": "https://versaielle.github.io/dnd-owlbear/ext/icon.svg",
-    "popover": "https://versaielle.github.io/dnd-owlbear/ext/popover.html?v=b88563f",
+    "popover": "https://versaielle.github.io/dnd-owlbear/ext/popover.html?v=90a5d4e",
     "width": 380,
     "height": 560
   }

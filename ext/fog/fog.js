@@ -32,7 +32,7 @@
 //                           and our own lights writer writes hasVision on the PCs
 //   inputSig(sceneMeta) / roomSig(roomMeta)   the metadata a pass depends on
 //   buildSnapshot(items, sceneMeta, roomMeta, grid, ctx)   the one snapshot every part plans from (pure)
-//   createFog(api, ctx, opts) -> {start(), stop(), status(), setOn(on), kick(), snapshot(), log(kind, text), logLines(max)}
+//   createFog(api, ctx, opts) -> {start(), stop(), status(), setOn(on), setRoofs(on), kick(), snapshot(), log(kind, text), logLines(max)}
 //
 // INERT WHEN OFF. While the scene's FOG_KEY.on isn't true, this file only watches the scene's
 // metadata (and whether a scene is open): no local item, no write, no menu, no item listener. The
@@ -59,7 +59,7 @@
 // mid-pass never adds items after its own clean-up. Item changes settle for SETTLE_MS, but a long
 // drag still gets a pass every MAX_WAIT_MS. Scene and room metadata trigger a pass only when an
 // input changed (FOG_KEY, SCENE_LIGHTING_KEY, Smoke's Disable Vision, RULES_KEY, WEATHER_KEY,
-// FOG_LOOK_KEY; PARTY_SENSES_KEY, PARTY_KEY). A grid change re-reads the grid. A scene closing forgets every
+// FOG_LOOK_KEY, ROOFS_KEY; PARTY_SENSES_KEY, PARTY_KEY). A grid change re-reads the grid. A scene closing forgets every
 // record (Owlbear drops local items with it); a scene opening gets a pass that sweeps. A part whose
 // sync fails is synced again after RETRY_MS, doubling to RETRY_MAX_MS. Each part skips a sync whose
 // plan is unchanged, so a pass with nothing new asks nothing of Owlbear. The order in each pass is
@@ -67,8 +67,14 @@
 // wall goes) nor a sight light that grows lifts the fog off an unseen creature before its cover is on
 // (and every unseen creature on a 🌑 map with a PC on it has one, under the fog too: fog/cover.js);
 // the walls before the lights, so a switch-on never shows a light before the walls that stop it; seen
-// works only on the answerer (fog/doors.js isAnswerer); memory goes last, and a seen write echoes back
-// as an item change, so the next pass draws it. The map images'
+// works only on the answerer (fog/doors.js isAnswerer); memory goes last of the six, and a seen write
+// echoes back as an item change, so the next pass draws it. After them (ALL_PARTS) 🛖 Roofs
+// (fog/roofs.js): the roof pieces, taken in and written by the answerer only, never awaited by the
+// pass; 🌫 off parks them all from the tapping screen (writeSwitch) and from the writer. Roofs keeps
+// its own back-off and says its own errors (OWN_RETRY): its failure never fails the pass (no ⚠, no
+// retry of the pass). An uploaded roof original (its name parses as a piece's) is no map rectangle,
+// so the memory never writes on it before it's taken in. A GM screen that isn't the writer tells
+// roofs.js why (partCtx.writerWhy: its doors not started or settling, or another screen's name). The map images'
 // own metadata (SEEN_KEY, MAP_FOG_KEY, MEMORY_KEY, MAP_DARKNESS_KEY) arrive as item changes; the
 // scene's fog colour (OBR.scene.fog getColor/onChange, guarded) gives a pass when it changes. A GM
 // screen also looks every ANSWER_WATCH_MS whether it became (or stopped being) the answerer, and
@@ -83,21 +89,23 @@
 // the answerer watch, at most every SMOKE_CHECK_MS (one OBR.scene.local.getItems), never on a
 // player's screen. Smoke's leftover shared data (its sceneId, a token's hasVision) never counts.
 
-import { FOG_KEY, FOG_LOCAL_KEY, FOG_LOOK_KEY, PARTY_KEY, PARTY_SENSES_KEY, RULES_KEY, SCENE_LIGHTING_KEY, SMOKE, WEATHER_KEY } from "../keys.js?v=b88563f";
-import { planCtx } from "../fx/lightwriter.js?v=b88563f";
-import { readGrid } from "../fx/darkness.js?v=b88563f";
-import { mapRects } from "../views.js?v=b88563f";
-import { doorEdit, drift, occupiedMaps, readLines } from "./lines.js?v=b88563f";
-import { mapStates } from "./maps.js?v=b88563f";
-import { createSight } from "./sight.js?v=b88563f";
-import { createWalls } from "./walls.js?v=b88563f";
-import { ANSWERER_SETTLE_MS, createDoors } from "./doors.js?v=b88563f";
-import { createSeen } from "./seen.js?v=b88563f";
-import { createMemory } from "./memory.js?v=b88563f";
-import { createCover } from "./cover.js?v=b88563f";
-import { createLiveLog, lineText } from "./livelog.js?v=b88563f";
+import { FOG_KEY, FOG_LOCAL_KEY, FOG_LOOK_KEY, PARTY_KEY, PARTY_SENSES_KEY, ROOFS_KEY, RULES_KEY, SCENE_LIGHTING_KEY, SMOKE, WEATHER_KEY } from "../keys.js?v=90a5d4e";
+import { planCtx } from "../fx/lightwriter.js?v=90a5d4e";
+import { readGrid } from "../fx/darkness.js?v=90a5d4e";
+import { mapRects } from "../views.js?v=90a5d4e";
+import { doorEdit, drift, occupiedMaps, readLines } from "./lines.js?v=90a5d4e";
+import { mapStates } from "./maps.js?v=90a5d4e";
+import { createSight } from "./sight.js?v=90a5d4e";
+import { createWalls } from "./walls.js?v=90a5d4e";
+import { ANSWERER_SETTLE_MS, createDoors } from "./doors.js?v=90a5d4e";
+import { createSeen } from "./seen.js?v=90a5d4e";
+import { createMemory } from "./memory.js?v=90a5d4e";
+import { createCover } from "./cover.js?v=90a5d4e";
+import { createRoofs, parkAll, parseRoofName, roofsOn, roofsWords, writeRoofs } from "./roofs.js?v=90a5d4e";
+import { createLiveLog, lineText } from "./livelog.js?v=90a5d4e";
 
 export { lineText }; // a live-log line as text (background.js sends them to the GM box)
+export { cleanRoofs, roofOriginals, roofsOn, roofsWords, writeRoofs } from "./roofs.js?v=90a5d4e"; // 🛖 Roofs' switch (lightpanel.js: its chip, its fallback, its "🌫 is off" line)
 
 export const SETTLE_MS = 150; // item changes settle this long before a pass
 export const MAX_WAIT_MS = 750; // ...but a long drag still gets a pass this often
@@ -105,6 +113,10 @@ export const RETRY_MS = 2000; // a failed sync is tried again after this, doubli
 export const RETRY_MAX_MS = 30000; // ...up to this
 export const ANSWER_WATCH_MS = 5000; // a GM screen checks this often whether it became (or stopped being) the answerer
 export const PARTS = ["cover", "walls", "sight", "doors", "seen", "memory"]; // the sync order of each pass
+// ...and after them 🛖 Roofs (fog/roofs.js: the roof pieces, written by the explored memory's writer)
+export const ALL_PARTS = [...PARTS, "roofs"];
+// The parts that keep their own back-off and say their own errors: a failure of theirs never fails the pass.
+export const OWN_RETRY = ["roofs"];
 export const SMOKE_VISION_OFF = `${SMOKE}/disableVision`;
 export const SMOKE_CHECK_MS = 5000; // a GM screen looks for Smoke's running local items at most this often
 // The Smoke warning's last words: Smoke's local lights and walls may outlive its switch-off on a tab
@@ -183,7 +195,15 @@ export async function writeSwitch(OBR, on, now = Date.now(), { log = null } = {}
   const next = { v: 1, on: false, at, prev: null };
   await OBR.scene.setMetadata({ [FOG_KEY]: next });
   say(`🌫 switched off from this screen: ${offWords(back)}`);
-  return { next, filled: back, adopted: 0 };
+  // 🛖 Roofs: every roof piece hidden and parked from here too (no pieces: nothing written)
+  let parked = 0;
+  try {
+    parked = await parkAll(OBR);
+    if (parked) say(`🛖 ${parked} roof piece(s) parked and hidden`);
+  } catch (e) {
+    say(`🛖 parking the roofs failed (the writer parks them): ${describe(e)}`);
+  }
+  return { next, filled: back, adopted: 0, parked };
 }
 
 // The off line (the 🪵 Live log, the DM's box, the panel's): what shows now, by the fill put back.
@@ -235,7 +255,7 @@ const stable = (x) => JSON.stringify(x ?? null);
 // too (docs/vision-layer-2024.md): a tap on any of them is a pass on every screen. Raw values, like the
 // rest: an identical rewrite changes nothing, so it's no pass.
 export const inputSig = (m) => stable([m?.[FOG_KEY], m?.[SCENE_LIGHTING_KEY], m?.[SMOKE_VISION_OFF] === true,
-  m?.[RULES_KEY] ?? null, m?.[WEATHER_KEY] ?? null, m?.[FOG_LOOK_KEY] ?? null]);
+  m?.[RULES_KEY] ?? null, m?.[WEATHER_KEY] ?? null, m?.[FOG_LOOK_KEY] ?? null, m?.[ROOFS_KEY] ?? null]);
 export const roomSig = (m) => stable([m?.[PARTY_SENSES_KEY], m?.[PARTY_KEY]]);
 
 // ---- the snapshot (pure) ----
@@ -247,7 +267,8 @@ export function buildSnapshot(items, sceneMeta, roomMeta, grid, ctx = {}, at = 0
   const rm = isObj(roomMeta) ? roomMeta : {};
   const g = grid && finite(grid.dpi) && grid.dpi > 0 ? grid : { dpi: 150, ftPerCell: 5, pxPerFt: 30 };
   const isPc = (i) => { try { return !!ctx.isPc?.(i); } catch { return false; } };
-  const rects = mapRects(list, g.dpi);
+  // An uploaded 🛖 roof original isn't a map (until the take-in removes it): no rect, no map state.
+  const rects = mapRects(list.filter((i) => !(i?.layer === "MAP" && parseRoofName(i.name))), g.dpi);
   const party = Array.isArray(ctx.party) && ctx.party.length ? ctx.party : undefined;
   return {
     items: list, byId: new Map(list.map((i) => [i.id, i])), sceneMeta: sm, roomMeta: rm, grid: g,
@@ -275,7 +296,7 @@ export function createFog(api = {}, ctx = {}, opts = {}) {
   const host = ctx.host ?? "";
   const isGm = () => ctx.role === "GM";
   const makers = { sight: createSight, walls: createWalls, doors: createDoors, seen: createSeen, memory: createMemory,
-    cover: createCover, ...(opts.makers || {}) };
+    cover: createCover, roofs: createRoofs, ...(opts.makers || {}) };
   // The 🪵 Live log: this screen's lines (and on a GM screen every screen's). Its echo is the console.
   const live = opts.liveLog === false ? null : createLiveLog(api, {
     timers: T,
@@ -295,6 +316,7 @@ export function createFog(api = {}, ctx = {}, opts = {}) {
   let parts = null; // {walls, cover, sight, doors, seen, memory}, made the first time the switch is seen on
   let fogColor = null; // the scene's own fog colour (snap.fogColor), null until read
   let watchT = null, wasAnswerer = false; // the GM screen's answerer watch (ANSWER_WATCH_MS)
+  let doorsAt = null; // when this screen's doors started (T.now()): the writer is known ANSWERER_SETTLE_MS later
   const partErrors = {};
   let unsubs = [], drawUnsubs = [];
   let busy = false, again = false, passes = 0, current = null; // current: the run in flight
@@ -324,6 +346,12 @@ export function createFog(api = {}, ctx = {}, opts = {}) {
         return !!(typeof d?.isSeenWriter === "function" ? d.isSeenWriter() : d?.isAnswerer?.());
       } catch { return false; }
     },
+    // Why this GM screen isn't that writer (fog/roofs.js says it while roof pieces wait): {kind, text},
+    // or null when it is. kind: "start" (its doors haven't started), "settle" (ANSWERER_SETTLE_MS not
+    // over yet: the seconds left), "none" (no GM screen says it can write), "other" (another one does: its name).
+    writerWhy: () => {
+      try { return writerWhy(); } catch (e) { return { kind: "start", text: `this screen can't tell who writes (${describe(e)})` }; }
+    },
     get memoryOnGm() { return opts.memoryOnGm !== false; },
     get dimOpacity() { return opts.dimOpacity; },
     snapshot: () => snap,
@@ -332,10 +360,27 @@ export function createFog(api = {}, ctx = {}, opts = {}) {
     log: (t, kind = "fog") => say(kind, t),
   };
 
+  function writerWhy() {
+    if (partCtx.isAnswerer()) return null;
+    const d = parts?.doors;
+    if (!d || doorsAt == null) {
+      return { kind: "start", text: partErrors.doors ? `this screen's door menus didn't start (${partErrors.doors})` : "this screen's door menus haven't started yet" };
+    }
+    const left = ANSWERER_SETTLE_MS - (T.now() - doorsAt);
+    if (left > 0) return { kind: "settle", text: `this screen is still listening for the other GM screens (${Math.ceil(left / 1000)} s left)` };
+    const w = typeof d.status === "function" ? d.status()?.seen_writer : null;
+    if (!w) return { kind: "none", text: "no GM screen here can write them (reload every DM browser onto this copy)" };
+    if (!w.here) {
+      return { kind: "other", who: String(w.name || w.conn || "?"),
+               text: `another GM screen ("${String(w.name || w.conn || "?").slice(0, 40)}") writes the roofs (reload every DM browser onto this copy)` };
+    }
+    return { kind: "start", text: "this screen is picked to write but hasn't started" };
+  }
+
   function makeParts() {
     if (parts) return parts;
     parts = {};
-    for (const name of PARTS) {
+    for (const name of ALL_PARTS) {
       try {
         parts[name] = makers[name](api, partCtx);
       } catch (e) {
@@ -432,7 +477,7 @@ export function createFog(api = {}, ctx = {}, opts = {}) {
     // never shows before the walls that stop it. Then the explored squares (the answerer only) and,
     // last, the memory drawn from them.
     let failed = null;
-    for (const name of PARTS) {
+    for (const name of ALL_PARTS) {
       if (!running || !drawing) return;
       const p = parts[name];
       if (!p) continue;
@@ -442,7 +487,7 @@ export function createFog(api = {}, ctx = {}, opts = {}) {
       } catch (e) {
         r = { failed: true, error: describe(e) };
       }
-      if (r?.failed) failed = `${name}: ${r.error || "failed"}`;
+      if (r?.failed && !OWN_RETRY.includes(name)) failed = `${name}: ${r.error || "failed"}`;
     }
     lastError = failed;
     if (failed) {
@@ -498,6 +543,7 @@ export function createFog(api = {}, ctx = {}, opts = {}) {
     }));
     await readFogColor();
     try {
+      doorsAt = T.now();
       await parts.doors?.start?.();
     } catch (e) {
       partErrors.doors = describe(e);
@@ -569,13 +615,14 @@ export function createFog(api = {}, ctx = {}, opts = {}) {
     if (watchT) T.clearTimeout(watchT);
     settleT = retryT = watchT = null;
     wasAnswerer = false;
+    doorsAt = null;
     fogColor = null;
     firstAt = null;
     retryMs = RETRY_MS;
     snap = null;
     items = null;
     try { await parts?.doors?.stop?.(); } catch (e) { log(`doors stop: ${describe(e)}`); }
-    for (const name of PARTS) {
+    for (const name of ALL_PARTS) {
       try { await parts?.[name]?.clear?.(); } catch (e) { log(`${name} clear: ${describe(e)}`); }
     }
     await sweep();
@@ -621,7 +668,7 @@ export function createFog(api = {}, ctx = {}, opts = {}) {
     if (!sceneReady) {
       // Owlbear dropped every local item with the scene: forget, write nothing.
       if (parts) {
-        for (const name of ["sight", "seen", "memory", "cover"]) {
+        for (const name of ["sight", "seen", "memory", "cover", "roofs"]) {
           try { parts[name]?.forget?.(); } catch { /* fine */ }
         }
         for (const name of ["walls", "doors"]) {
@@ -690,6 +737,22 @@ export function createFog(api = {}, ctx = {}, opts = {}) {
       : `🌫 Our fog is off: ${offWords(res?.filled ?? null)}` };
   }
 
+  // The DM's tap on 🛖 Roofs (any GM screen): ROOFS_KEY whole from here, and on off every piece parked.
+  async function setRoofs(on) {
+    if (!isGm()) return { ok: false, text: "Only the DM switches 🛖 Roofs" };
+    if (!(await O.scene.isReady())) return { ok: false, text: "Open a scene first" };
+    let res = null;
+    try {
+      res = await writeRoofs(O, on, T.now(), { log: (t) => say("switch", t) });
+    } catch (e) {
+      say("error", `the 🛖 switch failed: ${describe(e)}`);
+      return { ok: false, text: `🛖 The switch failed: ${describe(e)}` };
+    }
+    let fogNow = false;
+    try { fogNow = cleanFog((await O.scene.getMetadata())?.[FOG_KEY]).on; } catch { /* said as off */ }
+    return { ok: true, text: roofsWords(on, fogNow) + (res?.parkError ? ` (parking them from here failed: ${res.parkError})` : "") };
+  }
+
   function status() {
     const st = (name) => { try { return parts?.[name]?.status?.() ?? null; } catch (e) { return { error: describe(e) }; } };
     const fog = cleanFog(sceneMeta[FOG_KEY]);
@@ -698,14 +761,14 @@ export function createFog(api = {}, ctx = {}, opts = {}) {
       running, ready: sceneReady, on: fog.on, drawing, gm_pass: partCtx.gmPass, passes,
       answerer: drawing ? doors?.answerer ?? null : null, seen_writer: drawing ? doors?.seen_writer ?? null : null,
       smoke: fog.on ? smoke : null, sight: st("sight"), walls: st("walls"), doors, seen: st("seen"), memory: st("memory"),
-      cover: st("cover"),
+      cover: st("cover"), roofs: st("roofs"), roofs_on: roofsOn(sceneMeta),
       fog_color: drawing ? fogColor : null,
       errors: { ...partErrors }, error: lastError, log: live ? live.status() : null,
     };
   }
 
   return {
-    start, stop, status, setOn, kick, snapshot: () => snap,
+    start, stop, status, setOn, setRoofs, kick, snapshot: () => snap,
     log: (kind, text) => say(kind, text),
     logLines: (max) => (live ? live.lines(max) : []),
   };

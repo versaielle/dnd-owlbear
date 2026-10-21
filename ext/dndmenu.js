@@ -9,9 +9,11 @@
 // in dnd.html. tabs.js draws the tab row.
 // 🏘 Map setup replaces thisPcMenus()' three (Set up interiors, Place townsfolk, Check portals): its
 // small page (mapsetup.html), opened the same way, asks this copy's background to run the job, as the
-// old entry did.
+// old entry did. On one text label it offers 🎨 Copy label style and ↩ Undo label style instead.
 //
 // Pure: no SDK import, so the node checks import it (check_menus.mjs).
+
+import { INTERIOR_KEY, PLACE_KEY } from "./keys.js?v=90a5d4e";
 
 export const DND_MENU_ID = "dnd-npc/dnd"; // the Pages copy's entry
 // The copy the panel on this PC serves has its own id (Owlbear's ids are room-wide): when it steps
@@ -39,14 +41,15 @@ const ONE_MAP_ROOM_OR_TOKEN = () => [
 // tab shows when any matches, as Owlbear shows the first icon whose filter matches) }.
 export const TABS = [
   // Like Stat Bubbles' Edit Stats: the condition badges to switch on and off. 190: the badges at 280 px wide.
+  // 🩹 and 🏷 take any token, a mount too (keys.js TOKEN_LAYERS; the DM, 2026-10-20): every item on one of the two.
   { key: "cond", emoji: "🩹", name: "Conditions", page: "./conditions.html", height: 190,
-    filters: [{ roles: GM, every: [layer("CHARACTER")] }] },
+    filters: [{ roles: GM, every: [layer("CHARACTER", "||"), layer("MOUNT")] }] },
   // ONE icon for any mix of these layers: every item is on one of them (an OR chain; no type test,
   // so a shape prop can be lit too, and our door icons and portal circles, on PROP, are offered it).
   { key: "light", emoji: "🔥", name: "Light", page: "./light.html", height: 182,
     filters: [{ roles: GM, every: [layer("CHARACTER", "||"), layer("PROP", "||"), layer("MOUNT", "||"), layer("ATTACHMENT")] }] },
   { key: "who", emoji: "🏷", name: "This is…", page: "./menu.html", kind: "who", height: 360,
-    filters: [{ roles: GM, every: [layer("CHARACTER")] }] },
+    filters: [{ roles: GM, every: [layer("CHARACTER", "||"), layer("MOUNT")] }] },
   { key: "place", emoji: "🗺", name: "Mark as place", page: "./menu.html", kind: "place", height: 360,
     filters: [{ roles: GM, every: [layer("DRAWING")] }] },
   { key: "goto", emoji: "📍", name: "Go to PC", page: "./menu.html", kind: "goto", height: 360,
@@ -188,20 +191,33 @@ export const MAP_SETUP_POPOVER_ID = "dnd-npc/local/map-setup";
 export const MAP_SETUP_LABEL = "🏘 Map setup";
 export const MAP_SETUP_NEED = "map-setup"; // its LOCAL_ASK to this copy's background
 const ONE_MAP_IMAGE = () => ({ roles: GM, max: 1, every: [{ key: "layer", value: "MAP" }, { key: "type", value: "IMAGE" }] });
-// The three old entries: each button keeps its label and its filter.
+// One text label: an Owlbear TEXT item (the Text tool's, plain or rich) or a LABEL.
+const ONE_TEXT_LABEL = () => ({ roles: GM, max: 1, every: [{ key: "type", value: "TEXT", coordinator: "||" }, { key: "type", value: "LABEL" }] });
+// One drawing the DM marked as a place (🗺 Mark as place: the road's strips and camps), not a room 🏘 Set up
+// interiors drew: 👥 Place townsfolk there puts the road's tokens beside it (gather.js poolPlan).
+const ONE_PLACE_DRAWING = () => ({ roles: GM, max: 1, every: [{ key: "layer", value: "DRAWING" },
+  { key: ["metadata", PLACE_KEY], value: undefined, operator: "!=" }, { key: ["metadata", PLACE_KEY], value: null, operator: "!=" },
+  { key: ["metadata", INTERIOR_KEY], value: undefined }] }); // null: 🗺 Mark as place's ✕ clears a mark to null
+// The three old entries: each button keeps its label and its filter. Then the DM's 🎨 (2026-10-20): on one
+// text label, its colours, outline and font copied to the rest of its map's labels, and its undo (labelstyle.js).
+// 👥 also on one drawing marked as a place (the road's night 1 camp, 10-20). A job is offered when any of its
+// filters fits.
 export const MAP_SETUP_JOBS = [
-  { key: "interiors", label: "🏘 Set up interiors", filter: ONE_MAP_IMAGE() },
-  { key: "townsfolk", label: "👥 Place townsfolk", filter: ONE_MAP_IMAGE() },
-  { key: "portals", label: "🏘 Check portals", filter: ONE_MAP_IMAGE() },
+  { key: "interiors", label: "🏘 Set up interiors", filters: [ONE_MAP_IMAGE()] },
+  { key: "townsfolk", label: "👥 Place townsfolk", filters: [ONE_MAP_IMAGE(), ONE_PLACE_DRAWING()] },
+  { key: "portals", label: "🏘 Check portals", filters: [ONE_MAP_IMAGE()] },
+  { key: "labelstyle", label: "🎨 Copy label style", filters: [ONE_TEXT_LABEL()] },
+  { key: "labelundo", label: "↩ Undo label style", filters: [ONE_TEXT_LABEL()] },
 ];
-// The union of the three: they're the same filter (one map image).
-export const MAP_SETUP_FILTER = ONE_MAP_IMAGE();
+// The entry's icons' filters (Owlbear shows it when any matches): one map image (the old three's), one
+// text label (🎨 and ↩), or one drawing marked as a place (👥).
+export const MAP_SETUP_FILTERS = [ONE_MAP_IMAGE(), ONE_TEXT_LABEL(), ONE_PLACE_DRAWING()];
 export const MAP_SETUP_WIDTH = 260;
 export const MAP_SETUP_HEIGHT = 150;
 
 // The jobs offered for these clicked items, in order.
 export const setupJobsFor = (items, role = "GM") =>
-  MAP_SETUP_JOBS.filter((j) => filterMatches(j.filter, Array.isArray(items) ? items : [], role)).map((j) => j.key);
+  MAP_SETUP_JOBS.filter((j) => j.filters.some((f) => filterMatches(f, Array.isArray(items) ? items : [], role))).map((j) => j.key);
 
 export function setupQuery(id, jobs) {
   const p = new URLSearchParams();
