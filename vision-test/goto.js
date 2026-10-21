@@ -2,8 +2,8 @@
 // fit across (or kept as it is when already closer), and the token is selected. Offered from
 // 🎲 DND's 📍 tab on anything (menu.html, kind=goto), the toolbar button's box
 // (popover.html) and a key (background.js). The PC tokens are gather.js's.
-import OBR from "./obr-sdk.js?v=88ddb35";
-import { findPcs, partyNames, tokenBox } from "./gather.js?v=88ddb35";
+import OBR from "./obr-sdk.js?v=52156fe";
+import { findPcs, partyNames, tokenBox } from "./gather.js?v=52156fe";
 
 const SQUARES = 12; // squares across the screen after the jump
 

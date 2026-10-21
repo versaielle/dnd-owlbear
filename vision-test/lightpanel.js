@@ -56,13 +56,14 @@
 // with the lights writer's own ctx, in one write (fx/lightwriter.js writeNow): the writer's next
 // pass plans nothing more. Any control here that changes an input takes a scene released to
 // Smoke back (SCENE_LIGHTING_KEY.managed true); "Release lights to Smoke" sets it false.
-import { FOG_KEY, MAP_DARKNESS_KEY, PARTY_KEY, SCENE_LIGHTING_KEY } from "./keys.js?v=88ddb35";
-import { SOURCES } from "./fx/lights.js?v=88ddb35";
-import { isMap, mapDarkness, readGrid, sceneDarkness } from "./fx/darkness.js?v=88ddb35";
-import { writeNow } from "./fx/lightwriter.js?v=88ddb35";
-import { cleanParty } from "./gather.js?v=88ddb35";
-import { DARKNESS, applyMeta, autoKind, carriers, describe, editFor, lightingOf, lightingRows, managed, releaseItem,
-         screenLine, screenWarnings, uiCtx } from "./lightui.js?v=88ddb35";
+import { FOG_KEY, PARTY_KEY, SCENE_LIGHTING_KEY } from "./keys.js?v=52156fe";
+import { SOURCES } from "./fx/lights.js?v=52156fe";
+import { isMap, mapDarkness, readGrid, sceneDarkness } from "./fx/darkness.js?v=52156fe";
+import { writeNow } from "./fx/lightwriter.js?v=52156fe";
+import { cleanParty } from "./gather.js?v=52156fe";
+import { DARKNESS, PROPS_TITLE, RELEASED_SAID, applyMeta, autoKind, carriers, describe, editFor, lightingNow, lightingOf,
+         lightingRows, managed, mapDarkEdit, mapDarkSaid, picksDrawnAgain, picksWaiting, propsLabel, releaseItem, sceneNext,
+         sceneSaid, screenLine, screenWarnings, takenBack, uiCtx } from "./lightui.js?v=52156fe";
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 const COMMON = ["candle", "torch", "lamp", "hooded_lantern", "brazier"].filter((k) => SOURCES[k]);
@@ -406,15 +407,15 @@ export function startLighting(OBR, el, { build = "", ask = null } = {}) {
 
   // The scene's lighting as it is, its darkness "lit" when unmarked (fx/darkness.js), so a write
   // of another field never marks an unmarked scene dim.
-  const curLighting = () => ({ ...lightingOf(sceneMeta), darkness: sceneDarkness(sceneMeta) });
+  const curLighting = () => lightingNow(sceneMeta);
 
-  // A control here changed an input: a scene released to Smoke is ours again (spec). Returns
-  // whether it was released.
+  // A control here changed an input: a scene released to Smoke is ours again (spec; lightui.js
+  // takenBack, as 🎲 DND's ☀ Scene lights tab does it). Returns whether it was released.
   async function takeBack() {
-    const cur = curLighting();
-    if (cur.managed) return false;
-    await OBR.scene.setMetadata({ [SCENE_LIGHTING_KEY]: { ...cur, managed: true } });
-    sceneMeta = { ...(sceneMeta || {}), [SCENE_LIGHTING_KEY]: { ...cur, managed: true } };
+    const next = takenBack(sceneMeta);
+    if (!next) return false;
+    await OBR.scene.setMetadata({ [SCENE_LIGHTING_KEY]: next });
+    sceneMeta = { ...(sceneMeta || {}), [SCENE_LIGHTING_KEY]: next };
     return true;
   }
 
@@ -444,16 +445,14 @@ export function startLighting(OBR, el, { build = "", ask = null } = {}) {
   // darkness tap that lifts a map off 🌑 draws that pick again with no other prompt (review of
   // dark-fix, 2026-10-14: a clear set on a dark map during the live test came back at moonrise). So
   // such a tap says which maps' picks are drawn again, in the box and the 🪵 Live log. waitingPicks:
-  // the rows (while 🌫 Our fog is on) on 🌑 holding a stored remembered or clear, by id, as drawn now.
+  // the rows (while 🌫 Our fog is on) on 🌑 holding a stored remembered or clear, by id, as drawn now
+  // (lightui.js picksWaiting / picksDrawnAgain, as 🎲 DND's ☀ Scene lights tab says them).
   // Neither ever stops the darkness write: a failure here only leaves the line out.
   const waitingPicks = () => {
-    try { return new Map(mapRowsNow().filter((r) => r.darkLocked && r.override && r.override !== "fog").map((r) => [r.id, r])); } catch { return new Map(); }
+    try { return picksWaiting(mapRowsNow()); } catch { return new Map(); }
   };
   const drawnAgain = (before) => {
-    try {
-      return mapRowsNow().filter((r) => before.has(r.id) && !r.darkLocked && r.override === before.get(r.id).override)
-        .map((r) => ` · ${r.name || "Map"}: your ${word(r.override)} is drawn again (tap auto to drop it)`).join("");
-    } catch { return ""; }
+    try { return picksDrawnAgain(before, mapRowsNow(), word); } catch { return ""; }
   };
   // The darkness tap's line: logged too when a stored pick came back, else only said.
   const darkSaid = (text, before) => {
@@ -465,35 +464,25 @@ export function startLighting(OBR, el, { build = "", ask = null } = {}) {
     if (!ready) return say("Open a scene first", "warn");
     const cur = curLighting();
     const waiting = waitingPicks();
-    const next = { ...cur, ...patch, managed: true };
+    const next = sceneNext(sceneMeta, patch);
     await OBR.scene.setMetadata({ [SCENE_LIGHTING_KEY]: next });
     const n = await replanAll();
-    const d = DARK_CHIPS.find((x) => x.value === next.darkness);
-    darkSaid(`${d.icon} Scene ${d.label}${"auto" in patch ? ` · props ${next.auto ? "light themselves" : "stay as you set them"}` : ""}`
-      + (n ? ` · ${n} token(s) updated` : "") + (cur.managed ? "" : " · lights are ours again in this scene"), waiting);
+    darkSaid(sceneSaid(next, patch, n, cur.managed), waiting);
     render();
   }
 
   // One map's own darkness: "lit" | "dim" | "dark", or null (as the scene: written as an explicit
-  // null, never a deleted key: a JSON-patch "remove" of a key another screen lacks desyncs it, live
-  // 2026-10-12). Then every token's Smoke keys at once (a seer's range depends on where it stands).
+  // null, never a deleted key: lightui.js mapDarkEdit, as 🎲 DND's ☀ Scene lights tab writes it).
+  // Then every token's Smoke keys at once (a seer's range depends on where it stands).
   async function setMap(id, code) {
     if (!ready) return say("Open a scene first", "warn");
-    const value = code || null;
     const waiting = waitingPicks();
-    await OBR.scene.items.updateItems([id], (drafts) => {
-      for (const d of drafts) {
-        if ((d.metadata?.[MAP_DARKNESS_KEY] ?? null) === value) continue; // already so (missing = as the scene)
-        if (!d.metadata) d.metadata = {};
-        d.metadata[MAP_DARKNESS_KEY] = value;
-      }
-    });
+    await OBR.scene.items.updateItems([id], mapDarkEdit(code));
     await load();
     const back = await takeBack();
     const n = await replanAll();
     const m = items.find((i) => i.id === id);
-    const d = DARK_CHIPS.find((x) => x.value === code);
-    darkSaid(`${m?.name || "Map"}: ${d ? `${d.icon} ${d.label}` : "as the scene"}${n ? ` · ${n} token(s) updated` : ""}${back ? " · lights are ours again in this scene" : ""}`, waiting);
+    darkSaid(mapDarkSaid(m?.name, code, n, back), waiting);
     render();
   }
 
@@ -979,14 +968,12 @@ export function startLighting(OBR, el, { build = "", ask = null } = {}) {
       const box = document.createElement("div");
       box.className = "chips";
       for (const d of DARK_CHIPS) box.append(chip(`${d.icon} ${d.label}`, here === d.value, d.about, () => setScene({ darkness: d.value })));
-      box.append(chip(l.auto ? "✓ Props light themselves" : "Props light themselves", l.auto,
-        "Sconces, torches, braziers, candles, lanterns and lamps light by their name or picture",
-        () => setScene({ auto: !l.auto })));
+      box.append(chip(propsLabel(l.auto), l.auto, PROPS_TITLE, () => setScene({ auto: !l.auto })));
       el.scene.append(head, box);
       if (!l.managed) {
         const p = document.createElement("p");
         p.className = "warn small";
-        p.textContent = "Released to Smoke: Smoke draws vision and darkvision here (our flames still show). Any control here takes it back.";
+        p.textContent = RELEASED_SAID;
         el.scene.append(p);
       }
       renderMaps(el.maps || el.scene);
@@ -1124,8 +1111,8 @@ export function startLighting(OBR, el, { build = "", ask = null } = {}) {
     }
   }
 
-  import("./fog/fog.js?v=88ddb35").then((m) => { fogMod = m; render(); }, (e) => { fogErr = String(e?.message || e); renderFog(); });
-  import("./fog/mapui.js?v=88ddb35").then((m) => { mapUi = m; render(); }, (e) => console.warn("dnd-npc: 🌫 map controls", e));
+  import("./fog/fog.js?v=52156fe").then((m) => { fogMod = m; render(); }, (e) => { fogErr = String(e?.message || e); renderFog(); });
+  import("./fog/mapui.js?v=52156fe").then((m) => { mapUi = m; render(); }, (e) => console.warn("dnd-npc: 🌫 map controls", e));
   OBR.scene.items.onChange(() => refresh());
   OBR.scene.onMetadataChange?.(() => refresh());
   OBR.scene.onReadyChange?.(() => refresh());
