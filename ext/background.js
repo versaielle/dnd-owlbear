@@ -18,18 +18,18 @@
 // and a player's view follows their PC after a portal trip. Those load with import() and may fail
 // on their own: the map jobs, rings and HP keep working without them.
 import OBR, { buildCurve, buildEffect, buildImage, buildLabel, buildLight, buildPath, buildShape, buildText, buildWall, Math2,
-  MathM } from "./obr-sdk.js?v=90a5d4e";
-import { contains, isRoom, size } from "./areas.js?v=90a5d4e";
-import { checkPortals, describe, panelLog, setUpInteriors } from "./interiors.js?v=90a5d4e";
-import { copyLabelStyle, undoLabelStyle } from "./labelstyle.js?v=90a5d4e";
-import { cleanParty, placeTownsfolk, rememberParty } from "./gather.js?v=90a5d4e";
-import { isPcToken, nameKey, pcName } from "./fx/pcs.js?v=90a5d4e";
-import { BADGE_KEY, BADGE_URL, BUBBLES_KEY, BUBBLES_NAME_KEY, COND_KEY, CONDITIONS, DOWN_COLOR, FOE_COLOR, FOG_LOG_LOCAL_CH, GRIMOIRE_KEY, MARK_PREFIX, PARTY_KEY, PARTY_SENSES_KEY, PLACE_KEY, RING_KEY, TARGET_COLOR, WHO_KEY, hiddenAbove, onTokenLayer, targetRingColor } from "./keys.js?v=90a5d4e";
+  MathM } from "./obr-sdk.js?v=669ec13";
+import { contains, isRoom, size } from "./areas.js?v=669ec13";
+import { checkPortals, describe, panelLog, setUpInteriors } from "./interiors.js?v=669ec13";
+import { copyLabelStyle, undoLabelStyle } from "./labelstyle.js?v=669ec13";
+import { cleanParty, placeTownsfolk, rememberParty } from "./gather.js?v=669ec13";
+import { isPcToken, nameKey, pcName } from "./fx/pcs.js?v=669ec13";
+import { BADGE_KEY, BADGE_URL, BUBBLES_KEY, BUBBLES_NAME_KEY, COND_KEY, CONDITIONS, DOWN_COLOR, FOE_COLOR, FOG_LOG_LOCAL_CH, GRIMOIRE_KEY, MARK_PREFIX, PARTY_KEY, PARTY_SENSES_KEY, PLACE_KEY, RING_KEY, TARGET_COLOR, WHO_KEY, hiddenAbove, onTokenLayer, targetRingColor } from "./keys.js?v=669ec13";
 import { CH, DEFAULT_SETTINGS, LS, buildOf, forMe, here, isLocalOrigin, kindOf, lsGet, on as busOn, send as busSend,
-  setConnection, setSceneWrite, startSceneReader, tierOf } from "./bus.js?v=90a5d4e";
+  setConnection, setSceneWrite, startSceneReader, tierOf } from "./bus.js?v=669ec13";
 import { DND_FILTER, DND_LABEL, DND_MENU_ID, DND_POPOVER_ID, DND_WIDTH, LOCAL_DND_MENU_ID, MAP_SETUP_FILTERS, MAP_SETUP_HEIGHT,
   MAP_SETUP_LABEL, MAP_SETUP_MENU_ID, MAP_SETUP_NEED, MAP_SETUP_POPOVER_ID, MAP_SETUP_WIDTH, TOP_LEFT, dndQuery, heightOf,
-  popoverAnchor, sectionsFor, setupJobsFor, setupQuery } from "./dndmenu.js?v=90a5d4e";
+  popoverAnchor, sectionsFor, setupJobsFor, setupQuery } from "./dndmenu.js?v=669ec13";
 
 const HEARTBEAT_MS = 10000;
 const DEBOUNCE_MS = 250;
@@ -644,18 +644,18 @@ const JOBS = {
 // The parts that load on their own (R4): a broken one is left out and the rest carry on.
 // Literal paths, so the publisher can stamp each with the build.
 const MODULES = {
-  bridge: () => import("./bridge.js?v=90a5d4e"),
-  fx: () => import("./fx/engine.js?v=90a5d4e"),
-  samples: () => import("./fx/samples.js?v=90a5d4e"),
-  aim: () => import("./aim/tool.js?v=90a5d4e"),
-  geometry: () => import("./aim/geometry.js?v=90a5d4e"),
-  rings: () => import("./aim/rings.js?v=90a5d4e"),
-  player: () => import("./player/state.js?v=90a5d4e"),
-  lights: () => import("./fx/lighting.js?v=90a5d4e"),
-  lightjobs: () => import("./fx/lightjobs.js?v=90a5d4e"),
-  lightwriter: () => import("./fx/lightwriter.js?v=90a5d4e"),
-  views: () => import("./views.js?v=90a5d4e"),
-  fog: () => import("./fog/fog.js?v=90a5d4e"),
+  bridge: () => import("./bridge.js?v=669ec13"),
+  fx: () => import("./fx/engine.js?v=669ec13"),
+  samples: () => import("./fx/samples.js?v=669ec13"),
+  aim: () => import("./aim/tool.js?v=669ec13"),
+  geometry: () => import("./aim/geometry.js?v=669ec13"),
+  rings: () => import("./aim/rings.js?v=669ec13"),
+  player: () => import("./player/state.js?v=669ec13"),
+  lights: () => import("./fx/lighting.js?v=669ec13"),
+  lightjobs: () => import("./fx/lightjobs.js?v=669ec13"),
+  lightwriter: () => import("./fx/lightwriter.js?v=669ec13"),
+  views: () => import("./views.js?v=669ec13"),
+  fog: () => import("./fog/fog.js?v=669ec13"),
 };
 
 const HELLO_MS = 30000; // each screen says hello this often, so the panel's screens list stays fresh

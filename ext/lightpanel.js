@@ -36,10 +36,14 @@
 //                taps to switch on, one off), with a warning while Smoke & Spectre's vision is on in
 //                the same scene, and what this GM screen draws for it (the background's fog status).
 //                While on, the "Memory shade" row (lighter 0.55 / medium 0.65 / darker 0.75): how
-//                dark remembered ground and "clear" maps are on every screen (FOG_LOOK_KEY, whole).
-//                A tap asks this device's background to write the whole switch (fog.js setOn: the
-//                fill, prev, Smoke's door state) at once; with no answer in SWITCH_WAIT_MS this box
-//                writes it itself (fog.js writeSwitch)
+//                dark remembered ground and "clear" maps are on every screen (FOG_LOOK_KEY, whole);
+//                under it "Forget explored on every map (3 maps)" (fog/mapui.js forgetAllExplored):
+//                every explored map's memory in this scene goes back under the fog in one write, two
+//                taps as each map's own "Forget explored", greyed while nothing is explored; fog modes
+//                and Remember building stay as they are. It goes to the 🪵 Live log too.
+//                A tap on the switch asks this device's background to write the whole switch (fog.js
+//                setOn: the fill, prev, Smoke's door state) at once; with no answer in SWITCH_WAIT_MS
+//                this box writes it itself (fog.js writeSwitch)
 //   🛖 Roofs     (beside 🌫) the scene switch for the building roofs (fog/roofs.js: ROOFS_KEY.on). As 🌫:
 //                on takes two taps, off one; asked of the background (fog.js setRoofs), writeRoofs as
 //                the fallback. With 🌫 off and roof pieces dropped in the scene (roofOriginals), the box
@@ -52,13 +56,14 @@
 // with the lights writer's own ctx, in one write (fx/lightwriter.js writeNow): the writer's next
 // pass plans nothing more. Any control here that changes an input takes a scene released to
 // Smoke back (SCENE_LIGHTING_KEY.managed true); "Release lights to Smoke" sets it false.
-import { FOG_KEY, MAP_DARKNESS_KEY, PARTY_KEY, SCENE_LIGHTING_KEY } from "./keys.js?v=90a5d4e";
-import { SOURCES } from "./fx/lights.js?v=90a5d4e";
-import { isMap, mapDarkness, readGrid, sceneDarkness } from "./fx/darkness.js?v=90a5d4e";
-import { writeNow } from "./fx/lightwriter.js?v=90a5d4e";
-import { cleanParty } from "./gather.js?v=90a5d4e";
-import { DARKNESS, applyMeta, autoKind, carriers, describe, editFor, lightingOf, lightingRows, managed, releaseItem,
-         screenLine, screenWarnings, uiCtx } from "./lightui.js?v=90a5d4e";
+import { FOG_KEY, PARTY_KEY, SCENE_LIGHTING_KEY } from "./keys.js?v=669ec13";
+import { SOURCES } from "./fx/lights.js?v=669ec13";
+import { isMap, mapDarkness, readGrid, sceneDarkness } from "./fx/darkness.js?v=669ec13";
+import { writeNow } from "./fx/lightwriter.js?v=669ec13";
+import { cleanParty } from "./gather.js?v=669ec13";
+import { DARKNESS, PROPS_TITLE, RELEASED_SAID, applyMeta, autoKind, carriers, describe, editFor, lightingNow, lightingOf,
+         lightingRows, managed, mapDarkEdit, mapDarkSaid, picksDrawnAgain, picksWaiting, propsLabel, releaseItem, sceneNext,
+         sceneSaid, screenLine, screenWarnings, takenBack, uiCtx } from "./lightui.js?v=669ec13";
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 const COMMON = ["candle", "torch", "lamp", "hooded_lantern", "brazier"].filter((k) => SOURCES[k]);
@@ -323,8 +328,9 @@ export function startLighting(OBR, el, { build = "", ask = null } = {}) {
   let roofsArmed = 0, roofsAsked = null; // 🛖 Roofs, as 🌫: the switch-on tap waiting for a second; the tap the background is writing
   let roofsIdle = null; // the "🌫 is off: roofs do nothing" count last said in the 🪵 Live log
   // The maps' explored-memory controls (fog/mapui.js, loaded on its own as fog.js is), the scene grid
-  // load() reads (mapRows needs its dpi), and the "Forget explored" tap waiting for a second ({id, at}).
-  let mapUi = null, sceneGrid = null, forgetArmed = null;
+  // load() reads (mapRows needs its dpi), the "Forget explored" tap waiting for a second ({id, at}), and
+  // the "Forget explored on every map" one (when it was tapped; 0: none).
+  let mapUi = null, sceneGrid = null, forgetArmed = null, forgetAllArmed = 0;
   let pcIds = null; // the bridge heartbeat's PC ids (the background's snapshot), as the writer has them
 
   // The folds: their state (this screen's), and where the rows go.
@@ -401,15 +407,15 @@ export function startLighting(OBR, el, { build = "", ask = null } = {}) {
 
   // The scene's lighting as it is, its darkness "lit" when unmarked (fx/darkness.js), so a write
   // of another field never marks an unmarked scene dim.
-  const curLighting = () => ({ ...lightingOf(sceneMeta), darkness: sceneDarkness(sceneMeta) });
+  const curLighting = () => lightingNow(sceneMeta);
 
-  // A control here changed an input: a scene released to Smoke is ours again (spec). Returns
-  // whether it was released.
+  // A control here changed an input: a scene released to Smoke is ours again (spec; lightui.js
+  // takenBack, as 🎲 DND's ☀ Scene lights tab does it). Returns whether it was released.
   async function takeBack() {
-    const cur = curLighting();
-    if (cur.managed) return false;
-    await OBR.scene.setMetadata({ [SCENE_LIGHTING_KEY]: { ...cur, managed: true } });
-    sceneMeta = { ...(sceneMeta || {}), [SCENE_LIGHTING_KEY]: { ...cur, managed: true } };
+    const next = takenBack(sceneMeta);
+    if (!next) return false;
+    await OBR.scene.setMetadata({ [SCENE_LIGHTING_KEY]: next });
+    sceneMeta = { ...(sceneMeta || {}), [SCENE_LIGHTING_KEY]: next };
     return true;
   }
 
@@ -439,16 +445,14 @@ export function startLighting(OBR, el, { build = "", ask = null } = {}) {
   // darkness tap that lifts a map off 🌑 draws that pick again with no other prompt (review of
   // dark-fix, 2026-10-14: a clear set on a dark map during the live test came back at moonrise). So
   // such a tap says which maps' picks are drawn again, in the box and the 🪵 Live log. waitingPicks:
-  // the rows (while 🌫 Our fog is on) on 🌑 holding a stored remembered or clear, by id, as drawn now.
+  // the rows (while 🌫 Our fog is on) on 🌑 holding a stored remembered or clear, by id, as drawn now
+  // (lightui.js picksWaiting / picksDrawnAgain, as 🎲 DND's ☀ Scene lights tab says them).
   // Neither ever stops the darkness write: a failure here only leaves the line out.
   const waitingPicks = () => {
-    try { return new Map(mapRowsNow().filter((r) => r.darkLocked && r.override && r.override !== "fog").map((r) => [r.id, r])); } catch { return new Map(); }
+    try { return picksWaiting(mapRowsNow()); } catch { return new Map(); }
   };
   const drawnAgain = (before) => {
-    try {
-      return mapRowsNow().filter((r) => before.has(r.id) && !r.darkLocked && r.override === before.get(r.id).override)
-        .map((r) => ` · ${r.name || "Map"}: your ${word(r.override)} is drawn again (tap auto to drop it)`).join("");
-    } catch { return ""; }
+    try { return picksDrawnAgain(before, mapRowsNow(), word); } catch { return ""; }
   };
   // The darkness tap's line: logged too when a stored pick came back, else only said.
   const darkSaid = (text, before) => {
@@ -460,35 +464,25 @@ export function startLighting(OBR, el, { build = "", ask = null } = {}) {
     if (!ready) return say("Open a scene first", "warn");
     const cur = curLighting();
     const waiting = waitingPicks();
-    const next = { ...cur, ...patch, managed: true };
+    const next = sceneNext(sceneMeta, patch);
     await OBR.scene.setMetadata({ [SCENE_LIGHTING_KEY]: next });
     const n = await replanAll();
-    const d = DARK_CHIPS.find((x) => x.value === next.darkness);
-    darkSaid(`${d.icon} Scene ${d.label}${"auto" in patch ? ` · props ${next.auto ? "light themselves" : "stay as you set them"}` : ""}`
-      + (n ? ` · ${n} token(s) updated` : "") + (cur.managed ? "" : " · lights are ours again in this scene"), waiting);
+    darkSaid(sceneSaid(next, patch, n, cur.managed), waiting);
     render();
   }
 
   // One map's own darkness: "lit" | "dim" | "dark", or null (as the scene: written as an explicit
-  // null, never a deleted key: a JSON-patch "remove" of a key another screen lacks desyncs it, live
-  // 2026-10-12). Then every token's Smoke keys at once (a seer's range depends on where it stands).
+  // null, never a deleted key: lightui.js mapDarkEdit, as 🎲 DND's ☀ Scene lights tab writes it).
+  // Then every token's Smoke keys at once (a seer's range depends on where it stands).
   async function setMap(id, code) {
     if (!ready) return say("Open a scene first", "warn");
-    const value = code || null;
     const waiting = waitingPicks();
-    await OBR.scene.items.updateItems([id], (drafts) => {
-      for (const d of drafts) {
-        if ((d.metadata?.[MAP_DARKNESS_KEY] ?? null) === value) continue; // already so (missing = as the scene)
-        if (!d.metadata) d.metadata = {};
-        d.metadata[MAP_DARKNESS_KEY] = value;
-      }
-    });
+    await OBR.scene.items.updateItems([id], mapDarkEdit(code));
     await load();
     const back = await takeBack();
     const n = await replanAll();
     const m = items.find((i) => i.id === id);
-    const d = DARK_CHIPS.find((x) => x.value === code);
-    darkSaid(`${m?.name || "Map"}: ${d ? `${d.icon} ${d.label}` : "as the scene"}${n ? ` · ${n} token(s) updated` : ""}${back ? " · lights are ours again in this scene" : ""}`, waiting);
+    darkSaid(mapDarkSaid(m?.name, code, n, back), waiting);
     render();
   }
 
@@ -561,9 +555,36 @@ export function startLighting(OBR, el, { build = "", ask = null } = {}) {
       return say(`${row.name || "Map"}: tap again to forget its explored memory (${shareSaid(cur)})`, "warn");
     }
     forgetArmed = null;
+    forgetAllArmed = 0; // the every-map chip's count is out of date now
     const r = await mapUi.forgetExplored(OBR, row.id, sceneGrid?.dpi || 150);
     note(r.wrote ? `${row.name || "Map"}: explored memory (${shareSaid(cur)}) forgotten · what the party sees now comes back within 5 s`
       : `${row.name || "Map"}: nothing to forget (already so)`);
+  });
+  // "Forget explored on every map" (fog/mapui.js forgetAllExplored): the per-map chip's two taps for
+  // every map in the scene at once. Counted by the drawn explored share, as each map's chip is.
+  const mapsSaid = (n) => `${n} map${n === 1 ? "" : "s"}`;
+  const exploredMaps = () => mapRowsNow().filter((r) => r.explored > 0).length;
+  const forgetAll = () => fogWrite(async () => {
+    const n = exploredMaps();
+    if (!n) {
+      forgetAllArmed = 0;
+      return say("Nothing explored in this scene to forget", "dim");
+    }
+    if (!forgetAllArmed || Date.now() - forgetAllArmed > mapUi.FORGET_ARM_MS) {
+      forgetAllArmed = Date.now();
+      setTimeout(() => {
+        if (forgetAllArmed && Date.now() - forgetAllArmed >= mapUi.FORGET_ARM_MS) {
+          forgetAllArmed = 0;
+          render();
+        }
+      }, mapUi.FORGET_ARM_MS + 100);
+      return say(`Tap again to forget the explored memory on ${mapsSaid(n)} in this scene`, "warn");
+    }
+    forgetAllArmed = 0;
+    forgetArmed = null; // every map's own "Tap again" goes with it
+    const r = await mapUi.forgetAllExplored(OBR, sceneGrid?.dpi || 150);
+    note(r.wrote ? `Explored memory forgotten on ${mapsSaid(r.wrote)} · what the party sees now comes back within 5 s`
+      : "Nothing to forget (already so)");
   });
   // The memory shade, for the whole scene (FOG_LOOK_KEY whole; every screen redraws at once).
   const setShade = (c) => fogWrite(async () => {
@@ -575,7 +596,7 @@ export function startLighting(OBR, el, { build = "", ask = null } = {}) {
     await load();
     const now = rowOf(row.id);
     note(`${row.building}: ${on ? "remembered" : "forgotten"}${r.wrote ? "" : " (already so)"} · its ${r.maps} map(s) `
-      + (now ? `now ${modeSaid(now)}` : on ? "stay dimmed" : "fog over"));
+      + (now ? `now ${modeSaid(now)}` : on ? "stay dimmed while a PC is on them" : "fog over"));
   });
 
   // The folds that hold a map, opened (only the folds: nothing is written).
@@ -711,6 +732,20 @@ export function startLighting(OBR, el, { build = "", ask = null } = {}) {
       shades.className = "chips fm";
       for (const c of mapUi.shadeChips(sceneMeta)) shades.append(chip(c.label, c.on, c.title, () => setShade(c)));
       el.fog.append(head, shades);
+    }
+    // Forget explored on every map (two taps; greyed while nothing in the scene is explored).
+    if (mapUi?.forgetAllExplored) {
+      const n = exploredMaps();
+      const armed = n > 0 && forgetAllArmed > 0 && Date.now() - forgetAllArmed < mapUi.FORGET_ARM_MS;
+      const every = document.createElement("div");
+      every.className = "chips fm";
+      const b = chip(armed ? `Tap again: forget explored on ${mapsSaid(n)}` : n ? `Forget explored on every map (${mapsSaid(n)})` : "Forget explored on every map",
+        false, n ? `The party's explored memory on all ${mapsSaid(n)} in this scene goes back under the fog (two taps); fog modes and Remember building stay as they are`
+          : "Nothing explored in this scene yet", () => forgetAll());
+      if (armed) b.className += " arm";
+      b.disabled = !n;
+      every.append(b);
+      el.fog.append(every);
     }
     // Smoke & Spectre RUNNING on this screen with its vision on: this screen's fog.js looks at Smoke's
     // own local items (its leftover sceneId or a token's hasVision never count; its local leftovers
@@ -933,14 +968,12 @@ export function startLighting(OBR, el, { build = "", ask = null } = {}) {
       const box = document.createElement("div");
       box.className = "chips";
       for (const d of DARK_CHIPS) box.append(chip(`${d.icon} ${d.label}`, here === d.value, d.about, () => setScene({ darkness: d.value })));
-      box.append(chip(l.auto ? "✓ Props light themselves" : "Props light themselves", l.auto,
-        "Sconces, torches, braziers, candles, lanterns and lamps light by their name or picture",
-        () => setScene({ auto: !l.auto })));
+      box.append(chip(propsLabel(l.auto), l.auto, PROPS_TITLE, () => setScene({ auto: !l.auto })));
       el.scene.append(head, box);
       if (!l.managed) {
         const p = document.createElement("p");
         p.className = "warn small";
-        p.textContent = "Released to Smoke: Smoke draws vision and darkvision here (our flames still show). Any control here takes it back.";
+        p.textContent = RELEASED_SAID;
         el.scene.append(p);
       }
       renderMaps(el.maps || el.scene);
@@ -1078,8 +1111,8 @@ export function startLighting(OBR, el, { build = "", ask = null } = {}) {
     }
   }
 
-  import("./fog/fog.js?v=90a5d4e").then((m) => { fogMod = m; render(); }, (e) => { fogErr = String(e?.message || e); renderFog(); });
-  import("./fog/mapui.js?v=90a5d4e").then((m) => { mapUi = m; render(); }, (e) => console.warn("dnd-npc: 🌫 map controls", e));
+  import("./fog/fog.js?v=669ec13").then((m) => { fogMod = m; render(); }, (e) => { fogErr = String(e?.message || e); renderFog(); });
+  import("./fog/mapui.js?v=669ec13").then((m) => { mapUi = m; render(); }, (e) => console.warn("dnd-npc: 🌫 map controls", e));
   OBR.scene.items.onChange(() => refresh());
   OBR.scene.onMetadataChange?.(() => refresh());
   OBR.scene.onReadyChange?.(() => refresh());

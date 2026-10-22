@@ -40,6 +40,10 @@
 //   forgetExplored(OBR, id, dpi)            -> {wrote, cells, keys}: SEEN_KEY's empty set and
 //                        EXPLORED_KEY's empty value, both of the map's size as the draft has it, in ONE
 //                        draft; a key already empty is skipped
+//   forgetAllExplored(OBR, dpi)             -> {wrote, maps, names}: the same on EVERY map image of the
+//                        scene holding SEEN_KEY or EXPLORED_KEY, in ONE updateItems (the 🌫 row's "Forget
+//                        explored on every map"); wrote and names: the maps changed; maps: the ones looked
+//                        at. MAP-layer images only: never a roof piece (a FOG-layer image) or a token
 //   setRemembered(OBR, buildingKey, on)     -> {wrote, maps}: MEMORY_KEY on every floor, one call
 //   setShade(OBR, shade)                    -> {wrote, value}: FOG_LOOK_KEY {v: 1, shade} whole on the
 //                        scene, skipped when it already holds exactly that
@@ -47,21 +51,21 @@
 // The automatic threshold (2 visits plus 10 active minutes, spec section 7) comes after Thursday;
 // it will write the same MEMORY_KEY setRemembered writes, so nothing here changes.
 
-import { EXPLORED_KEY, FOG_LOOK_KEY, MAP_FOG_KEY, MEMORY_KEY, SEEN_KEY } from "../keys.js?v=90a5d4e";
-import { mapRects } from "../views.js?v=90a5d4e";
-import { count } from "./bitset.js?v=90a5d4e";
-import { FOG_MODES, MAP_KINDS, buildingOf, emptySeen, exploredFor, mapFogOf, mapGrid, mapStates, paintedKind, seenOf } from "./maps.js?v=90a5d4e";
-import { DEFAULT_SHADE, SHADES, shadeOf } from "./memory.js?v=90a5d4e";
-import { drawnMode } from "./mode.js?v=90a5d4e";
-import { emptyExplored } from "./shapes.js?v=90a5d4e";
+import { EXPLORED_KEY, FOG_LOOK_KEY, MAP_FOG_KEY, MEMORY_KEY, SEEN_KEY } from "../keys.js?v=669ec13";
+import { mapRects } from "../views.js?v=669ec13";
+import { count } from "./bitset.js?v=669ec13";
+import { FOG_MODES, MAP_KINDS, buildingOf, emptySeen, exploredFor, mapFogOf, mapGrid, mapStates, paintedKind, seenOf } from "./maps.js?v=669ec13";
+import { DEFAULT_SHADE, SHADES, shadeOf } from "./memory.js?v=669ec13";
+import { drawnMode } from "./mode.js?v=669ec13";
+import { emptyExplored } from "./shapes.js?v=669ec13";
 
 export { DEFAULT_SHADE, SHADES, mapRects, shadeOf };
 export const FORGET_ARM_MS = 5000;
 
 export const MODE_WORDS = {
-  auto: { label: "auto", about: "As the map's darkness and kind say: 🌑 fogs over; an interior fogs over until its building is remembered; everything else is remembered (dimmed)" },
+  auto: { label: "auto", about: "As the map's darkness and kind say: 🌑 fogs over; an interior fogs over until its building is remembered; everything else is remembered (dimmed, while a PC is on the map)" },
   fog: { label: "fog", about: "Fogs over: only what the party sees now shows (what they explored is still kept, just not drawn)" },
-  dim: { label: "remembered", about: "Remembered: where the party has looked stays visible, dimmed at the memory shade; creatures show only while in sight" },
+  dim: { label: "remembered", about: "Remembered: while a PC is on the map, where the party has looked stays visible, dimmed at the memory shade; creatures show only while in sight" },
   clear: { label: "clear", about: "The whole map shown, dimmed at the memory shade; creatures show only where a PC's sight reaches them" },
 };
 export const MODE_CHIPS = ["auto", "fog", "dim", "clear"].map((mode) => ({ mode, ...MODE_WORDS[mode] }));
@@ -150,7 +154,7 @@ export function chipsFor(row) {
   const kinds = [
     { kind: "interior", label: "🏠 Interior", on: row.kind === "interior", title: "A building floor: fogs over until its building is remembered" },
     { kind: row.painted ? "outdoor" : null, label: "🌳 Outdoor", on: row.kind === "outdoor",
-      title: "Outdoors: remembered (dimmed) where the party has looked, unless 🌑" },
+      title: "Outdoors: remembered (dimmed) where the party has looked, while a PC is on the map, unless 🌑" },
   ];
   if (row.painted && row.kindFrom === "dm") {
     kinds.push({ kind: null, label: "as painted", on: false, title: `Back to what 🏘 Set up interiors made it (${row.painted})` });
@@ -164,7 +168,7 @@ export function chipsFor(row) {
     label: row.remembered ? "Forget building" : "Remember building",
     title: row.remembered
       ? `${row.building}: its ${row.floors} map(s) fog over again when out of sight (the explored memory is kept)`
-      : `${row.building}: the party knows it now; its ${row.floors} map(s) stay dimmed where they've looked`,
+      : `${row.building}: the party knows it now; its ${row.floors} map(s) stay dimmed where they've looked, while a PC is on them`,
   } : null;
   return { modes, kinds, forget, remember };
 }
@@ -194,25 +198,56 @@ export async function setMapFog(OBR, id, { mode, kind } = {}) {
 // Nothing explored: SEEN_KEY's empty set and EXPLORED_KEY's empty value, at the size of the map as
 // the draft has it (its position and scale now), both in this ONE draft (the seen writer reads the
 // shrink as a Forget: "forgotten, starting again"). A key already holding exactly its empty value is
-// left alone; a map with neither to change writes nothing.
+// left alone; a map with neither to change writes nothing. One draft's Forget, for forgetExplored and
+// forgetAllExplored alike: -> {keys (the ones written), cells (the map's squares, 0 off the grid)}.
+function forgetDraft(d, dpi) {
+  const rect = mapRects([d], dpi)[0];
+  const grid = mapGrid(rect, dpi);
+  const put = [[SEEN_KEY, emptySeen(grid)], [EXPLORED_KEY, emptyExplored(rect)]]
+    .filter(([k, v]) => v && !same(d.metadata?.[k], v));
+  if (put.length) {
+    if (!d.metadata) d.metadata = {};
+    for (const [k, v] of put) d.metadata[k] = v;
+  }
+  return { keys: put.map(([k]) => k), cells: grid ? grid.cols * grid.rows : 0 };
+}
+
 export async function forgetExplored(OBR, id, dpi) {
   let wrote = 0, cells = 0, keys = [];
   await OBR.scene.items.updateItems([id], (drafts) => {
     for (const d of drafts) {
       if (d.id !== id) continue;
-      const rect = mapRects([d], dpi)[0];
-      const grid = mapGrid(rect, dpi);
-      const put = [[SEEN_KEY, emptySeen(grid)], [EXPLORED_KEY, emptyExplored(rect)]]
-        .filter(([k, v]) => v && !same(d.metadata?.[k], v));
-      if (grid) cells = grid.cols * grid.rows;
-      if (!put.length) continue;
-      if (!d.metadata) d.metadata = {};
-      for (const [k, v] of put) d.metadata[k] = v;
-      keys = put.map(([k]) => k);
+      const f = forgetDraft(d, dpi);
+      cells = f.cells;
+      if (!f.keys.length) continue;
+      keys = f.keys;
       wrote++;
     }
   });
   return { wrote, cells, keys };
+}
+
+// "Forget explored on every map" (DM, 2026-10-20: "a reset all for persistence on remembering vision"):
+// every MAP-layer image holding SEEN_KEY or EXPLORED_KEY (a null reads as missing), all in ONE
+// updateItems, each map's draft forgotten as forgetExplored's is (forgetDraft, both keys in the same
+// draft). Decided in the draft again; a map already empty writes nothing and isn't counted, and a map
+// with neither key, a roof piece (a FOG-layer image, fog/roofs.js's own) or a token is never asked for.
+const holdsMemory = (i) => i?.metadata?.[SEEN_KEY] != null || i?.metadata?.[EXPLORED_KEY] != null;
+export async function forgetAllExplored(OBR, dpi) {
+  const items = (await OBR.scene.items.getItems()) || [];
+  const ids = items.filter((i) => isMapImage(i) && holdsMemory(i)).map((i) => i.id);
+  if (!ids.length) return { wrote: 0, maps: 0, names: [] };
+  let wrote = 0;
+  const names = [];
+  await OBR.scene.items.updateItems(ids, (drafts) => {
+    for (const d of drafts) {
+      if (!isMapImage(d) || !holdsMemory(d)) continue;
+      if (!forgetDraft(d, dpi).keys.length) continue;
+      wrote++;
+      names.push(d.name ?? "");
+    }
+  });
+  return { wrote, maps: ids.length, names };
 }
 
 // MEMORY_KEY {remembered} on EVERY map image of one building (its buildingOf key), in ONE updateItems,

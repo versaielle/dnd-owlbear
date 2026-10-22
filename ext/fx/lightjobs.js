@@ -12,12 +12,12 @@
 // leaves SPELL_LIGHT_KEY as an explicit null (never a removed key: the bridge tab writes while
 // the other DM browser's lights writer runs too), and a null reads as no spell.
 
-import { SPELL_LIGHT_KEY } from "../keys.js?v=90a5d4e";
-import { lightChanges, planItem, reachOf, setSpellLight, stable, writeLightPart } from "./lightmeta.js?v=90a5d4e";
-import { planCtx } from "./lightwriter.js?v=90a5d4e";
-import { readGrid } from "./darkness.js?v=90a5d4e";
-import { SOURCES } from "./lights.js?v=90a5d4e";
-import { isPcToken } from "./pcs.js?v=90a5d4e";
+import { SPELL_LIGHT_KEY } from "../keys.js?v=669ec13";
+import { lightChanges, planItem, reachOf, setSpellLight, stable, writeLightPart } from "./lightmeta.js?v=669ec13";
+import { planCtx } from "./lightwriter.js?v=669ec13";
+import { readGrid } from "./darkness.js?v=669ec13";
+import { SOURCES } from "./lights.js?v=669ec13";
+import { isPcToken } from "./pcs.js?v=669ec13";
 
 // lightChanges() lives in lightmeta.js; still offered here for older importers.
 export { lightChanges };

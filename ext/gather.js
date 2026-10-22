@@ -24,14 +24,14 @@
 // camp's own map (the road's night 1 camp: one place with several fights to roll from) it lays out the road's pool
 // instead (poolPlan), as from a drawing marked as that place; the road's other maps say to press it there.
 // check_interiors.mjs and check_road_maps.mjs test the pure parts offline.
-import OBR, { MathM } from "./obr-sdk.js?v=90a5d4e";
-import { contains, isRoom, outline } from "./areas.js?v=90a5d4e";
-import { ask, directBase } from "./bus.js?v=90a5d4e";
-import { bounds, groupOf, listed, loadInteriors, mapToScene, matchImages, normName, sceneGroups, toScene } from "./interiors.js?v=90a5d4e";
+import OBR, { MathM } from "./obr-sdk.js?v=669ec13";
+import { contains, isRoom, outline } from "./areas.js?v=669ec13";
+import { ask, directBase } from "./bus.js?v=669ec13";
+import { bounds, groupOf, listed, loadInteriors, mapToScene, matchImages, normName, sceneGroups, toScene } from "./interiors.js?v=669ec13";
 import { BUBBLES_KEY, BUBBLES_NAME_KEY, DOWN_COLOR, INTERIOR_KEY, MAP_INFO_KEY, PARTY_KEY, PARTY_SENSES_KEY, PLACE_KEY,
-         RING_KEY, WHO_KEY, onTokenLayer } from "./keys.js?v=90a5d4e";
-import { nameKey, pcName, tokenLabel } from "./fx/pcs.js?v=90a5d4e";
-import { readLine, toWorld } from "./fog/lineread.js?v=90a5d4e";
+         RING_KEY, WHO_KEY, onTokenLayer } from "./keys.js?v=669ec13";
+import { nameKey, pcName, tokenLabel } from "./fx/pcs.js?v=669ec13";
+import { readLine, toWorld } from "./fog/lineread.js?v=669ec13";
 
 const RADIUS = 12; // squares around the spot that are tried
 

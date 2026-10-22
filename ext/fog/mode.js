@@ -4,7 +4,8 @@
 //
 //   "fog"    Fogs over      a seen area goes back under the fog
 //   "dim"    Remembered     it stays visible but dimmed; creatures show only while in sight (the
-//                           chip says "remembered"; the stored word stays "dim")
+//                           chip says "remembered"; the stored word stays "dim"). Drawn only while
+//                           a PC is on the map (fog/memory.js; the DM, 2026-10-20)
 //   "lit"    (old)          B4's "stays lit". From Phase 1 it draws exactly like "dim" and is never
 //                           given: a stored one is read as "dim" (fog/maps.js mapFogOf), and an
 //                           override of "lit" here gives "dim" too. Kept in MODES so a stored one
@@ -33,7 +34,7 @@
 //   ☀ lit / 🌒 dim  interior, remembered          dim
 //   ☀ lit / 🌒 dim  outdoor                       dim   (B4 gave ☀ outdoor "lit": decision 69)
 
-import { codeOf } from "../fx/darkness.js?v=90a5d4e";
+import { codeOf } from "../fx/darkness.js?v=669ec13";
 
 export const MODES = ["fog", "dim", "lit", "clear"];
 

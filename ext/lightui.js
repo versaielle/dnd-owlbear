@@ -11,17 +11,22 @@
 //   planWrite(item, ctx, change)   the same, pure: {metadata, changed} (the offline checks)
 //   describe(item, ctx)            "Ana carries a torch (40 ft)", "Sconce put out — won't relight by itself"
 //   lightingRows(items, ctx)       the list's PCs, lit objects, and every NPC (lit or not)
+//   lightingNow, takenBack, sceneNext, mapDarkEdit, mapDarkSaid, sceneSaid, picksWaiting, picksDrawnAgain
+//                                  the scene's and each map's darkness chips and "Props light themselves",
+//                                  as the list's "This scene" and ▸ Maps and 🎲 DND's ☀ Scene lights tab
+//                                  (maplight.html) write and say them
 //   screenLine(s), screenWarnings(screens, opts)   the screens heard, and what to do about them
 //
 // Everything the inputs change goes through lightmeta.js's setLight / setVision, then planItem
 // with the writer's ctx, in ONE write (fx/lightwriter.js writeNow): the same pure function on the
 // same inputs as the leader's writer, so a tap writes once and the writer's next pass plans
 // nothing for that token.
-import * as LM from "./fx/lightmeta.js?v=90a5d4e";
-import { planCtx } from "./fx/lightwriter.js?v=90a5d4e";
-import { SOURCES } from "./fx/lights.js?v=90a5d4e";
-import { CARRIER_KEY, LIGHT_KEY, SCENE_LIGHTING_KEY, SMOKE, SPELL_LIGHT_KEY, VISION_KEY } from "./keys.js?v=90a5d4e";
-import { pcName, tokenLabel } from "./fx/pcs.js?v=90a5d4e";
+import * as LM from "./fx/lightmeta.js?v=669ec13";
+import { planCtx } from "./fx/lightwriter.js?v=669ec13";
+import { SOURCES } from "./fx/lights.js?v=669ec13";
+import { CARRIER_KEY, LIGHT_KEY, MAP_DARKNESS_KEY, SCENE_LIGHTING_KEY, SMOKE, SPELL_LIGHT_KEY, VISION_KEY } from "./keys.js?v=669ec13";
+import { pcName, tokenLabel } from "./fx/pcs.js?v=669ec13";
+import { sceneDarkness } from "./fx/darkness.js?v=669ec13";
 
 // The scene's (and each map's) darkness, as docs/lights-darkness-spec.md says it: darkness comes
 // from light, per point. The 🔥 Lighting list's chips (lightpanel.js) say these.
@@ -193,6 +198,69 @@ export function lightingRows(items, ctx) {
 export const managed = (items) => (items || []).filter((i) => i?.metadata?.[VISION_KEY] && !i.metadata[CARRIER_KEY]);
 // The carriers we made for lit NPCs (fx/lightwriter.js): released scenes don't keep them.
 export const carriers = (items) => (items || []).filter((i) => i?.metadata?.[CARRIER_KEY]);
+
+// ---- the scene's and each map's darkness: the 🔥 Lighting list (lightpanel.js "This scene" and ▸ Maps)
+// and 🎲 DND's ☀ Scene lights tab (maplight.html) write them the same way, from these ----
+
+// The scene's lighting as it is, its darkness "lit" when unmarked (fx/darkness.js), so a write of
+// another field never marks an unmarked scene dim.
+export const lightingNow = (sceneMeta) => ({ ...lightingOf(sceneMeta), darkness: sceneDarkness(sceneMeta) });
+
+// A control changed an input: a scene released to Smoke is ours again (spec). The scene's lighting to
+// write (managed true), or null when the scene is ours already.
+export function takenBack(sceneMeta) {
+  const cur = lightingNow(sceneMeta);
+  return cur.managed ? null : { ...cur, managed: true };
+}
+
+// The scene's lighting after a "This scene" tap (`patch`: {darkness} or {auto}): whole, ours (managed).
+export const sceneNext = (sceneMeta, patch) => ({ ...lightingNow(sceneMeta), ...patch, managed: true });
+
+// The scene's "Props light themselves" switch (SCENE_LIGHTING_KEY.auto): its words and tooltip.
+export const propsLabel = (auto) => (auto ? "✓ Props light themselves" : "Props light themselves");
+export const PROPS_TITLE = "Sconces, torches, braziers, candles, lanterns and lamps light by their name or picture";
+// Said while the scene is released to Smoke.
+export const RELEASED_SAID = "Released to Smoke: Smoke draws vision and darkvision here (our flames still show). Any control here takes it back.";
+
+// One map's own darkness, as one updateItems' edit: "lit" | "dim" | "dark", or null (as the scene:
+// written as an explicit null, never a deleted key: a JSON-patch "remove" of a key another screen lacks
+// desyncs it, live 2026-10-12). A map already so is left alone (missing = as the scene).
+export function mapDarkEdit(code) {
+  const value = code || null;
+  return (drafts) => {
+    for (const d of drafts) {
+      if ((d.metadata?.[MAP_DARKNESS_KEY] ?? null) === value) continue; // already so (missing = as the scene)
+      if (!d.metadata) d.metadata = {};
+      d.metadata[MAP_DARKNESS_KEY] = value;
+    }
+  };
+}
+
+const OURS_AGAIN = " · lights are ours again in this scene";
+// What a tap says. A map's: "Cellar: 🌑 dark · 3 token(s) updated · lights are ours again in this scene"
+// (n: the tokens whose Smoke keys changed; back: the scene was released and is ours again).
+export function mapDarkSaid(name, code, n, back) {
+  const d = DARKNESS.find((x) => x.value === code);
+  return `${name || "Map"}: ${d ? `${d.icon} ${d.label}` : "as the scene"}${n ? ` · ${n} token(s) updated` : ""}${back ? OURS_AGAIN : ""}`;
+}
+// The scene's: "☀ Scene lit · props light themselves · 2 token(s) updated" (wasManaged: before the tap).
+export function sceneSaid(next, patch, n, wasManaged) {
+  const d = DARKNESS.find((x) => x.value === next.darkness);
+  return `${d.icon} Scene ${d.label}${"auto" in patch ? ` · props ${next.auto ? "light themselves" : "stay as you set them"}` : ""}`
+    + (n ? ` · ${n} token(s) updated` : "") + (wasManaged ? "" : OURS_AGAIN);
+}
+
+// 🌑 is fog only, and the DM's stored remembered or clear waits there (fog/mode.js fogMode): a darkness
+// tap that lifts a map off 🌑 draws that pick again with no other prompt (review of dark-fix,
+// 2026-10-14), so such a tap says which maps' picks are drawn again, and the 🪵 Live log gets it.
+// picksWaiting(rows): the maps (fog/mapui.js mapRows, while 🌫 Our fog is on) on 🌑 holding a stored
+// remembered or clear, by id, before the tap. picksDrawnAgain(before, rows, word): after it, one
+// " · Inn: your clear is drawn again (tap auto to drop it)" for each drawn again (word: mapui modeWord).
+export const picksWaiting = (rows) =>
+  new Map((rows || []).filter((r) => r.darkLocked && r.override && r.override !== "fog").map((r) => [r.id, r]));
+export const picksDrawnAgain = (before, rows, word = (m) => m) =>
+  (rows || []).filter((r) => before.has(r.id) && !r.darkLocked && r.override === before.get(r.id).override)
+    .map((r) => ` · ${r.name || "Map"}: your ${word(r.override)} is drawn again (tap auto to drop it)`).join("");
 
 // ---- the screens heard ----
 

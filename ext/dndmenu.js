@@ -6,14 +6,15 @@
 // right-clicked, unfurling from the entry clicked (popoverAnchor below; dnd.html) with a tab for each
 // of those that fits what was clicked: each tab keeps the old entry's filter word for word (TABS
 // below), and each tab is the old page (conditions.html, light.html, menu.html) or, for 📺, one button
-// in dnd.html. tabs.js draws the tab row.
+// in dnd.html. One tab is new (the DM, 2026-10-20): ☀ Scene lights on one map image (maplight.html).
+// tabs.js draws the tab row.
 // 🏘 Map setup replaces thisPcMenus()' three (Set up interiors, Place townsfolk, Check portals): its
 // small page (mapsetup.html), opened the same way, asks this copy's background to run the job, as the
 // old entry did. On one text label it offers 🎨 Copy label style and ↩ Undo label style instead.
 //
 // Pure: no SDK import, so the node checks import it (check_menus.mjs).
 
-import { INTERIOR_KEY, PLACE_KEY } from "./keys.js?v=90a5d4e";
+import { INTERIOR_KEY, PLACE_KEY } from "./keys.js?v=669ec13";
 
 export const DND_MENU_ID = "dnd-npc/dnd"; // the Pages copy's entry
 // The copy the panel on this PC serves has its own id (Owlbear's ids are room-wide): when it steps
@@ -35,6 +36,8 @@ const ONE_MAP_ROOM_OR_TOKEN = () => [
   [layer("DRAWING")],
   [layer("CHARACTER")],
 ].map((every) => ({ roles: GM, max: 1, every }));
+// One map image: ☀ Scene lights, and 🏘 Map setup's three old entries (below).
+const ONE_MAP_IMAGE = () => ({ roles: GM, max: 1, every: [{ key: "layer", value: "MAP" }, { key: "type", value: "IMAGE" }] });
 
 // Each tab, in the order the panel picks its first: { key, emoji, name, page, kind (menu.html's
 // list), height (the page's own, under the tab row), filters (the old entry's, one per icon; the
@@ -52,6 +55,11 @@ export const TABS = [
     filters: [{ roles: GM, every: [layer("CHARACTER", "||"), layer("MOUNT")] }] },
   { key: "place", emoji: "🗺", name: "Mark as place", page: "./menu.html", kind: "place", height: 360,
     filters: [{ roles: GM, every: [layer("DRAWING")] }] },
+  // The DM, 2026-10-20: "right click on a map in the scene then dnd->our menu->scene lights (just
+  // bright,dim,dark)": that one map's own ☀/🌒/🌑 and the scene's "Props light themselves" (maplight.html,
+  // the 🔥 box's ▸ Maps and "This scene" writes). One map image only, as 🏘 Map setup's; first on a map.
+  { key: "maplight", emoji: "☀", name: "Scene lights", page: "./maplight.html", height: 122,
+    filters: [ONE_MAP_IMAGE()] },
   { key: "goto", emoji: "📍", name: "Go to PC", page: "./menu.html", kind: "goto", height: 360,
     filters: [{ roles: GM }] },
   { key: "bring", emoji: "🧭", name: "Bring PCs here", page: "./menu.html", kind: "bring", height: 360,
@@ -190,7 +198,6 @@ export const MAP_SETUP_MENU_ID = "dnd-npc/local/map-setup";
 export const MAP_SETUP_POPOVER_ID = "dnd-npc/local/map-setup";
 export const MAP_SETUP_LABEL = "🏘 Map setup";
 export const MAP_SETUP_NEED = "map-setup"; // its LOCAL_ASK to this copy's background
-const ONE_MAP_IMAGE = () => ({ roles: GM, max: 1, every: [{ key: "layer", value: "MAP" }, { key: "type", value: "IMAGE" }] });
 // One text label: an Owlbear TEXT item (the Text tool's, plain or rich) or a LABEL.
 const ONE_TEXT_LABEL = () => ({ roles: GM, max: 1, every: [{ key: "type", value: "TEXT", coordinator: "||" }, { key: "type", value: "LABEL" }] });
 // One drawing the DM marked as a place (🗺 Mark as place: the road's strips and camps), not a room 🏘 Set up

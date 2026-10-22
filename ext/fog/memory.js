@@ -12,9 +12,17 @@
 //            fog colour at the memory shade, (c) the scene's fog colour over everything not yet
 //            explored: the map's rectangle with the explored memory's rings (EXPLORED_KEY, the
 //            exact sight shapes, fog/shapes.js) cut out, even-odd. The chip calls it "remembered".
-//            A stored "lit" (B4's) draws exactly the same (decision 69)
+//            A stored "lit" (B4's) draws exactly the same (decision 69). ONLY while a PC token is on
+//            the map (the DM, 2026-10-20 20:50: "the memory should only show when a pc is on the main
+//            map for the main map or a building map when the pc is on the building map. other
+//            buildings that they have been on don't show the memory until there token is back
+//            there"): the snapshot's `occupied` (fog.js buildSnapshot: fog/lines.js occupiedMaps,
+//            the topmost map under each PC's middle, hidden PCs too; the roofs' onMaps test). With no
+//            PC on it the map draws nothing on every screen (players, the projector, GM screens);
+//            what it remembers is kept, not forgotten, and draws again when a PC is back on it
 //   "clear"  (a) and (b) only: the whole map shown, dimmed; no cut, no light, no edge ring
-//            (decision 72): creatures show only where a PC's sight light reaches
+//            (decision 72): creatures show only where a PC's sight light reaches. The DM's own
+//            override, not explored memory: drawn with or without a PC on the map
 //   a "dim" map with no explored memory yet, or a map the DM hid: nothing. Squares (SEEN_KEY) are
 //   never drawn: a map explored only under B4's squares shows no memory until it's seen again
 //
@@ -26,10 +34,13 @@
 //                        holeRings: [{x, y}, ...] in scene px), as Path commands relative to position
 //                        (MOVE 0, LINE 1, CLOSE 5), for fillRule "evenodd": a hole inside a hole
 //                        fills again (an unseen pillar's shadow inside a seen room)
+//   occupiedOf(snap)     the maps a PC is on, as a Set of id strings: snap.occupied (a Set, or an
+//                        array, of ids); missing or junk = no PC anywhere (no "dim" map draws)
 //   memoryInputSig(snap, {fogColor})   what the plan depends on: per map its id, mode, hidden,
-//                        rectangle, transform, image and ("dim" only) its EXPLORED_KEY value; the
-//                        memory shade and the fog colour. Unchanged: no plan is built, Owlbear is
-//                        asked nothing
+//                        rectangle, transform, image and ("dim" only) its EXPLORED_KEY value and
+//                        whether a PC is on it; the memory shade and the fog colour. Unchanged: no
+//                        plan is built, Owlbear is asked nothing (a PC moving within one map changes
+//                        nothing; one arriving on or leaving a "dim" map does)
 //   memoryPlan(snap, {fogColor, gm, memoryOnGm, dimOpacity})   the item specs (pure): [{key, map,
 //                        part, make, sig, ...the part's own}]. key "<part>:<map id>": at most 3 per
 //                        map. dimOpacity: this device's flag (a number 0-1) or nothing (the shade)
@@ -50,10 +61,10 @@
 // shade on a GM screen only, for testing; a player's screen and the projector always follow the
 // shade; anything else: the scene's shade). api: {OBR, buildImage, buildShape, buildPath}.
 
-import { EXPLORED_KEY, FOG_LOCAL_KEY, FOG_LOOK_KEY } from "../keys.js?v=90a5d4e";
-import { exploredFor } from "./maps.js?v=90a5d4e";
-import { drawnMode } from "./mode.js?v=90a5d4e";
-import { holeRings } from "./shapes.js?v=90a5d4e";
+import { EXPLORED_KEY, FOG_LOCAL_KEY, FOG_LOOK_KEY } from "../keys.js?v=669ec13";
+import { exploredFor } from "./maps.js?v=669ec13";
+import { drawnMode } from "./mode.js?v=669ec13";
+import { holeRings } from "./shapes.js?v=669ec13";
 
 export const MEMORY_LAYER = "FOG";
 export const MEMORY_IMAGE_Z = -3; // (a) the map's own picture
@@ -125,10 +136,21 @@ function exploredSig(raw) {
   return `${raw.v}|${raw.w}x${raw.h}|${raw.n}|${raw.a}|${typeof raw.rings === "string" ? raw.rings : "?"}`;
 }
 
+// The maps a PC is on (fog.js buildSnapshot's `occupied`: fog/lines.js occupiedMaps, a Set of map
+// ids; an array of ids is read too), as id strings. Missing or junk: no PC anywhere.
+const isId = (x) => typeof x === "string" || (typeof x === "number" && Number.isFinite(x));
+export function occupiedOf(snap) {
+  const o = snap?.occupied;
+  const list = o instanceof Set ? [...o] : Array.isArray(o) ? o : [];
+  return new Set(list.filter(isId).map(String));
+}
+
 export function memoryInputSig(snap, { fogColor = snap?.fogColor } = {}) {
+  const occ = occupiedOf(snap);
   const parts = mapsOf(snap).map((m) => {
     const mode = drawnMode(m?.mode);
-    const ex = mode === "dim" ? exploredSig(m?.item?.metadata?.[EXPLORED_KEY]) : "";
+    // "dim" only: its memory and whether a PC is on it (where on it is never read)
+    const ex = mode === "dim" ? `${exploredSig(m?.item?.metadata?.[EXPLORED_KEY])}|pc=${m?.id != null && occ.has(String(m.id)) ? 1 : 0}` : "";
     return [m?.id, mode, m?.hidden ? 1 : 0, rectSig(m?.rect), itemSig(m?.item), ex].join("|");
   });
   return `shade=${shadeOf(snap?.sceneMeta)}|fog=${colourOf(fogColor)}||${parts.join(";")}`;
@@ -148,7 +170,7 @@ function imageOf(item) {
   };
 }
 
-function specsFor(m, { fogColor, opacity }) {
+function specsFor(m, { fogColor, opacity, pcHere }) {
   const id = String(m.id);
   const spec = (part, own) => ({ key: `${part}:${id}`, map: id, part, ...own });
   const rect = m.rect;
@@ -156,6 +178,7 @@ function specsFor(m, { fogColor, opacity }) {
   if (!drawsMemory(mode) || !rectOk(rect)) return [];
   let holes = null;
   if (mode === "dim") {
+    if (!pcHere) return []; // no PC on this map: its memory waits (kept, not drawn) until one is back
     holes = holeRings(exploredFor(m).rings, rect);
     if (!holes.length) return []; // nothing explored yet: the scene's own fog, as "fog"
   }
@@ -182,17 +205,19 @@ function specsFor(m, { fogColor, opacity }) {
   return out;
 }
 
-// Per map that isn't hidden, what this screen draws for it (contract section 5). A GM screen with
-// memoryOnGm false draws nothing at all.
+// Per map that isn't hidden, what this screen draws for it (contract section 5): a "dim" map only
+// while a PC is on it (occupiedOf), the same on every screen. A GM screen with memoryOnGm false draws
+// nothing at all.
 export function memoryPlan(snap, { fogColor = snap?.fogColor, gm = false, memoryOnGm = true, dimOpacity = null } = {}) {
   if (gm && memoryOnGm === false) return [];
   const opacity = flagOf(dimOpacity) ?? shadeOf(snap?.sceneMeta);
+  const occ = occupiedOf(snap);
   const out = [];
   const done = new Set();
   for (const m of mapsOf(snap)) {
     if (!m || m.id == null || m.hidden || !drawsMemory(drawnMode(m.mode)) || done.has(String(m.id))) continue;
     done.add(String(m.id));
-    out.push(...specsFor(m, { fogColor, opacity }));
+    out.push(...specsFor(m, { fogColor, opacity, pcHere: occ.has(String(m.id)) }));
   }
   return out;
 }

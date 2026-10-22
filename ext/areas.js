@@ -9,7 +9,7 @@
 //   SHAPE TRIANGLE   not a room: its outline is unknown (failed the live test)
 //   CURVE            the polygon tool and the brush: a list of points
 //   PATH             a drawing converted to a path: commands, flattened to points
-import { Math2, MathM } from "./obr-sdk.js?v=90a5d4e";
+import { Math2, MathM } from "./obr-sdk.js?v=669ec13";
 
 const MOVE = 0, LINE = 1, QUAD = 2, CONIC = 3, CUBIC = 4, CLOSE = 5;
 
