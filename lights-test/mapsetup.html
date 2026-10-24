@@ -1,0 +1,57 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  body { margin: 0; padding: 8px 10px; font: 13px/1.3 system-ui, sans-serif; color: #fff; background: transparent; }
+  button { display: block; width: 100%; text-align: left; margin: 2px 0; padding: 6px 8px; border: 0;
+           border-radius: 6px; background: rgba(255, 255, 255, .08); color: inherit; font: inherit; cursor: pointer; }
+  button:hover { background: rgba(255, 255, 255, .2); }
+  button:disabled { opacity: .6; cursor: default; }
+  h4 { margin: 2px 2px 4px; font-size: 11px; letter-spacing: .08em; text-transform: uppercase; opacity: .7; }
+  .note { opacity: .8; margin: 4px 2px; }
+</style>
+</head>
+<body>
+<h4>🏘 Map setup</h4>
+<div id="app" class="note">Loading…</div>
+<script type="module">
+// 🏘 Map setup, on a map image, one text label or one drawing marked as a place (only the copy the panel on this PC serves makes it:
+// background.js thisPcMenus). A button for each job the old right-click entries ran, with their labels
+// (on a text label: 🎨 Copy label style and ↩ Undo label style, labelstyle.js). A tap asks
+// this copy's background to run it (CH.LOCAL_ASK, need "map-setup", host "local"): the job runs
+// there, exactly as before, with the same notices, so closing this popover doesn't stop it.
+import OBR from "./obr-sdk.js?v=79af80f";
+import { CH, send } from "./bus.js?v=79af80f";
+import { MAP_SETUP_JOBS, MAP_SETUP_NEED, MAP_SETUP_POPOVER_ID } from "./dndmenu.js?v=79af80f";
+
+const params = new URLSearchParams(location.search);
+const id = (params.get("ids") || "").split(",").filter(Boolean)[0] || "";
+const jobs = (params.get("jobs") || "").split(",").filter(Boolean);
+const app = document.getElementById("app");
+
+// One tap: the ask, then the popover closes (a second tap can't start the job twice).
+function run(job) {
+  for (const b of app.children) b.disabled = true;
+  send(OBR, CH.LOCAL_ASK, { need: MAP_SETUP_NEED, job, id, host: "local" }, "LOCAL");
+  setTimeout(() => OBR.popover.close(MAP_SETUP_POPOVER_ID), 150);
+}
+
+OBR.onReady(() => {
+  const offered = MAP_SETUP_JOBS.filter((j) => jobs.includes(j.key));
+  app.textContent = "";
+  if (!id || !offered.length) {
+    app.textContent = "Right-click one map image, one text label or one drawing marked as a place.";
+    return;
+  }
+  app.className = "";
+  for (const j of offered) {
+    const b = document.createElement("button");
+    b.textContent = j.label;
+    b.onclick = () => run(j.key);
+    app.append(b);
+  }
+});
+</script>
+</body>
+</html>

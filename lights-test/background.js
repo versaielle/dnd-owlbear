@@ -1,0 +1,1661 @@
+// The DND NPC map extension's background script. It runs in every Owlbear tab that loads
+// the extension: the Dell's GM tab, the laptop's GM tab, the projector's Cast receiver and
+// the players' phones. Since Step 36 it is served from the public Pages site, so every screen
+// at the table can draw spell effects; only ONE GM tab on the Dell (the bridge, bridge.js)
+// talks to the panel.
+//
+// The bridge, after every change on the map (a drop, a room drawn or marked) and every few
+// seconds as a heartbeat, sends the panel (/api/map) each token (character or mount layer:
+// keys.js TOKEN_LAYERS) and which marked rooms it stands in. map_state.py turns that into who is where.
+//
+// It also carries out what the panel asks of the map (HP in Stat Bubbles, the hidden
+// notes on monsters, 📍 rings), and reports which tokens wear a BLUE Colored Rings ring:
+// the targets the DM marked for a spell, on the laptop or here.
+//
+// Every screen also listens to the bridge (bottom of this file): effects (fx/), the aim tool
+// and the locked templates (aim/), and on a player's device their spells (player/). Where each
+// screen looks (views.js): the projector holds the view the DM aims it at (📺 from the GM's 🎲 DND menu),
+// and a player's view follows their PC after a portal trip. Those load with import() and may fail
+// on their own: the map jobs, rings and HP keep working without them.
+import OBR, { buildCurve, buildEffect, buildImage, buildLabel, buildLight, buildPath, buildShape, buildText, buildWall, Math2,
+  MathM } from "./obr-sdk.js?v=79af80f";
+import { contains, isRoom, size } from "./areas.js?v=79af80f";
+import { checkPortals, describe, panelLog, setUpInteriors } from "./interiors.js?v=79af80f";
+import { copyLabelStyle, undoLabelStyle } from "./labelstyle.js?v=79af80f";
+import { cleanParty, placeTownsfolk, rememberParty } from "./gather.js?v=79af80f";
+import { isPcToken, nameKey, pcName } from "./fx/pcs.js?v=79af80f";
+import { BADGE_KEY, BADGE_URL, BUBBLES_KEY, BUBBLES_NAME_KEY, COND_KEY, CONDITIONS, DOWN_COLOR, FOE_COLOR, FOG_LOG_LOCAL_CH, GRIMOIRE_KEY, MARK_PREFIX, PARTY_KEY, PARTY_SENSES_KEY, PLACE_KEY, RING_KEY, TARGET_COLOR, WHO_KEY, hiddenAbove, onTokenLayer, targetRingColor } from "./keys.js?v=79af80f";
+import { CH, DEFAULT_SETTINGS, LS, buildOf, forMe, here, isLocalOrigin, kindOf, lsGet, on as busOn, send as busSend,
+  setConnection, setSceneWrite, startSceneReader, tierOf } from "./bus.js?v=79af80f";
+import { DND_FILTER, DND_LABEL, DND_MENU_ID, DND_POPOVER_ID, DND_WIDTH, LOCAL_DND_MENU_ID, MAP_SETUP_FILTERS, MAP_SETUP_HEIGHT,
+  MAP_SETUP_LABEL, MAP_SETUP_MENU_ID, MAP_SETUP_NEED, MAP_SETUP_POPOVER_ID, MAP_SETUP_WIDTH, TOP_LEFT, dndQuery, heightOf,
+  popoverAnchor, sectionsFor, setupJobsFor, setupQuery } from "./dndmenu.js?v=79af80f";
+
+const HEARTBEAT_MS = 10000;
+// While the last report had a creature some PC sees (seen_by, V1), the map is reported at least this
+// often, so the panel's "known to the party" mark follows a PC's sight within a few seconds; looked at
+// every SEEN_TICK_MS. Otherwise the 10 s heartbeat alone, as before.
+const SEEN_REPORT_MS = 3000;
+const SEEN_TICK_MS = 1000;
+const DEBOUNCE_MS = 250;
+const TODO_MS = 1000; // how often the Dell's copy asks the panel for map jobs
+const PING_MS = 3000; // how long 📍 rings a token
+const GO_TO_KEY = "J"; // the key for 📍 Go to PC ("jump")
+const TARGET_KEY = "9"; // toggles a BLUE (party target) ring on the selected tokens
+const FOE_KEY = "0"; // toggles a YELLOW (NPC / monster target) ring on the selected tokens
+const RING_KEY_STUCK_MS = 3000; // a ring key still "running" after this long is treated as stuck (an Owlbear call that never settled)
+const RING_KEY_SELECTION_MS = 1500; // a ring key uses the selection Owlbear cleared this recently (its own key press clears it)
+const RING_KEY_GAP_MS = 300; // a ring key pressed again within this long of its last press is ignored (a held key repeats)
+
+let timer = null;
+let clock = () => Date.now(); // boot's timers' clock (the offline checks swap it)
+let lastSendAt = -Infinity; // when send() last ran (a change, the heartbeat or the seen tick)
+
+// A Stat Bubbles number (a number, or text typed as one), or null.
+const num = (v) => (typeof v === "number" ? v : typeof v === "string" && v.trim() !== "" && !isNaN(+v) ? +v : null);
+
+// Stat Bubbles' HP and AC on a token, when it tracks its HP (a max HP above 0).
+function bubbles(i) {
+  const b = i.metadata?.[BUBBLES_KEY];
+  const max = num(b?.["max health"]);
+  if (!b || !(max > 0)) return {};
+  return { hp: num(b.health) ?? max, max_hp: max, temp_hp: num(b["temporary health"]) ?? 0,
+           ac: num(b["armor class"]) || null };
+}
+
+async function fromGrimoire(items) {
+  // One-time move to Stat Bubbles: a token GM's Grimoire tracks but Stat Bubbles doesn't yet
+  // gets its HP, max HP, temp HP and AC copied over, hidden from the players like a monster's
+  // should be. Once copied, Stat Bubbles has it, so this never touches that token again.
+  const ids = items.filter((i) => onTokenLayer(i) && typeof i.metadata?.[GRIMOIRE_KEY]?.hp === "number"
+                                  && !(num(i.metadata?.[BUBBLES_KEY]?.["max health"]) > 0)).map((i) => i.id);
+  if (!ids.length) return 0;
+  await OBR.scene.items.updateItems(ids, (found) => {
+    for (const i of found) {
+      const g = i.metadata[GRIMOIRE_KEY];
+      i.metadata[BUBBLES_KEY] = {
+        ...(i.metadata[BUBBLES_KEY] || {}),
+        health: g.hp,
+        "max health": g.maxHp ?? g.hp,
+        "temporary health": num(g.stats?.tempHp) ?? 0,
+        "armor class": num(g.armorClass) ?? 0,
+        hide: true,
+      };
+    }
+  });
+  return ids.length;
+}
+
+// ---- conditions: badges on the token's rim ----
+
+const BADGE_PX = 256; // the badge images' size
+const BADGE_OF_TOKEN = 0.36; // a badge's width, as a share of the token's
+const BADGE_STEP = 42; // degrees between badges, from the bottom of the token outwards
+
+function conditionsOf(i) {
+  const on = i.metadata?.[COND_KEY];
+  return Array.isArray(on) ? CONDITIONS.filter((c) => on.includes(c)) : [];
+}
+
+function tokenBox(t, dpi) {
+  // The token's centre and width on the map, from its image (tokens are images).
+  if (!t.image || !t.grid?.dpi) return null;
+  const k = dpi / t.grid.dpi;
+  const sx = Math.abs(t.scale?.x ?? 1), sy = Math.abs(t.scale?.y ?? 1);
+  return {
+    x: t.position.x + (t.image.width / 2 - (t.grid.offset?.x ?? t.image.width / 2)) * k * sx,
+    y: t.position.y + (t.image.height / 2 - (t.grid.offset?.y ?? t.image.height / 2)) * k * sy,
+    size: Math.min(t.image.width * sx, t.image.height * sy) * k,
+  };
+}
+
+function badgeSpots(n, box) {
+  // Badge centres on the rim, spread out from the bottom of the token.
+  const step = n > 8 ? 360 / n : BADGE_STEP;
+  const r = box.size * 0.46;
+  return Array.from({ length: n }, (_, i) => {
+    const a = ((90 + ((n - 1) / 2 - i) * step) * Math.PI) / 180; // left to right, in the menu's order
+    return { x: box.x + r * Math.cos(a), y: box.y + r * Math.sin(a) };
+  });
+}
+
+async function syncBadges(items) {
+  // Make the badges on the map match each token's conditions. Only what's out of date is
+  // changed, so running it after every change on the map costs nothing once it matches.
+  const dpi = await OBR.scene.grid.getDpi();
+  const tokens = new Map(items.filter(onTokenLayer).map((i) => [i.id, i])); // a mount too (keys.js TOKEN_LAYERS)
+  const badges = items.filter((i) => i.metadata?.[BADGE_KEY]);
+  const remove = badges.filter((b) => !tokens.has(b.attachedTo)).map((b) => b.id);
+  const add = [];
+  for (const t of tokens.values()) {
+    const names = conditionsOf(t);
+    const have = badges.filter((b) => b.attachedTo === t.id);
+    const box = names.length ? tokenBox(t, dpi) : null;
+    const sig = box ? `${names.join(",")}|${Math.round(box.size)}` : "";
+    if (have.length === (box ? names.length : 0) && have.every((b) => b.metadata[BADGE_KEY].sig === sig)) continue;
+    remove.push(...have.map((b) => b.id));
+    if (!box) continue;
+    const size = box.size * BADGE_OF_TOKEN;
+    badgeSpots(names.length, box).forEach((spot, n) => {
+      add.push(buildImage(
+        { width: BADGE_PX, height: BADGE_PX, url: `${BADGE_URL}${names[n]}.png`, mime: "image/png" },
+        { dpi: (BADGE_PX * dpi) / size, offset: { x: BADGE_PX / 2, y: BADGE_PX / 2 } },
+      )
+        .name(names[n])
+        .position(spot)
+        .attachedTo(t.id)
+        .layer("ATTACHMENT")
+        .locked(true)
+        .disableHit(true)
+        .disableAttachmentBehavior(["SCALE"])
+        .metadata({ [BADGE_KEY]: { name: names[n], sig } })
+        .build());
+    });
+  }
+  if (remove.length) await OBR.scene.items.deleteItems(remove);
+  if (add.length) await OBR.scene.items.addItems(add);
+}
+
+async function setCondition(ids, name, on) {
+  // From the panel: switch a condition on or off on these tokens (the badges follow).
+  if (!CONDITIONS.includes(name)) return;
+  await OBR.scene.items.updateItems(ids, (items) => {
+    for (const i of items) {
+      const now = conditionsOf(i).filter((c) => c !== name);
+      i.metadata[COND_KEY] = on ? CONDITIONS.filter((c) => c === name || now.includes(c)) : now;
+    }
+  });
+}
+
+async function summary() {
+  seenLive = false; // (true again only once this report's seen_by is worked out)
+  // No map open: still report, so the panel knows the extension is there.
+  if (!(await OBR.scene.isReady())) return { scene: false, grid: null, tokens: [], areas: [] };
+  let items = await OBR.scene.items.getItems();
+  const copied = await fromGrimoire(items);
+  if (copied) items = await OBR.scene.items.getItems();
+  await syncBadges(items);
+  const scale = await OBR.scene.grid.getScale();
+  // Colored Rings rings, by the token they're on: token id -> [colours].
+  const rings = {};
+  for (const i of items) {
+    if (i.attachedTo && i.metadata?.[RING_KEY]?.enabled && i.style?.strokeColor) {
+      (rings[i.attachedTo] ||= []).push(String(i.style.strokeColor).toLowerCase());
+    }
+  }
+  // Every token, a mount (a wolf or a pet attached to a PC) too: keys.js TOKEN_LAYERS. Its `layer` goes along,
+  // so the panel knows only a CHARACTER token can be a PC. An attached mount's position is where it stands now:
+  // Owlbear moves an attachment with its parent, and any item change brings a new report (soon(), at the bottom).
+  // R1 as the players see it: a visible token hanging from a hidden one that isn't a PC (a wolf mounted on a
+  // hidden goblin) is drawn hidden, so it goes as hidden (keys.js hiddenAbove); what rides on a PC doesn't.
+  const byId = new Map(items.map((i) => [i.id, i]));
+  const isPc = (i) => {
+    try { return isPcNow ? !!isPcNow(i) : isPcToken(i); } catch { return false; }
+  };
+  const tokens = items
+    .filter(onTokenLayer)
+    .map((i) => {
+      return {
+        id: i.id,
+        layer: i.layer,
+        // Stat Bubbles' name tag first, then Owlbear's own label.
+        label: String(i.metadata?.[BUBBLES_NAME_KEY] || "").trim() || i.text?.plainText || "",
+        name: i.name,
+        link: i.metadata?.[WHO_KEY] || "",
+        visible: i.visible !== false && hiddenAbove(i, (id) => byId.get(id), isPc) ? false : i.visible,
+        position: i.position,
+        rings: rings[i.id] || [],
+        conditions: conditionsOf(i),
+        // Stat Bubbles, when it tracks this token's HP.
+        ...bubbles(i),
+      };
+    });
+  const areas = items.filter(isRoom).map((room) => ({
+    id: room.id,
+    place: room.metadata?.[PLACE_KEY] || null,
+    label: room.name,
+    size: size(room),
+    tokens: tokens.filter((t) => contains(room, t.position)).map((t) => t.id),
+  }));
+  const dpi = await OBR.scene.grid.getDpi();
+  const seen = await seenReport(items, tokens, dpi, scale?.parsed?.multiplier);
+  seenLive = !!seen?.live;
+  return {
+    scene: true,
+    grid: {
+      dpi,
+      multiplier: scale.parsed.multiplier,
+      unit: scale.parsed.unit,
+      measurement: await OBR.scene.grid.getMeasurement(),
+      type: await OBR.scene.grid.getType(),
+    },
+    tokens: seen ? seen.tokens : tokens,
+    ...(seen ? { seen_by_v: SEEN_BY_V } : {}),
+    areas,
+    ...(copied ? { copied } : {}),
+  };
+}
+
+// ---- seen_by: which PCs see each creature (V1, the "known to the party" mark's input) ----
+//
+// Each map report's visible non-PC CHARACTER rows carry seen_by: [PC token ids] (empty: nobody sees it),
+// and the report seen_by_v: 1. PC rows and the DM's hidden rows carry no seen_by. PC is this copy's
+// ctx.isPc (the ids the panel sends as pc_tokens). The test is fog/inview.js's (the dark covers' own
+// on a 🌑 map; in view on ☀ and 🌒), on a snapshot built here from the items this report read
+// (fog/fog.js buildSnapshot), never fog.snapshot(): on game night the bridge is the panel-served copy,
+// which only relays and never starts its fog. 🌫 Our fog on or off doesn't matter: these are pure.
+// Its parts load like the others (MODULES: fog, inview), so a broken one leaves out seen_by_v and
+// every seen_by (the panel then goes on without them) and never stops the rest of the report.
+export const SEEN_BY_V = 1;
+const SEEN_WAIT_MS = 2000;
+// After a wait that ran out, the reports leave seen_by out this long without asking again, so a read
+// Owlbear never answers holds one report by SEEN_WAIT_MS, never every one.
+const SEEN_REST_MS = 30000;
+let seenParts = null; // {ctx, load, T}: boot's, on a GM copy (only a GM tab reports)
+let seenRestUntil = -Infinity; // (T's clock) no seen work before this
+const seenCache = {}; // the sight polygons, kept between reports (fog/inview.js polygons)
+let seenLive = false; // the last report had a creature some PC sees: report every SEEN_REPORT_MS
+let seenSaid = null; // the last seen_by failure warned about (once each, till it works again)
+
+// The report's token rows with seen_by added (copies; `tokens` is left as it is) and whether any PC
+// sees any of them. Pure apart from its parts: fog (fog/fog.js) and inview (fog/inview.js). Throws
+// when it can't be worked out.
+export function withSeenBy(tokens, items, { sceneMeta, roomMeta, grid, ctx, fog, inview, cache = null }) {
+  if (typeof fog?.buildSnapshot !== "function" || typeof inview?.seenByPlan !== "function") {
+    throw new Error("the seen_by parts aren't loaded");
+  }
+  const snap = fog.buildSnapshot(items, sceneMeta, roomMeta, grid, ctx);
+  const plan = inview.seenByPlan(snap, { cache, strict: true }); // a part that threw: no seen_by at all
+  const pcIds = new Set(snap.pcs.map((i) => i.id));
+  let live = false;
+  const rows = tokens.map((t) => {
+    if (t.visible === false || pcIds.has(t.id)) return t;
+    const ids = plan.get(t.id) || [];
+    if (ids.length) live = true;
+    return { ...t, seen_by: ids };
+  });
+  return { tokens: rows, live };
+}
+
+// The seen_by part of one report: {tokens, live}, or null when it can't be worked out (said once).
+async function seenReport(items, tokens, dpi, ft) {
+  try {
+    if (!seenParts) throw new Error("no GM copy started here");
+    const { ctx, load, T } = seenParts;
+    if (T.now() < seenRestUntil) return null; // resting after a wait that ran out (said then)
+    // Its own reads give up after SEEN_WAIT_MS: a call Owlbear never answers must not hold the
+    // report (lesson no-report-lock); the report then goes without seen_by, and so do the next
+    // ones for SEEN_REST_MS without waiting again.
+    let wait = null;
+    const late = new Promise((_, no) => {
+      wait = T.setTimeout(() => {
+        seenRestUntil = T.now() + SEEN_REST_MS;
+        no(new Error(`its parts or Owlbear didn't answer in ${SEEN_WAIT_MS / 1000} s`));
+      }, SEEN_WAIT_MS);
+    });
+    let got;
+    try {
+      got = await Promise.race([Promise.all([load("fog"), load("inview"), OBR.scene.getMetadata(), OBR.room.getMetadata()]), late]);
+    } finally {
+      T.clearTimeout(wait);
+    }
+    const [fog, inview, sceneMeta, roomMeta] = got;
+    // (fx/place.js gridOf's: the scene's dpi, the feet a square)
+    const d = Number.isFinite(dpi) && dpi > 0 ? dpi : 150, f = Number.isFinite(ft) && ft > 0 ? ft : 5;
+    const out = withSeenBy(tokens, items, { sceneMeta, roomMeta, grid: { dpi: d, ftPerCell: f, pxPerFt: d / f },
+      ctx, fog, inview, cache: seenCache });
+    seenSaid = null;
+    return out;
+  } catch (e) {
+    const text = String(e?.message || e);
+    if (text !== seenSaid) console.warn(`dnd-npc: the map report goes without seen_by: ${text}`);
+    seenSaid = text;
+    return null;
+  }
+}
+
+async function send() {
+  if (timer) { clearTimeout(timer); timer = null; } // a tick or heartbeat sending now: no debounced one after it
+  lastSendAt = clock();
+  if (bridge) return bridge.report(); // to the panel the bridge found (nothing on a standby tab)
+  if (!legacy) return; // not the Dell's tab: it never reports
+  try {
+    const body = await summary();
+    await fetch("/api/map", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  } catch (e) {
+    // The voice system isn't running: try again on the next change or heartbeat.
+  }
+}
+
+function soon() {
+  if (timer) clearTimeout(timer);
+  timer = setTimeout(send, DEBOUNCE_MS);
+}
+
+// 📍 Go to PC's key opens its small list (menu.html) at a fixed spot near the window's top left
+// (dndmenu.js TOP_LEFT): a key has no menu entry to open from. The right-click entries' popovers open
+// on the entry clicked instead (dndmenu.js popoverAnchor).
+function openMenu(kind, context) {
+  const ids = context.items.map((i) => i.id).join(",");
+  OBR.popover.open({
+    id: "dnd-npc/menu",
+    url: here(`./menu.html?kind=${kind}&ids=${encodeURIComponent(ids)}`, import.meta.url),
+    width: 260,
+    height: 360,
+    ...TOP_LEFT,
+  });
+}
+
+// ---- jobs the panel asks of the map (the Dell's copy) ----
+
+async function setHp(id, by) {
+  // Stat Bubbles shows the change straight away, as if the DM had typed it there. Damage takes
+  // temporary HP first, the way Stat Bubbles' own damage tool does; healing never adds to it.
+  await OBR.scene.items.updateItems([id], (items) => {
+    for (const i of items) {
+      const b = i.metadata[BUBBLES_KEY];
+      const { hp, max_hp, temp_hp } = bubbles(i);
+      if (hp == null) continue;
+      const soaked = by > 0 ? Math.min(temp_hp, by) : 0;
+      i.metadata[BUBBLES_KEY] = { ...b, health: Math.max(0, Math.min(max_hp, hp - (by - soaked))),
+                                  "temporary health": temp_hp - soaked };
+    }
+  });
+}
+
+async function seedStats(id, hp, ac) {
+  // A player character's token gets their max HP and AC from party.yaml (Step 35), hidden from
+  // the players like a monster's. Only when Stat Bubbles doesn't track it yet: after that the
+  // DM's own numbers there win.
+  await OBR.scene.items.updateItems([id], (items) => {
+    for (const i of items) {
+      if (bubbles(i).hp != null) continue;
+      i.metadata[BUBBLES_KEY] = { ...(i.metadata[BUBBLES_KEY] || {}), health: hp, "max health": hp,
+                                  "temporary health": 0, "armor class": ac, hide: true };
+    }
+  });
+}
+
+async function setMark(id, text) {
+  // A note under a monster only the GM sees (hidden items don't show on the players' screens).
+  const markId = MARK_PREFIX + id;
+  const [token] = await OBR.scene.items.getItems([id]);
+  const [mark] = await OBR.scene.items.getItems([markId]);
+  if (!token || !text) {
+    if (mark) await OBR.scene.items.deleteItems([markId]);
+    return;
+  }
+  if (mark) {
+    await OBR.scene.items.updateItems([markId], (items) => {
+      for (const i of items) i.text.plainText = text;
+    });
+    return;
+  }
+  const dpi = await OBR.scene.grid.getDpi();
+  await OBR.scene.items.addItems([
+    // The SDK's text builder names these fillColor, strokeColor, strokeWidth and width.
+    buildText()
+      .id(markId)
+      .plainText(text)
+      .textType("PLAIN")
+      .fontSize(Math.round(dpi / 5))
+      .fontWeight(700)
+      .fillColor("#ffd27a")
+      .strokeColor("black")
+      .strokeWidth(4)
+      .position({ x: token.position.x - dpi, y: token.position.y + dpi * 0.45 })
+      .width(dpi * 2)
+      .attachedTo(id)
+      .layer("TEXT")
+      .visible(false)
+      .locked(true)
+      .disableHit(true)
+      .build(),
+  ]);
+}
+
+async function ping(id) {
+  // 📍 from the panel: a ring around that token for a moment, so the DM sees which one a row
+  // is. Hidden, so only the GM sees it (on the laptop too), never the projector.
+  const [token] = await OBR.scene.items.getItems([id]);
+  if (!token) return;
+  const dpi = await OBR.scene.grid.getDpi();
+  const ringId = `dnd-npc-ping-${id}-${Date.now()}`;
+  await OBR.scene.items.addItems([
+    buildShape()
+      .id(ringId)
+      .shapeType("CIRCLE")
+      .width(dpi * 1.6)
+      .height(dpi * 1.6)
+      .position(token.position)
+      .strokeColor("#ffd27a")
+      .strokeWidth(dpi / 12)
+      .fillOpacity(0)
+      .attachedTo(id)
+      .layer("ATTACHMENT")
+      .visible(false)
+      .locked(true)
+      .disableHit(true)
+      .build(),
+  ]);
+  setTimeout(() => OBR.scene.items.deleteItems([ringId]), PING_MS);
+}
+
+async function unring(ids, color = TARGET_COLOR) {
+  // ✕ on the panel: the blue target rings (or the white ones) come off those tokens; other colours stay.
+  const items = await OBR.scene.items.getItems(
+    (i) => ids.includes(i.attachedTo) && i.metadata?.[RING_KEY]?.enabled
+      && String(i.style?.strokeColor).toLowerCase() === String(color).toLowerCase(),
+  );
+  if (items.length) await OBR.scene.items.deleteItems(items.map((i) => i.id));
+}
+
+async function ringDown(id) {
+  // 0 HP: the token's blue (target) ring turns red, a Colored Rings red Colored Rings itself
+  // shows as picked. No ring at all: it gets a red one, built the way Colored Rings builds them.
+  // A yellow (NPC / monster target) ring goes too: it turns red if nothing else made the red, else
+  // it is deleted. The red stays (a key never removes it).
+  const [token] = await OBR.scene.items.getItems([id]);
+  if (!token) return;
+  const rings = await OBR.scene.items.getItems((i) => i.attachedTo === id && i.metadata?.[RING_KEY]?.enabled);
+  const colour = (i) => String(i.style?.strokeColor).toLowerCase();
+  const blue = rings.filter((i) => colour(i) === TARGET_COLOR);
+  const yellow = rings.filter((i) => colour(i) === FOE_COLOR);
+  const hasRed = rings.some((i) => colour(i) === DOWN_COLOR);
+  if (hasRed && (blue.length || yellow.length)) {
+    // Already marked red: the blue and yellow go (never a second red, which would sit beside the first).
+    await OBR.scene.items.deleteItems([...blue, ...yellow].map((i) => i.id));
+    return;
+  }
+  if (blue.length) {
+    await OBR.scene.items.updateItems(blue.map((i) => i.id), (items) => {
+      for (const i of items) i.style.strokeColor = DOWN_COLOR;
+    });
+    if (yellow.length) await OBR.scene.items.deleteItems(yellow.map((i) => i.id));
+    return;
+  }
+  if (yellow.length) {
+    const [first, ...rest] = yellow;
+    if (hasRed || !first) {
+      await OBR.scene.items.deleteItems(yellow.map((i) => i.id));
+    } else {
+      await OBR.scene.items.updateItems([first.id], (items) => {
+        for (const i of items) i.style.strokeColor = DOWN_COLOR;
+      });
+      if (rest.length) await OBR.scene.items.deleteItems(rest.map((i) => i.id));
+    }
+    return;
+  }
+  if (rings.some((i) => colour(i) === DOWN_COLOR) || !token.image || !token.grid) return;
+  const dpi = await OBR.scene.grid.getDpi();
+  const scale = dpi / token.grid.dpi;
+  const width = token.image.width * scale;
+  const height = token.image.height * scale;
+  const diameter = Math.min(width, height);
+  await OBR.scene.items.addItems([
+    buildShape()
+      .width(diameter)
+      .height(diameter)
+      .position({
+        x: token.position.x - (token.grid.offset.x / token.image.width) * width + width / 2,
+        y: token.position.y - (token.grid.offset.y / token.image.height) * height + height / 2,
+      })
+      .fillOpacity(0)
+      .strokeColor(DOWN_COLOR)
+      .strokeOpacity(1)
+      .strokeWidth(5)
+      .shapeType("CIRCLE")
+      .attachedTo(id)
+      .locked(true)
+      .name("Status Ring")
+      .metadata({ [RING_KEY]: { enabled: true } })
+      .layer("ATTACHMENT")
+      .disableHit(true)
+      .visible(token.visible)
+      .build(),
+  ]);
+}
+
+let busy = false;
+async function todo() {
+  if (busy) return;
+  busy = true;
+  try {
+    const r = await fetch("/api/map/todo");
+    const jobs = r.ok ? await r.json() : [];
+    for (const job of jobs) {
+      try {
+        if (job.op === "hp") await setHp(job.id, job.damage);
+        else if (job.op === "mark") await setMark(job.id, job.text);
+        else if (job.op === "ping") await ping(job.id);
+        else if (job.op === "unring") await unring(job.ids, job.color);
+        else if (job.op === "cond") await setCondition(job.ids, job.name, job.on);
+        else if (job.op === "down") await ringDown(job.id);
+        else if (job.op === "stats") await seedStats(job.id, job.hp, job.ac);
+      } catch (e) {
+        console.warn("dnd-npc map job failed", job, e);
+      }
+    }
+  } catch (e) {
+    // The voice system isn't running.
+  } finally {
+    busy = false;
+  }
+}
+
+// The right-click menus' ids. Owlbear's ids look room-wide rather than per extension, so the copy
+// served by the panel on this PC uses its own: when it steps aside for the Pages copy on the same tab
+// (the dual install) it can only ever remove its own menus, never the Pages copy's.
+// One entry, 🎲 DND (dndmenu.js): its popover has a tab for each of the seven entries it replaced
+// (🩹 Conditions, 🔥 Light, 🏷 This is…, 🗺 Mark as place, 📍 Go to PC, 🧭 Bring PCs here, 📺 Projector here).
+export const MENU_IDS = { dnd: DND_MENU_ID };
+export const LOCAL_MENU_IDS = { dnd: LOCAL_DND_MENU_ID };
+// 📍 Go to PC's toolbar button and key (a tool action, removed with tool.removeAction).
+const GOTO_KEY_ID = "dnd-npc/go-to-pc-key";
+const LOCAL_GOTO_KEY_ID = "dnd-npc/local/go-to-pc-key";
+// The 9 and 0 ring keys (Owlbear keeps 1 and 2 for itself; DM, 2026-10-19) (toolbar actions too). Owlbear's ids are room-wide, so the copy served by
+// this PC has its own, and removes only those when it steps aside for the Pages copy.
+const RING_KEY_IDS = { blue: "dnd-npc/ring-key-1", yellow: "dnd-npc/ring-key-2" };
+const LOCAL_RING_KEY_IDS = { blue: "dnd-npc/local/ring-key-1", yellow: "dnd-npc/local/ring-key-2" };
+// 📺 Show my view on the projector: a toolbar button beside it (views.js).
+const PROJECTOR_ACTION_ID = "dnd-npc/projector-view";
+const LOCAL_PROJECTOR_ACTION_ID = "dnd-npc/local/projector-view";
+// 🏘 Map setup (🏘 Set up interiors, 👥 Place townsfolk, 🏘 Check portals; 🎨 and ↩ on a text label) needs interiors.json, which
+// only the panel on this PC can hand over (far too big for the bridge's broadcasts): only the copy the
+// panel serves makes it, even when it only relays on the Dell's tab (the Pages copy there can't reach
+// the panel), and never removes it. (🧭 Bring PCs here is one of 🎲 DND's tabs: what it needs is on
+// the map images, MAP_INFO_KEY.)
+export const THIS_PC_MENU_IDS = { setup: MAP_SETUP_MENU_ID };
+const ICON = here("./icon.svg", import.meta.url);
+const PROJECTOR_ICON = here("./icons/projector.svg", import.meta.url);
+const DND_ICON = here("./icons/dnd.svg", import.meta.url);
+const MAP_SETUP_ICON = here("./icons/mapsetup.svg", import.meta.url);
+
+// 📺 Aim the projector from this GM screen (views.js aimProjector), and say what happened.
+async function aimProjector(how) {
+  try {
+    const r = await (await MODULES.views()).aimProjector(OBR, how);
+    OBR.notification.show(r.text, r.ok ? "SUCCESS" : "WARNING");
+  } catch (e) {
+    OBR.notification.show(`📺 Aiming the projector failed: ${e?.error?.message || e?.message || e}`, "ERROR");
+  }
+}
+
+// 🎲 DND's click: one popover (dnd.html) unfurling from the entry clicked (elementId, onClick's second
+// argument; dndmenu.js popoverAnchor: the old top-left spot when Owlbear names none), with a tab for
+// each old entry whose filter fits what was clicked (dndmenu.js sectionsFor); dnd.html opens the
+// first, or the last one used.
+function openDnd(context, elementId) {
+  const items = Array.isArray(context?.items) ? context.items : [];
+  const tabs = sectionsFor(items);
+  OBR.popover.open({
+    id: DND_POPOVER_ID,
+    url: here("./dnd.html?" + dndQuery(items.map((i) => i.id), tabs), import.meta.url),
+    width: DND_WIDTH,
+    height: heightOf(tabs[0] || "goto"),
+    ...popoverAnchor(elementId),
+  });
+}
+
+export function menus(ids = MENU_IDS, gotoKeyId = GOTO_KEY_ID, projectorActionId = PROJECTOR_ACTION_ID) {
+  // 🎲 DND, on anything for the GM (📍 Go to PC's tab is on anything): what each tab does is the old
+  // entry's (conditions.html, light.html, menu.html; 📺 in dnd.html, with views.js's aim as before).
+  OBR.contextMenu.create({
+    id: ids.dnd,
+    icons: [{ icon: DND_ICON, label: DND_LABEL, filter: DND_FILTER }],
+    onClick: (context, elementId) => openDnd(context, elementId),
+  });
+  // ...and 📍 Go to PC's list from a key, with nothing selected: a button on every tool's bar.
+  try {
+    Promise.resolve(OBR.tool.createAction({
+      id: gotoKeyId,
+      shortcut: GO_TO_KEY,
+      icons: [{ icon: ICON, label: `📍 Go to PC (${GO_TO_KEY})`, filter: { roles: ["GM"] } }],
+      onClick: () => openMenu("goto", { items: [] }),
+    })).catch((e) => console.warn("dnd-npc: the Go to PC key", e));
+  } catch (e) {
+    console.warn("dnd-npc: the Go to PC key", e);
+  }
+  // 📺 The projector shows what this screen shows, and holds it: one tap on every tool's bar.
+  try {
+    Promise.resolve(OBR.tool.createAction({
+      id: projectorActionId,
+      icons: [{ icon: PROJECTOR_ICON, label: "📺 Show my view on the projector", filter: { roles: ["GM"] } }],
+      onClick: () => aimProjector({ view: true }),
+    })).catch((e) => console.warn("dnd-npc: the projector button", e));
+  } catch (e) {
+    console.warn("dnd-npc: the projector button", e);
+  }
+}
+
+// 🏘 Map setup's jobs: the three old ones run as their own right-click entries ran them. Its page (mapsetup.html)
+// asks this copy's background (CH.LOCAL_ASK, need "map-setup"): the job runs here, so closing the
+// popover doesn't stop it.
+// On the town map: lay the building maps out beside it and mark them up (interiors.js); on a Chapter 3
+// site map (interiors.json town.scenes), lay out and mark up that scene's site maps instead.
+async function runInteriors(id) {
+  try {
+    await setUpInteriors(id);
+  } catch (e) {
+    console.warn("dnd-npc interiors failed", e);
+    OBR.notification.show(`🏘 Setting up interiors failed: ${describe(e)}`, "ERROR");
+    // ...and the whole error to the panel's window, where it can be read
+    panelLog({ what: "interiors", error: describe(e), stack: String(e?.stack || ""),
+               detail: JSON.stringify(e, Object.getOwnPropertyNames(e || {})).slice(0, 4000) });
+  }
+}
+// On a map image: each NPC of interiors.json's town.townsfolk for that map to its room (gather.js
+// townsfolkFor: a building's map places its own; the town, the town's).
+async function runTownsfolk(id) {
+  try {
+    await placeTownsfolk(id);
+  } catch (e) {
+    console.warn("dnd-npc townsfolk failed", e);
+    OBR.notification.show(`👥 Placing townsfolk failed: ${describe(e)}`, "ERROR");
+    panelLog({ what: "townsfolk", error: describe(e), stack: String(e?.stack || ""), detail: "" });
+  }
+}
+function runPortals(id) {
+  return checkPortals(id).catch((e) =>
+    OBR.notification.show(`🏘 Check failed: ${describe(e)}`, "ERROR"));
+}
+// On one text label (the DM, 2026-10-20): 🎨 its colours, outline and font copied to the rest of its map's
+// labels (on a building's map: every building map's), never its size; ↩ that group's last copy undone
+// (labelstyle.js).
+async function runLabelStyle(id, undo) {
+  try {
+    await (undo ? undoLabelStyle(id) : copyLabelStyle(id));
+  } catch (e) {
+    console.warn("dnd-npc label style failed", e);
+    OBR.notification.show(`${undo ? "↩ Undoing" : "🎨 Copying"} the label style failed: ${describe(e)}`, "ERROR");
+    panelLog({ what: undo ? "label-undo" : "label-style", error: describe(e), stack: String(e?.stack || ""), detail: "" });
+  }
+}
+const MAP_SETUP_RUN = { interiors: runInteriors, townsfolk: runTownsfolk, portals: runPortals,
+                        labelstyle: (id) => runLabelStyle(id, false), labelundo: (id) => runLabelStyle(id, true) };
+
+// One 🏘 Map setup button's ask: {need: "map-setup", job, id (the map image clicked)}. The job tells
+// the DM how it went, as before; nothing is sent back.
+export function mapSetup(msg) {
+  const run = Object.prototype.hasOwnProperty.call(MAP_SETUP_RUN, msg?.job) ? MAP_SETUP_RUN[msg.job] : null;
+  if (!run || typeof msg.id !== "string" || !msg.id) return null;
+  return run(msg.id);
+}
+
+// The copy served by this PC only (see THIS_PC_MENU_IDS): 🏘 Map setup on a map image or one text label,
+// its popover (mapsetup.html) with a button for each job, unfurling from the entry clicked as 🎲 DND's does.
+export function thisPcMenus() {
+  OBR.contextMenu.create({
+    id: THIS_PC_MENU_IDS.setup,
+    icons: MAP_SETUP_FILTERS.map((filter) => ({ icon: MAP_SETUP_ICON, label: MAP_SETUP_LABEL, filter })),
+    onClick: (context, elementId) => {
+      const items = Array.isArray(context?.items) ? context.items : [];
+      OBR.popover.open({
+        id: MAP_SETUP_POPOVER_ID,
+        url: here("./mapsetup.html?" + setupQuery(items[0]?.id, setupJobsFor(items)), import.meta.url),
+        width: MAP_SETUP_WIDTH,
+        height: MAP_SETUP_HEIGHT,
+        ...popoverAnchor(elementId),
+      });
+    },
+  });
+}
+
+// ---- Step 36: every screen, and the bridge on the Dell ----
+
+// The lights from spells in effect, written on the tokens (fx/lightjobs.js). Only while this
+// tab is the bridge does it re-apply the list when a scene opens; a token is a PC by the one
+// rule (ctx.isPc, fx/pcs.js: its WHO mark, the bridge's heartbeat list, its name against the
+// room's party), as in the 🔥 Light menu.
+async function spellLights(job) {
+  return (await MODULES.lightjobs()).syncSpellLights(OBR, job, {
+    stillBridge: () => !!bridge?.isBridge(), isPc: (id, item) => !!isPcNow?.(id, item),
+  });
+}
+
+// The map jobs from game night 1, for the bridge: the functions above, unchanged.
+const JOBS = {
+  hp: (job) => setHp(job.id, job.damage),
+  mark: (job) => setMark(job.id, job.text),
+  ping: (job) => ping(job.id),
+  unring: (job) => unring(job.ids, job.color),
+  cond: (job) => setCondition(job.ids, job.name, job.on),
+  down: (job) => ringDown(job.id),
+  stats: (job) => seedStats(job.id, job.hp, job.ac),
+  // The lights from spells in effect (Light, Dancing Lights...), the whole list each time:
+  // {lights: [{magic, id, kind, pc}]}. Written on the tokens (fx/lightjobs.js); every screen
+  // draws them from there.
+  lights: (job) => spellLights(job),
+};
+
+// The parts that load on their own (R4): a broken one is left out and the rest carry on.
+// Literal paths, so the publisher can stamp each with the build.
+const MODULES = {
+  bridge: () => import("./bridge.js?v=79af80f"),
+  fx: () => import("./fx/engine.js?v=79af80f"),
+  samples: () => import("./fx/samples.js?v=79af80f"),
+  aim: () => import("./aim/tool.js?v=79af80f"),
+  geometry: () => import("./aim/geometry.js?v=79af80f"),
+  rings: () => import("./aim/rings.js?v=79af80f"),
+  player: () => import("./player/state.js?v=79af80f"),
+  lights: () => import("./fx/lighting.js?v=79af80f"),
+  lightjobs: () => import("./fx/lightjobs.js?v=79af80f"),
+  lightwriter: () => import("./fx/lightwriter.js?v=79af80f"),
+  views: () => import("./views.js?v=79af80f"),
+  fog: () => import("./fog/fog.js?v=79af80f"),
+  inview: () => import("./fog/inview.js?v=79af80f"), // the map report's seen_by (summary(), GM copies only)
+};
+
+const HELLO_MS = 30000; // each screen says hello this often, so the panel's screens list stays fresh
+const NO_BRIDGE_MS = 15000; // a GM aimer that heard no bridge this long rings the targets itself
+// A copy served by the panel on this PC waits at most this long, at start, to hear whether the
+// Pages copy runs on this same tab too (the dual install). It asks at once and the Pages copy
+// answers at once (or says hello as soon as it has started), so the wait only runs out when
+// there is no Pages copy (game night 1, development); generous, for a slow first load of the
+// Pages copy after a push. Meanwhile jobs simply wait in the panel's queue.
+const DUAL_WAIT_MS = 5000;
+const NOTE_VARIANTS = ["DEFAULT", "ERROR", "INFO", "SUCCESS", "WARNING"];
+const PROJECTOR_GONE_MS = 60000; // a table screen unheard this long leaves the GM box's 📺 lines (it reports every 15 s)
+
+let bridge = null; // bridge.js on a GM tab (it decides whether this tab is THE bridge)
+let isPcNow = null; // this copy's ctx.isPc, for the jobs (JOBS.lights)
+let legacy = false; // a localhost tab whose bridge.js didn't load: the game-night-1 loops
+
+const sdk = { OBR, buildCurve, buildEffect, buildImage, buildLabel, buildLight, buildPath, buildShape, buildText, buildWall, Math2, MathM };
+// 🌫 Our fog on this device (fog/fog.js), for the live checks only: "A" = the DM's pass-through by
+// non-blocking walls instead of standalone lights (contract section 8; "B" by default), "1" = a plain
+// click on a door icon works the door, and "1" = the door icons are locked items (whether a player's
+// right-click or long-press menu still opens on a locked local item is untested live; unlocked, a
+// moved, scaled or turned icon springs back).
+const FOG_GM_PASS_LS = "dnd-npc/fog-gm-pass";
+const FOG_DOOR_TAP_LS = "dnd-npc/fog-door-tap";
+const FOG_HANDLE_LOCK_LS = "dnd-npc/fog-handle-lock";
+// The explored memory (docs/vision-layer-b4.md section 9): "0" = this GM screen draws no memory
+// items (if the DM's own view turns out blocked by them with Fog Preview off; players and the
+// projector always draw them), and a number from 0 to 1 = the "dim" layer's opacity on this device
+// (fog/memory.js DIM_OPACITY by default; read on every pass, so a GM can try a value and nudge a token).
+const FOG_MEMORY_GM_LS = "dnd-npc/fog-memory-gm";
+const FOG_DIM_LS = "dnd-npc/fog-dim";
+const LOCAL_LOG_MAX_BYTES = 12000; // the 🪵 Live log to this device's GM box, under bus.js MAX_BYTES
+
+async function gridOf(O) {
+  const scale = await O.scene.grid.getScale();
+  return { dpi: await O.scene.grid.getDpi(), multiplier: scale?.parsed?.multiplier ?? 5, unit: scale?.parsed?.unit ?? "ft",
+           measurement: await O.scene.grid.getMeasurement(), type: await O.scene.grid.getType() };
+}
+
+// Start this screen. `api` and `opts` (importer, origin, timers, fetchImpl) are only swapped
+// by the offline check; in Owlbear it's the real SDK.
+//
+// The dual install (spec 14.5, A12): on game night the Dell's tabs run two copies of this file,
+// the one the panel serves ("DND NPC (this PC)", host local) and the one from the Pages site
+// ("DND NPC", host pages). They share the tab's Owlbear connection and hear each other's
+// broadcasts. The local copy asks "who's here?" at start; if the Pages copy answers, the local
+// copy only relays (ctx.relayOnly): the bridge's duties on a GM tab, nothing at all on a player's.
+export async function boot(api = sdk, opts = {}) {
+  const O = api.OBR;
+  bridge = null;
+  legacy = false;
+  // Wrapped, never the bare functions: Chrome throws "Illegal invocation" for T.setInterval(...)
+  // when setInterval itself sits on a plain object (Node doesn't, so only the live tab showed it).
+  const T = opts.timers || {
+    setTimeout: (f, ms) => setTimeout(f, ms), clearTimeout: (t) => clearTimeout(t),
+    setInterval: (f, ms) => setInterval(f, ms), clearInterval: (t) => clearInterval(t), now: () => Date.now(),
+  };
+  const load = opts.importer || ((name) => MODULES[name]());
+  clock = () => T.now();
+  lastSendAt = -Infinity;
+  const origin = opts.origin ?? globalThis.location?.origin ?? "";
+  const local = isLocalOrigin(origin);
+  const role = await O.player.getRole();
+  const conn = await O.player.getConnectionId();
+  setConnection(conn, local ? "local" : "pages");
+  const ctx = {
+    role, conn, playerId: O.player.id, name: await O.player.getName().catch(() => ""), origin,
+    host: local ? "local" : "pages", build: buildOf(import.meta.url), kind: role === "GM" ? "gm" : "other",
+    settings: { ...DEFAULT_SETTINGS }, pcTokens: new Set(), party: [], partySenses: {}, fx_ok: false,
+    relayOnly: false, // the Pages copy on this same tab draws; this copy only relays
+    sameTab: null, // what the other copy of the extension on this tab said in its HELLO
+    log: (text) => console.log(`dnd-npc ${text}`),
+  };
+  const me = { role, playerId: ctx.playerId };
+  const kindNow = () => kindOf({
+    role, playerId: ctx.playerId, ua: globalThis.navigator?.userAgent || "",
+    coarse: (() => { try { return !!globalThis.matchMedia?.("(pointer: coarse)")?.matches; } catch { return false; } })(),
+    tableFlag: lsGet(LS.TABLE_SCREEN) === "1", settings: ctx.settings, name: ctx.name,
+  });
+  ctx.kind = kindNow();
+  ctx.tool = ctx.kind !== "table"; // the Cast receiver shows templates but has no aim tool (aim/tool.js)
+
+  // Is this token a player character? The one rule (fx/pcs.js, the same as the 🔥 Light menu's
+  // and the panel's): its WHO mark wins; else the bridge heartbeat's PC list (ctx.pcTokens);
+  // else its name against the party the room remembers (ctx.party: no panel needed, and no wait
+  // for the first heartbeat). An id this screen hasn't seen: only the heartbeat's list.
+  const seen = new Map(); // item id -> the item, as last seen
+  const itemOf = (x, item) => item || (x && typeof x === "object" ? x : null);
+  ctx.isPc = (x, item) => {
+    const id = typeof x === "string" ? x : x?.id;
+    const it = itemOf(x, item) || seen.get(id);
+    return it ? isPcToken(it, { party: ctx.party, pcIds: ctx.pcTokens }) : ctx.pcTokens.has(id);
+  };
+  isPcNow = ctx.isPc;
+  // summary()'s seen_by: this copy's PC rule and party, its parts (only a GM tab ever reports).
+  seenParts = role === "GM" ? { ctx, load, T } : null;
+  seenLive = false;
+  seenRestUntil = -Infinity;
+  // A PC's darkvision from the party sheets (the room's PARTY_SENSES_KEY, read below): {dark} or
+  // null, by the PC's name (fx/pcs.js), for fx/lightmeta.js visionOf().
+  ctx.senses = (item) => {
+    const n = item ? pcName(item, ctx.party) : null;
+    return n ? ctx.partySenses[nameKey(n)] ?? null : null;
+  };
+  // R1: a token is secret only when it's hidden AND not a player character. One this screen
+  // hasn't seen yet (any layer) counts as secret until it has: fail closed. Hidden also when
+  // what it hangs from is hidden and isn't a PC (a visible wolf mounted on a hidden goblin):
+  // Owlbear draws it hidden (keys.js hiddenAbove), its parents as this screen last saw them.
+  ctx.isPublic = (x, item) => {
+    if (ctx.isPc(x, item)) return true;
+    const id = typeof x === "string" ? x : x?.id;
+    const it = itemOf(x, item);
+    const vis = it && "visible" in it ? it.visible : seen.get(id)?.visible;
+    if (vis === undefined || vis === false) return false;
+    return !hiddenAbove(it || seen.get(id), (pid) => seen.get(pid), (p) => ctx.isPc(p));
+  };
+  const remember = (items) => {
+    seen.clear();
+    for (const i of items || []) seen.set(i.id, i);
+  };
+
+  // ---- the parts that may fail ----
+  const errors = {};
+  const tryLoad = async (name) => {
+    try {
+      return await load(name);
+    } catch (e) {
+      errors[name] = String(e?.message || e);
+      console.warn(`dnd-npc: ${name} didn't load`, e);
+      return null;
+    }
+  };
+  const [bridgeMod, fxMod, aimMod, geometry, rings, playerMod, lightsMod, writerMod, viewsMod, fogMod] = await Promise.all([
+    role === "GM" ? tryLoad("bridge") : null, tryLoad("fx"), tryLoad("aim"), tryLoad("geometry"), tryLoad("rings"),
+    role === "GM" ? null : tryLoad("player"), tryLoad("lights"), role === "GM" ? tryLoad("lightwriter") : null,
+    role === "GM" ? null : tryLoad("views"), // a GM screen aims the projector from its menus (MODULES.views)
+    tryLoad("fog"), // 🌫 Our fog, on every screen kind
+  ]);
+
+  let fx = null;
+  try {
+    // Created on every copy: the bridge writes the zone outlines with it even when it only
+    // relays. Nothing is drawn until start() (or ever, on a copy that only relays).
+    fx = fxMod?.createFx ? fxMod.createFx(api, ctx) : null;
+  } catch (e) {
+    errors.fx = String(e?.message || e);
+    console.warn("dnd-npc: effects didn't start", e);
+  }
+  ctx.fx_ok = !!fx;
+
+  let lights = null;
+  try {
+    // The flames, and on the table screen the darkvision rings (fx/lighting.js). Like the
+    // zones: nothing is drawn until start(), and never on a copy that only relays.
+    lights = lightsMod?.createLights ? lightsMod.createLights(api, ctx) : null;
+  } catch (e) {
+    errors.lights = String(e?.message || e);
+    console.warn("dnd-npc: lights didn't start", e);
+  }
+  ctx.lights_ok = !!lights;
+
+  // The one writer of Smoke's keys (fx/lightwriter.js): created on every GM copy, so its HELLO
+  // says `writer`; it writes only on the leader GM screen, once start() runs (never on a copy that
+  // only relays). It replaces the torch guard that lived in fx/lighting.js.
+  let writer = null;
+  try {
+    writer = writerMod?.createWriter ? writerMod.createWriter(api, ctx, { timers: T, hello: () => hello() }) : null;
+  } catch (e) {
+    errors.lightwriter = String(e?.message || e);
+    console.warn("dnd-npc: the lights writer didn't start", e);
+  }
+  const kickWriter = () => { try { writer?.kick?.(); } catch (e) { console.warn("dnd-npc: lights writer", e); } };
+
+  // 🌫 Our fog (fog/fog.js): every screen kind. Created on every copy; started only where this copy
+  // draws (start()), stopped when it steps aside. Inert while the scene's switch is off. No leader:
+  // the 🌫 switch is written by the GM screen whose chip was tapped (LOCAL_ASK "fog-switch" below), a
+  // GM's door click by that GM screen, a player's door request by the GM screen that answers it
+  // (fog/doors.js). The lights writer's gate (fx/lightwriter.js) is the lights' alone.
+  let fog = null;
+  try {
+    fog = fogMod?.createFog ? fogMod.createFog(api, ctx, {
+      timers: T,
+      ownToken: () => player?.snapshot?.()?.entry?.token || null,
+      gmPass: lsGet(FOG_GM_PASS_LS) === "A" ? "A" : "B",
+      doorTap: lsGet(FOG_DOOR_TAP_LS) === "1",
+      lockHandles: lsGet(FOG_HANDLE_LOCK_LS) === "1",
+      memoryOnGm: lsGet(FOG_MEMORY_GM_LS) !== "0",
+      dimOpacity: () => {
+        const raw = lsGet(FOG_DIM_LS);
+        const v = raw == null || raw === "" ? NaN : Number(raw);
+        return Number.isFinite(v) && v >= 0 && v <= 1 ? v : undefined; // anything else: fog/memory.js DIM_OPACITY
+      },
+    }) : null;
+  } catch (e) {
+    errors.fog = String(e?.message || e);
+    console.warn("dnd-npc: our fog didn't start", e);
+  }
+  const kickFog = () => { try { fog?.kick?.(); } catch (e) { console.warn("dnd-npc: our fog", e); } };
+  // 🪵 Live log for this device's GM box (popover.html): the newest lines, as text, under the bus's size cap.
+  let logSent = null;
+  const sendLog = (force = false) => {
+    if (role !== "GM") return;
+    let lines = [];
+    try {
+      lines = (fog?.logLines?.(40) || []).map((l) => ({ kind: l.kind, text: fogMod.lineText(l) }));
+    } catch (e) {
+      lines = [{ kind: "error", text: `the live log can't be read: ${String(e?.message || e)}` }];
+    }
+    while (lines.length > 1 && new TextEncoder().encode(JSON.stringify(lines)).length > LOCAL_LOG_MAX_BYTES) lines.pop();
+    const sig = JSON.stringify(lines);
+    if (!force && sig === logSent) return;
+    logSent = sig;
+    busSend(api, FOG_LOG_LOCAL_CH, { host: ctx.host, lines, error: errors.fog || "" }, "LOCAL");
+  };
+  let fogSaid = null; // the last 🌫 switch answer, for the GM box that asked
+  // The GM box's tap on 🌫 Our fog: this screen writes the whole switch (fog/fog.js setOn).
+  async function fogSwitch(msg) {
+    let r;
+    try {
+      r = fog ? await fog.setOn(msg?.on === true) : { ok: false, text: `🌫 Our fog didn't load here${errors.fog ? `: ${errors.fog}` : ""}` };
+    } catch (e) {
+      r = { ok: false, text: `🌫 The switch failed: ${String(e?.message || e)}` };
+    }
+    fogSaid = { id: String(msg?.id ?? ""), ok: !!r?.ok, text: String(r?.text || "") };
+    return fogSaid;
+  }
+  // The GM box's tap on 🛖 Roofs: this screen writes ROOFS_KEY whole (fog/fog.js setRoofs; off parks every
+  // roof piece). Its answer goes back as fog_said too, matched by the tap's id.
+  async function roofsSwitch(msg) {
+    let r;
+    try {
+      r = typeof fog?.setRoofs === "function" ? await fog.setRoofs(msg?.on === true)
+        : { ok: false, text: `🛖 Our fog didn't load here${errors.fog ? `: ${errors.fog}` : ""}` };
+    } catch (e) {
+      r = { ok: false, text: `🛖 The switch failed: ${String(e?.message || e)}` };
+    }
+    fogSaid = { id: String(msg?.id ?? ""), ok: !!r?.ok, text: String(r?.text || "") };
+    return fogSaid;
+  }
+  // One lights object for HELLO and this tab's own screen row: the drawing's status + the writer's state.
+  ctx.writer = writer ? ctx.build : null;
+  ctx.lightsStatus = () => {
+    const l = lights?.status?.() || null;
+    let st = null;
+    try { st = writer ? writer.status().state : null; } catch { /* next time */ }
+    return l || st ? { ...(l || {}), state: st } : null;
+  };
+
+  // The party's names as the room remembers them (PARTY_KEY: gather.js keeps them there from the
+  // panel or tools/owlbear_only.py), read at start and on every change, for ctx.isPc's name rule.
+  const takeParty = (meta) => {
+    // ...and the party's darkvision (PARTY_SENSES_KEY: {nameKey: {dark}}, numbers only), by name.
+    const senses = {};
+    const raw = meta?.[PARTY_SENSES_KEY];
+    if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+      for (const [k, v] of Object.entries(raw)) {
+        const d = Number(v?.dark);
+        if (k && Number.isFinite(d) && d >= 0) senses[nameKey(k)] = { dark: Math.round(d) };
+      }
+    }
+    const sensesMoved = JSON.stringify(senses) !== JSON.stringify(ctx.partySenses);
+    ctx.partySenses = senses;
+    const next = cleanParty(meta?.[PARTY_KEY]);
+    const same = next.length === ctx.party.length && next.every((n, k) => n === ctx.party[k]);
+    if (!same) ctx.party = next;
+    if (same && !sensesMoved) return;
+    try { lights?.pcTokensChanged?.(); } catch (e) { console.warn("dnd-npc: lights", e); } // a light may carry now
+    kickWriter();
+    kickFog(); // the PC rule may answer differently, or a PC's darkvision changed
+  };
+  try {
+    O.room?.onMetadataChange?.(takeParty);
+    Promise.resolve(O.room?.getMetadata?.()).then(takeParty, () => { /* an older Owlbear: names come later */ });
+  } catch (e) {
+    console.warn("dnd-npc: the party's names", e);
+  }
+
+  let started = false; // false until this copy knows whether it draws on this tab (start())
+  const drawsHere = () => started && !ctx.relayOnly;
+  let lastHb = null;
+  let lastHbAt = T.now(); // as if heard at start: give the bridge 15 s before ringing here
+  const shows = new Map(); // template id -> what AIM_SHOW said (the all and gm copies merged)
+  const silent = new Set(); // aims this tab stops because someone else locked or the panel cancelled
+  const aimColors = new Map(); // aim id -> the ring colour that aim replaces: its ring_color (blue for the Party, yellow for a monster; null = neither, ring nothing)
+
+  const silence = (id) => {
+    silent.add(id);
+    T.setTimeout(() => silent.delete(id), 2000);
+  };
+
+  // Keys 9 (blue) and 0 (yellow): toolbar actions like J, GM screens only. Each toggles its colour's
+  // ring on the selected tokens (aim/rings.js toggleTargetRing). A key does nothing, quietly, while an
+  // aim is open (its HUD owns the keys), on a copy that only relays, on a player's screen, or with
+  // nothing selected (a short note says so). It never throws at the DM.
+  let ringKeysStop = null; // set by ringKeys: clears its queued press and that press's timer (stepAside calls it)
+  let ringKeysSelStop = null; // set by ringKeys: ends its selection watch
+  function ringKeys(keyIds) {
+    // Owlbear clears the selection when a toolbar action's key fires, before onClick can read it (the DM's
+    // live test, 2026-10-19: select a token, press 9, "select a token first", the token deselected). So the
+    // keys watch the selection, use the last one when a press finds none and it went within
+    // RING_KEY_SELECTION_MS (or its clearing hasn't reached us yet), and select those tokens again after.
+    let lastSel = [];
+    let clearedAt = -Infinity; // Infinity: something is selected now
+    const seen = (sel) => {
+      const s = Array.isArray(sel) ? sel.filter((x) => typeof x === "string") : [];
+      if (s.length) { lastSel = s; clearedAt = Infinity; } else if (clearedAt === Infinity) clearedAt = T.now();
+    };
+    try { ringKeysSelStop?.(); } catch (e) { console.warn("dnd-npc: the ring key", e); }
+    ringKeysSelStop = null;
+    try {
+      const un = O.player.onChange?.((p) => seen(p?.selection));
+      Promise.resolve(un).then((f) => { if (typeof f === "function") ringKeysSelStop = f; }, (e) => console.warn("dnd-npc: the ring key", e));
+      Promise.resolve(O.player.getSelection?.()).then((s) => { if (clearedAt === -Infinity) seen(s); }, () => {});
+    } catch (e) {
+      console.warn("dnd-npc: the ring key", e);
+    }
+    // One press at a time (two at once would read the same rings and write the same sizes or doubles). A
+    // second press of the SAME key while one runs does nothing (a double tap, a held key repeating); a press
+    // of the OTHER key waits and runs right after (one slot: a fast "9 then 0" does both). A key held down is
+    // also ignored for RING_KEY_GAP_MS after its last press finished, so it toggles once, not on and off. A
+    // press that never settles is given up on after RING_KEY_STUCK_MS, so the keys can't stay dead.
+    let running = null; // {color, at}
+    let pending = null; // {color, label}: the other key, pressed while one ran
+    const lastEnd = new Map();
+    let dropTimer = null;
+    const dropPending = (startingColor) => {
+      // A queued press that will never run (the press ahead of it hung): say so, so the DM presses it again.
+      // No note when that same key is the press starting right now (it is running; nothing to repeat).
+      if (!pending) return;
+      const gone = pending;
+      pending = null;
+      if (gone.color === startingColor) return;
+      try { O.notification.show("Ring key was busy, press it again", "DEFAULT"); } catch (e) { console.warn("dnd-npc: the ring key", e); }
+    };
+    ringKeysStop = () => {
+      if (dropTimer != null) T.clearTimeout(dropTimer);
+      dropTimer = null;
+      pending = null;
+    };
+    const press = async (color, label) => {
+      if (running && T.now() - running.at < RING_KEY_STUCK_MS) {
+        if (running.color !== color) {
+          const queued = pending = { color, label };
+          // ...and if the press ahead is still hung when this one's time is up, it is dropped with a note
+          if (dropTimer != null) T.clearTimeout(dropTimer);
+          dropTimer = T.setTimeout(() => { dropTimer = null; if (pending === queued) dropPending(); }, RING_KEY_STUCK_MS);
+        }
+        return;
+      }
+      if (T.now() - (lastEnd.get(color) ?? -Infinity) < RING_KEY_GAP_MS) return;
+      dropPending(color); // a press queued behind one that hung is not run now
+      const mine = running = { color, at: T.now() };
+      let ran = false;
+      // given up on: another press replaced this one, or it has been running past the stuck limit
+      const givenUp = () => running !== mine || T.now() - mine.at >= RING_KEY_STUCK_MS;
+      try {
+        if (!drawsHere() || role !== "GM" || aim?.isAiming?.()) return;
+        if ((await O.player.getRole()) !== "GM") return;
+        if (!rings?.toggleTargetRing) return;
+        ran = true;
+        let selection = await O.player.getSelection();
+        const restore = !(Array.isArray(selection) && selection.length) && lastSel.length > 0
+          && (clearedAt === Infinity || mine.at - clearedAt < RING_KEY_SELECTION_MS);
+        if (restore) selection = lastSel.slice();
+        const r = await rings.toggleTargetRing(api, color, { selection });
+        if (restore) {
+          try { await O.player.select?.(selection, true); } catch (e) { console.warn("dnd-npc: the ring key", e); }
+        }
+        if (givenUp()) return; // this press was given up on (hung > 3 s) and settled late: nothing further, no note
+        if (r.action === "none") {
+          O.notification.show(r.why === "nothing selected" ? `${label}: select a token first` : `${label}: those can't wear a target ring`, "DEFAULT");
+        }
+      } catch (e) {
+        console.warn("dnd-npc: the ring key", e);
+      } finally {
+        const mineStill = !givenUp(); // false: a stuck press, already given up on: it starts and changes nothing more
+        const replaced = running !== mine; // another press took the slot: the queue behind that one is not ours to drop
+        if (!replaced) running = null;
+        if (ran && mineStill) lastEnd.set(color, T.now());
+        if (mineStill) {
+          const next = pending;
+          pending = null;
+          if (next) await press(next.color, next.label);
+        } else if (!replaced) {
+          dropPending(); // anything still queued behind this hung press was never going to run
+        }
+      }
+    };
+    for (const [id, key, color, label, name] of [
+      [keyIds.blue, TARGET_KEY, TARGET_COLOR, "Blue target ring", "🔵 Blue target ring"],
+      [keyIds.yellow, FOE_KEY, FOE_COLOR, "Yellow target ring", "🟡 Yellow target ring"],
+    ]) {
+      try {
+        Promise.resolve(O.tool.createAction({
+          id,
+          shortcut: key,
+          icons: [{ icon: ICON, label: `${name} (${key})`, filter: { roles: ["GM"] } }],
+          onClick: () => press(color, label),
+        })).catch((e) => console.warn("dnd-npc: the ring key", e));
+      } catch (e) {
+        console.warn("dnd-npc: the ring key", e);
+      }
+    }
+  }
+
+  async function gmLocked(result, info) {
+    // How far the aim tool measured, for the panel's "⚠ too far" (the bridge passes it on).
+    const feet = Number.isFinite(info?.feet) ? info.feet : null;
+    busSend(api, CH.AIM_LOCKED, { ...result, feet, out_of_range: !!info?.out_of_range }, "ALL");
+    if (bridge?.isBridge() || T.now() - lastHbAt <= NO_BRIDGE_MS) return; // the bridge rings them
+    // No bridge for 15 s (the panel is down, or no Dell tab): ring the caught tokens from here,
+    // so the DM's targets still show (any GM may write rings). Hidden ones too: this is a GM.
+    if (!result?.template || !geometry?.computeCaught || !rings?.setTargetRings) return;
+    try {
+      const caught = await geometry.computeCaught(result.template, await O.scene.items.getItems(), await gridOf(O),
+        { includeSecret: true, isPublic: ctx.isPublic, casterId: result.template.caster_token || null });
+      if (!Array.isArray(caught)) return; // can't tell who's caught: leave the rings alone
+      const id = String(result.aim_id);
+      const color = aimColors.has(id) ? aimColors.get(id) : TARGET_COLOR; // an aim never heard of: blue
+      if (!color) {
+        console.warn("dnd-npc: an aim asked for a ring colour that isn't blue or yellow; rings left as they were");
+        return;
+      }
+      await rings.setTargetRings(api, caught.map((c) => c.id), { replace: true, color });
+      ctx.log(`no bridge: rang ${caught.length} target(s) here`);
+    } catch (e) {
+      console.warn("dnd-npc: couldn't ring the targets here", e);
+    }
+  }
+
+  let player = null;
+  // Where this screen looks (views.js): the table screen's lock, a player's find me (screenViews).
+  let viewLock = null, findMe = null;
+  const projectors = new Map(); // on a GM screen: each table screen's last 📺 status (CH.VIEW), by connection
+  const hooks = {
+    onLocked: (result, info) => (role === "GM" ? gmLocked(result, info) : player?.onLocked?.(result, info)),
+    onCancelled: (id) => {
+      if (silent.delete(id)) return;
+      if (role === "GM") busSend(api, CH.AIM_LOCKED, { aim_id: id, template: null, target: null, cancel: true }, "ALL");
+      else player?.onCancelled?.(id);
+    },
+    onState: (s) => player?.onAimState?.(s),
+  };
+  let aim = null;
+
+  let fxSig = "";
+  function applySettings(s, { quiet = false } = {}) {
+    // The panel's settings (or this device's own choices) changed: maybe this screen's kind
+    // too (the DM picked it as the table screen), and the effects tier with it. A copy that
+    // only relays draws nothing here, whatever the panel says.
+    ctx.settings = s || ctx.settings;
+    const kind = kindNow();
+    const moved = kind !== ctx.kind;
+    ctx.kind = kind;
+    const off = ctx.relayOnly;
+    const next = { ...ctx.settings, kind, tier: off ? "off" : tierOf(ctx.settings, kind),
+                   quality_override: off ? "off" : lsGet(LS.QUALITY) };
+    const sig = JSON.stringify(next);
+    if (sig !== fxSig) { // the heartbeat repeats them every 5 s: only pass on a change
+      fxSig = sig;
+      try {
+        fx?.setSettings?.(next);
+      } catch (e) {
+        console.warn("dnd-npc: effects settings", e);
+      }
+      try {
+        lights?.setSettings?.(next);
+      } catch (e) {
+        console.warn("dnd-npc: lights settings", e);
+      }
+    }
+    if (moved) screenViews(); // the table screen holds its view; a player's follows their PC
+    if (moved && !quiet) hello();
+    return moved;
+  }
+
+  function screenViews() {
+    // Start or stop what this screen does with its view, for what it is now: the table screen holds
+    // the view the DM aims it at; a player's own screen follows their PC after a portal trip
+    // (views.js). Neither on a copy that only relays here, nor on a GM screen: it aims the projector.
+    const table = drawsHere() && ctx.kind === "table";
+    const finder = drawsHere() && role !== "GM" && ctx.kind !== "table";
+    try {
+      if (!table && viewLock) {
+        viewLock.stop();
+        viewLock = null;
+      }
+      if (!finder && findMe) {
+        findMe.stop();
+        findMe = null;
+      }
+      if (table && !viewLock && viewsMod?.createProjectorLock) {
+        viewLock = viewsMod.createProjectorLock(api, ctx, {
+          timers: T,
+          note: (text) => busSend(api, CH.NOTE, { audience: "gm", text, variant: "WARNING" }, "REMOTE"),
+          report: (view) => busSend(api, CH.VIEW, { audience: "gm", name: ctx.name, view }, "REMOTE"),
+        });
+        viewLock.start();
+      }
+      if (finder && !findMe && viewsMod?.createFindMe) {
+        findMe = viewsMod.createFindMe(api, ctx, { timers: T, ownToken: () => player?.snapshot?.()?.entry?.token || null });
+        findMe.start();
+      }
+    } catch (e) {
+      errors.views = String(e?.message || e);
+      console.warn("dnd-npc: where this screen looks", e);
+    }
+  }
+
+  let askedWriters = false;
+  function hello() {
+    // need "hello" (only from a copy served by this PC): "is the Pages copy on this tab too?"
+    // writer: this GM copy has the lights writer (its build), relay: it only relays here, lights:
+    // the writer's state (fx/lightwriter.js); need "writer" once: the other GM screens answer.
+    const need = local ? ["bridge", "hello"] : ["bridge"];
+    if (writer && !askedWriters) {
+      askedWriters = true;
+      need.push("writer");
+    }
+    busSend(api, CH.HELLO, { role, kind: ctx.kind, build: ctx.build, fx_ok: ctx.fx_ok, host: ctx.host,
+                             name: ctx.name, need, writer: writer ? ctx.build : undefined, relay: ctx.relayOnly,
+                             lights: ctx.lightsStatus() }, "ALL");
+  }
+
+  // The scene-metadata fallback (bus.js) is only read when it's switched on: off by default,
+  // since plain broadcasts cross between the two copies (probe P10).
+  const sceneFallback = () => lsGet(LS.SCENE_BUS) === "1" || ctx.settings?.scene_bus === true;
+
+  function onHeartbeat(hb, ev) {
+    const isNew = hb.conn !== lastHb?.conn;
+    lastHb = hb;
+    lastHbAt = T.now();
+    let pcsMoved = false;
+    if (Array.isArray(hb.pc_tokens) && !ev?.self) {
+      pcsMoved = hb.pc_tokens.length !== ctx.pcTokens.size || hb.pc_tokens.some((id) => !ctx.pcTokens.has(id));
+      ctx.pcTokens.clear();
+      for (const id of hb.pc_tokens) ctx.pcTokens.add(id);
+    }
+    try { lights?.pcTokensChanged?.(); } catch (e) { console.warn("dnd-npc: lights", e); } // a hidden PC's light may show now
+    if (pcsMoved) {
+      kickWriter(); // the PC test may answer differently now
+      kickFog();
+      try { pushState(); } catch { /* the 🔥 menu and list ask again */ } // they plan with the same PC ids
+    }
+    const moved = hb.settings ? applySettings({ ...DEFAULT_SETTINGS, ...hb.settings,
+      quality: { ...DEFAULT_SETTINGS.quality, ...(hb.settings.quality || {}) } }, { quiet: true }) : false;
+    if (hb.scene_bus || sceneFallback()) startSceneReader(api, conn);
+    // The bridge only reaches us through scene metadata: send our own messages that way too.
+    if (hb.scene_bus && ev?.viaScene) setSceneWrite(api, conn, true);
+    try { player?.onBridge?.(hb); } catch (e) { console.warn(e); }
+    if ((isNew && !ev?.self) || moved) hello(); // a new bridge, or a new kind: tell it who we are
+  }
+  ctx.onHeartbeat = onHeartbeat;
+
+  async function playTest() {
+    // 🧪 in the popover: a sample effect on this screen only, at the middle of the view.
+    if (ctx.relayOnly) return "This copy only relays here: use the “DND NPC” box (the Pages copy) to test effects.";
+    if (!fx) return "Effects didn't load on this screen.";
+    const mod = await tryLoad("samples");
+    const all = mod?.SAMPLES;
+    const list = Array.isArray(all) ? all : all && typeof all === "object" ? Object.values(all) : [];
+    const pick = list.find((e) => /fireball/i.test(e?.label || "")) || list[0];
+    if (!pick) return "No sample effect to play.";
+    try {
+      await fx.play(pick);
+      return "";
+    } catch (e) {
+      return String(e?.message || e);
+    }
+  }
+
+  function snapshot(note = "") {
+    return {
+      role, kind: ctx.kind, build: ctx.build, host: ctx.host, conn, name: ctx.name, note,
+      opted_in: local || lsGet(LS.BRIDGE_HERE) === "1", aim_here: lsGet(LS.AIM_HERE) !== "0",
+      table_screen: lsGet(LS.TABLE_SCREEN) === "1", quality: lsGet(LS.QUALITY) || "auto",
+      scene_bus: lsGet(LS.SCENE_BUS) === "1", relay_only: ctx.relayOnly, started,
+      same_tab: ctx.sameTab ? { host: ctx.sameTab.host, build: ctx.sameTab.build, fx_ok: ctx.sameTab.fx_ok } : null,
+      bridge: bridge ? bridge.status()
+        : { state: !started ? "starting" : legacy ? "legacy" : errors.bridge ? "failed" : "off", reason: errors.bridge || "" },
+      heard: lastHb ? { conn: lastHb.conn, panel: lastHb.panel, build: lastHb.build, age_s: Math.round((T.now() - lastHbAt) / 1000) } : null,
+      fx_ok: ctx.fx_ok, aim_ok: !!aim, errors, settings: ctx.settings,
+      lights_ok: ctx.lights_ok, lights: lights?.status?.() ?? null,
+      pc_tokens: [...ctx.pcTokens], // the heartbeat's PC ids: the 🔥 menu and list plan with them, as the writer does
+      writer: (() => { try { return writer?.status?.() ?? null; } catch { return null; } })(),
+      fog: (() => { try { return fog?.status?.() ?? null; } catch { return null; } })(), // 🌫 Our fog on this screen
+      fog_said: fogSaid, // the last 🌫 switch answer (lightpanel.js shows it to the box that tapped)
+      // 📺 the table screens heard lately: how each holds the view the DM locked (views.js status)
+      projector: [...projectors.values()].filter((p) => T.now() - p.at < PROJECTOR_GONE_MS)
+        .map((p) => ({ ...p.view, name: p.name, age_s: Math.round((T.now() - p.at) / 1000) })),
+    };
+  }
+  const pushState = () => { if (role === "GM") busSend(api, CH.LOCAL_STATE, snapshot(), "LOCAL"); };
+
+  function stepAside() {
+    // The Pages copy of the extension runs on this same tab: it draws the effects, aims and
+    // shows the menus here, and this copy only relays between it and the panel.
+    if (ctx.relayOnly) return;
+    ctx.relayOnly = true;
+    ctx.log("the Pages copy is on this tab too: this copy only relays");
+    if (!started) {
+      safeStart(); // heard before the wait ran out: start now, as a relay only
+      // Say so at once (relay: true), so the other GM screens' lights writers don't count this
+      // copy as a GM screen with no writer (an "older build") until its 30 s hello.
+      hello();
+      return;
+    }
+    // It came late: this copy was already drawing here. Stop, without touching anything the
+    // Pages copy made: Owlbear's tool and menu ids are room-wide, so the aim tool (same id in
+    // both copies, the Pages copy's created last) is left in place, and only this copy's own
+    // menus are removed.
+    try { fx?.zones?.stop?.(); } catch (e) { console.warn("dnd-npc: zones", e); }
+    try { lights?.stop?.(); } catch (e) { console.warn("dnd-npc: lights", e); }
+    try { writer?.stop?.(); } catch (e) { console.warn("dnd-npc: lights writer", e); }
+    Promise.resolve().then(() => fog?.stop?.()).catch((e) => console.warn("dnd-npc: our fog", e));
+    try { fx?.clear?.(); } catch (e) { console.warn("dnd-npc: effects", e); }
+    applySettings(ctx.settings, { quiet: true }); // tier off
+    try {
+      const id = aim?.current?.()?.id;
+      if (aim?.isAiming?.()) {
+        if (id) silence(id);
+        aim.cancel(id);
+      }
+      for (const sid of shows.keys()) aim?.clearTemplate?.(sid, { fadeMs: 0 });
+    } catch (e) {
+      console.warn("dnd-npc: aim", e);
+    }
+    shows.clear();
+    try { ringKeysStop?.(); } catch (e) { console.warn("dnd-npc: the ring key", e); }
+    try { player?.stop?.(); } catch (e) { console.warn("dnd-npc: player", e); }
+    player = null;
+    screenViews(); // the Pages copy holds or follows the view here now
+    if (role === "GM") {
+      for (const id of Object.values(LOCAL_MENU_IDS)) Promise.resolve().then(() => O.contextMenu.remove(id)).catch(() => {});
+      for (const id of [LOCAL_GOTO_KEY_ID, LOCAL_PROJECTOR_ACTION_ID, ...Object.values(LOCAL_RING_KEY_IDS)]) {
+        Promise.resolve().then(() => O.tool.removeAction(id)).catch(() => {});
+      }
+    }
+    bridge?.relayOnly?.();
+    pushState();
+    hello(); // the other GM screens' lights writers: this copy no longer counts (relay: true)
+  }
+
+  // ---- what every screen hears ----
+  busOn(api, CH.BRIDGE, (hb, ev) => onHeartbeat(hb, ev));
+  // Every GM copy's HELLO, for the lights writer's leader and its old-build gate (the lights' alone:
+  // 🌫 Our fog has no leader).
+  busOn(api, CH.HELLO, (msg, ev) => {
+    try { writer?.heard?.(msg, ev); } catch (e) { console.warn("dnd-npc: lights writer", e); }
+  });
+  busOn(api, CH.HELLO, (msg, ev) => {
+    // The other copy of this extension on this same tab: same connection, the other host. The
+    // copy served from this PC steps aside for the Pages copy, and the Pages copy answers the
+    // other's "who's here?" at once, so neither has to wait for the 30 s hello.
+    if (!ev || ev.local || ev.viaScene || ev.connectionId !== conn || !msg?.host || msg.host === ctx.host) return;
+    ctx.sameTab = { host: msg.host, kind: msg.kind ?? "", build: msg.build ?? "", fx_ok: !!msg.fx_ok,
+                    writer: msg.writer ?? null, lights: msg.lights ?? null, at: T.now() };
+    if (local && msg.host === "pages") stepAside();
+    else if (!local && Array.isArray(msg.need) && msg.need.includes("hello")) hello();
+  });
+  busOn(api, CH.FX, (msg) => {
+    if (!drawsHere() || !forMe(msg, me) || bridge?.isBridge() || !msg.event) return; // the bridge drew it already
+    try {
+      Promise.resolve(fx?.play(msg.event, msg.audience === "gm" ? { gmDelta: true } : {})).catch((e) => console.warn(e));
+    } catch (e) {
+      console.warn("dnd-npc fx failed", e);
+    }
+  });
+  busOn(api, CH.AIM_START, (msg) => {
+    if (!drawsHere() || !forMe(msg, me) || role !== "GM" || lsGet(LS.AIM_HERE) === "0" || !msg.aim) return;
+    if (msg.aim.id != null) {
+      aimColors.set(String(msg.aim.id), targetRingColor(msg.aim.ring_color)); // ring_color, never the tint (color)
+      while (aimColors.size > 20) aimColors.delete(aimColors.keys().next().value);
+    }
+    aim?.start(msg.aim);
+  });
+  busOn(api, CH.AIM_SHOW, (msg) => {
+    if (!drawsHere() || !forMe(msg, me) || !msg.id || !aim?.showTemplate) return;
+    const prev = shows.get(msg.id) || {};
+    const show = { ...prev, ...msg, secret: [...new Set([...(prev.secret || []), ...(msg.secret || [])])] };
+    shows.set(msg.id, show);
+    aim.showTemplate(msg.id, show.template, show.style, show);
+  });
+  busOn(api, CH.AIM_CLEAR, (msg) => {
+    if (!drawsHere() || !msg.id) return;
+    shows.delete(msg.id);
+    aim?.clearTemplate?.(msg.id, { fadeMs: msg.fade_ms ?? 300 });
+  });
+  busOn(api, CH.AIM_CANCEL, (msg) => {
+    if (!drawsHere() || !forMe(msg, me) || !msg.id || !aim) return;
+    silence(msg.id);
+    aim.cancel(msg.id);
+  });
+  busOn(api, CH.AIM_LOCKED, (msg, ev) => {
+    // Another GM screen locked this aim first: stop aiming it here.
+    if (role !== "GM" || !drawsHere() || ev?.local || ev?.viaScene || ev?.connectionId === conn || !msg.aim_id
+        || !aim?.isAiming?.()) return;
+    silence(msg.aim_id);
+    aim.cancel(msg.aim_id);
+  });
+  busOn(api, CH.NOTE, (msg) => {
+    if (!drawsHere() || !forMe(msg, me) || !msg.text) return;
+    O.notification.show(String(msg.text), NOTE_VARIANTS.includes(msg.variant) ? msg.variant : "DEFAULT");
+  });
+  // 📺 How each table screen holds its view (views.js status), for the GM box's projector lines.
+  busOn(api, CH.VIEW, (msg, ev) => {
+    if (role !== "GM" || !msg?.view || typeof msg.view !== "object" || ev?.viaScene || !ev?.connectionId) return;
+    projectors.set(ev.connectionId, { name: String(msg.name || ""), view: msg.view, at: T.now() });
+    pushState();
+  });
+  busOn(api, CH.ROSTER, (msg) => {
+    if (!drawsHere() || role === "GM" || msg.to !== ctx.playerId) return;
+    player?.onRoster?.(msg.entry ?? null, msg);
+  });
+  busOn(api, CH.CAST_STATUS, (msg) => {
+    if (!drawsHere() || role === "GM" || msg.to !== ctx.playerId) return;
+    player?.onStatus?.(msg);
+  });
+  // Both copies' popovers on the Dell's tab hear every LOCAL message, so a popover tags what it
+  // sends with its host, and each copy answers only its own (an untagged message, from a
+  // popover that doesn't tag, only when this copy draws here).
+  const mine = (msg) => (msg?.host ? msg.host === ctx.host : !ctx.relayOnly);
+  busOn(api, CH.LOCAL_AIM, (msg) => {
+    if (!drawsHere() || !mine(msg)) return;
+    if (role === "GM") aim?.start(msg.spec ?? msg.item);
+    else player?.startFromPopover?.(msg.item ?? msg.spec);
+  });
+  if (role === "GM") {
+    // The GM popover asks; a player's popover talks to player/state.js instead.
+    busOn(api, CH.LOCAL_ASK, async (msg) => {
+      if (!mine(msg)) return;
+      // A 🏘 Map setup button (mapsetup.html, this PC's copy's page): the job runs here, not awaited.
+      if (msg.need === MAP_SETUP_NEED) {
+        if (local && msg.host === "local") mapSetup(msg);
+        return;
+      }
+      let note;
+      if (msg.need === "log") return sendLog(true); // the 🪵 Live log, now (a GM box just opened)
+      if (msg.need === "find-panel") bridge?.retry();
+      else if (msg.need === "force") await bridge?.force();
+      else if (msg.need === "test") note = await playTest();
+      else if (msg.need === "fog-switch") await fogSwitch(msg); // 🌫 Our fog, tapped in this device's GM box
+      else if (msg.need === "roofs-switch") await roofsSwitch(msg); // 🛖 Roofs, tapped in this device's GM box
+      else if (msg.need === "fog-log") { // a fog chip tapped in this device's GM box (fog/mapui.js): its line in the 🪵 Live log
+        try { fog?.log?.(String(msg.kind || "map").slice(0, 20), String(msg.text ?? "").slice(0, 220)); } catch { /* the log is optional */ }
+      }
+      else if (msg.need === "refresh") {
+        applySettings(ctx.settings);
+        if (sceneFallback()) startSceneReader(api, conn);
+        bridge?.retry();
+      }
+      busSend(api, CH.LOCAL_STATE, snapshot(note), "LOCAL");
+      sendLog(); // ...and the live log, when it has new lines
+    });
+  } else {
+    // player/state.js answers its popover itself; this only says why when it didn't load.
+    busOn(api, CH.LOCAL_ASK, (msg) => {
+      if (!drawsHere() || player || !mine(msg) || msg.need === "find-me") return;
+      busSend(api, CH.LOCAL_STATE, { role, host: ctx.host, error: errors.player || "not loaded" }, "LOCAL");
+    });
+    // 📍 Find my PC, from the player's box: the view on their PC (views.js).
+    busOn(api, CH.LOCAL_ASK, async (msg) => {
+      if (msg?.need !== "find-me" || !drawsHere() || !mine(msg)) return;
+      let found = false;
+      try {
+        found = !!(await findMe?.findNow?.());
+      } catch (e) {
+        console.warn("dnd-npc: find me", e);
+      }
+      if (!found) O.notification.show("📍 Your PC isn't on this map, or the DM hasn't linked you to one yet", "WARNING");
+    });
+  }
+
+  // R1 needs each item's visibility; effects warm up once a scene is open.
+  O.scene.items.onChange(remember);
+  const ready = async (isReady) => {
+    if (!isReady) return;
+    try { remember(await O.scene.items.getItems()); } catch { /* next change */ }
+    if (drawsHere()) {
+      try { fx?.warm?.(); } catch (e) { console.warn(e); }
+    }
+  };
+  O.scene.onReadyChange(ready);
+  if (await O.scene.isReady()) await ready(true);
+  if (sceneFallback()) startSceneReader(api, conn);
+  applySettings(ctx.settings);
+
+  function safeStart() {
+    // A throw part-way through start() would leave this copy silent (no bridge, no reason):
+    // keep the reason for the popover ("❌ The bridge failed to load: …").
+    try {
+      start();
+    } catch (e) {
+      errors.bridge = errors.bridge || `start: ${String(e?.stack || e?.message || e).slice(0, 400)}`;
+      console.warn("dnd-npc: start failed", e);
+      try { pushState(); } catch { /* the popover asks again */ }
+    }
+  }
+
+  // Once at start, on the Dell's own copy: keep the party's names in the Owlbear room when the
+  // panel answers (rememberParty compares first, so nothing is written when they're the same).
+  // The laptop's Pages copy then matches PC tokens by name even without the Dell's bridge.
+  function keepParty() {
+    const get = opts.fetchImpl || ((url) => fetch(url));
+    (async () => {
+      const r = await get(`${origin}/api/map/catalog`);
+      if (r?.ok) { const j = await r.json(); await rememberParty(j?.party, O, undefined, j?.senses); } // + the darkvision
+    })().catch(() => { /* no panel yet: the 🗺 menus keep the party when they get it */ });
+  }
+
+  function start() {
+    // From here this copy knows whether it draws on this tab. A copy that only relays starts
+    // none of the drawing parts: no aim tool, no player's spells, no zone decorations, no menus.
+    if (started) return;
+    started = true;
+    if (!ctx.relayOnly) {
+      try {
+        aim = aimMod?.installAim ? aimMod.installAim(api, ctx, hooks) : null;
+      } catch (e) {
+        errors.aim = String(e?.message || e);
+        console.warn("dnd-npc: the aim tool didn't start", e);
+      }
+      try {
+        // player/state.js sends with either send(ch, data, dest) or send(api, ch, data, dest).
+        const sendFn = (a, b, c, d) => (typeof a === "string" ? busSend(api, a, b, c) : busSend(a, b, c, d));
+        player = playerMod?.createPlayerState ? playerMod.createPlayerState(api, ctx, { aim, send: sendFn }) : null;
+      } catch (e) {
+        errors.player = String(e?.message || e);
+        console.warn("dnd-npc: the player's spells didn't start", e);
+      }
+      try { fx?.zones?.start?.(); } catch (e) { console.warn("dnd-npc: zones", e); }
+      try { lights?.start?.(); } catch (e) { console.warn("dnd-npc: lights", e); }
+      if (role === "GM") {
+        try { writer?.start?.(); } catch (e) { console.warn("dnd-npc: lights writer", e); }
+      }
+      Promise.resolve().then(() => fog?.start?.()).catch((e) => {
+        errors.fog = String(e?.message || e);
+        console.warn("dnd-npc: our fog", e);
+      });
+      O.scene.isReady().then((r) => {
+        if (r && drawsHere()) fx?.warm?.();
+      }).catch((e) => console.warn(e));
+    }
+    applySettings(ctx.settings, { quiet: true });
+
+    screenViews(); // the table screen holds its view; a player's follows their PC
+
+    // ---- the GM: menus, and the bridge (or the old loops) ----
+    if (role === "GM") {
+      if (!ctx.relayOnly) {
+        menus(local ? LOCAL_MENU_IDS : MENU_IDS, local ? LOCAL_GOTO_KEY_ID : GOTO_KEY_ID,
+              local ? LOCAL_PROJECTOR_ACTION_ID : PROJECTOR_ACTION_ID);
+        ringKeys(local ? LOCAL_RING_KEY_IDS : RING_KEY_IDS);
+      }
+      if (local) thisPcMenus(); // 🏘 Map setup: on this copy even when it only relays (THIS_PC_MENU_IDS)
+      if (local) keepParty();
+      O.scene.items.onChange(soon);
+      O.scene.grid.onChange(soon);
+      O.scene.onReadyChange(soon);
+      T.setInterval(send, HEARTBEAT_MS);
+      // ...and while the last report had a creature some PC sees, one at least every SEEN_REPORT_MS
+      // (a report for a change or the heartbeat counts). Only the tab holding the lease sends
+      // (bridge.report checks isBridge); with nobody seen this sends nothing, as before V1.
+      T.setInterval(() => {
+        if (seenLive && clock() - lastSendAt >= SEEN_REPORT_MS) send();
+      }, SEEN_TICK_MS);
+      if (bridgeMod?.startBridge) {
+        ctx.onStatus = pushState;
+        try {
+          bridge = bridgeMod.startBridge(api, ctx, {
+            fx, aim, rings, geometry, jobs: JOBS, summary, fetchImpl: opts.fetchImpl, timers: opts.timers,
+          });
+        } catch (e) {
+          // Say why in the popover ("❌ The bridge failed to load: …"), and on a tab the panel
+          // serves fall back to game night 1's loops rather than leave the map unheard.
+          bridge = null;
+          errors.bridge = String(e?.stack || e?.message || e).slice(0, 400);
+          console.warn("dnd-npc: the bridge didn't start", e);
+          if (local) {
+            legacy = true;
+            T.setInterval(todo, TODO_MS);
+          }
+        }
+      } else if (local) {
+        // bridge.js broke, but this tab is served by the panel itself: run game night 1's loops.
+        legacy = true;
+        T.setInterval(todo, TODO_MS);
+      }
+      soon();
+      pushState();
+    }
+    T.setInterval(hello, HELLO_MS);
+  }
+
+  if (local) {
+    hello(); // also "who's here?": the Pages copy on this tab, if any, answers at once
+    T.setTimeout(safeStart, DUAL_WAIT_MS);
+  } else {
+    safeStart();
+    hello();
+  }
+  return {
+    ctx, snapshot, errors, stepAside,
+    get started() { return started; }, get fx() { return fx; }, get aim() { return aim; }, get player() { return player; },
+    get lights() { return lights; }, get writer() { return writer; }, get fog() { return fog; },
+    get viewLock() { return viewLock; }, get findMe() { return findMe; },
+  };
+}
+
+OBR.onReady(() => boot());
