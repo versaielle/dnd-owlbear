@@ -48,15 +48,15 @@
 // clear is drawn again by it is named there and in the 🪵 Live log (picksWaiting / picksDrawnAgain, with
 // fog/fog.js and fog/mapui.js loaded on their own: without them only that part is left out). No fog,
 // memory or roof controls here: they stay in the 🔥 box.
-import OBR from "./obr-sdk.js?v=52156fe";
-import { CH, isLocalOrigin, on, send } from "./bus.js?v=52156fe";
-import { PARTY_KEY, SCENE_LIGHTING_KEY } from "./keys.js?v=52156fe";
-import { isMap, mapDarkness, readGrid, sceneDarkness } from "./fx/darkness.js?v=52156fe";
-import { writeNow } from "./fx/lightwriter.js?v=52156fe";
-import { cleanParty } from "./gather.js?v=52156fe";
+import OBR from "./obr-sdk.js?v=9a30147";
+import { CH, isLocalOrigin, on, send } from "./bus.js?v=9a30147";
+import { PARTY_KEY, SCENE_LIGHTING_KEY } from "./keys.js?v=9a30147";
+import { isMap, mapDarkness, readGrid, sceneDarkness } from "./fx/darkness.js?v=9a30147";
+import { writeNow } from "./fx/lightwriter.js?v=9a30147";
+import { cleanParty } from "./gather.js?v=9a30147";
 import { DARKNESS, PROPS_TITLE, RELEASED_SAID, lightingOf, mapDarkEdit, mapDarkSaid, picksDrawnAgain, picksWaiting, propsLabel,
-         sceneNext, sceneSaid, takenBack } from "./lightui.js?v=52156fe";
-import { clickedIds, showTabs } from "./tabs.js?v=52156fe";
+         sceneNext, sceneSaid, takenBack } from "./lightui.js?v=9a30147";
+import { clickedIds, showTabs } from "./tabs.js?v=9a30147";
 
 const HOST = isLocalOrigin(location.origin) ? "local" : "pages";
 const clicked = clickedIds(location.search); // the 🎲 DND popover's items; [] elsewhere
@@ -71,7 +71,7 @@ let drawn = null; // what the page shows now: {map, sceneMeta}
 
 // fog/fog.js (fogOn) and fog/mapui.js (mapRows, modeWord), as the 🔥 box loads them: only for the "drawn
 // again" line. null when either fails to load.
-const fogParts = Promise.all([import("./fog/fog.js?v=52156fe"), import("./fog/mapui.js?v=52156fe")]).then(([fog, ui]) => ({ fog, ui }), () => null);
+const fogParts = Promise.all([import("./fog/fog.js?v=9a30147"), import("./fog/mapui.js?v=9a30147")]).then(([fog, ui]) => ({ fog, ui }), () => null);
 
 // The one map image right-clicked (else selected), or null.
 async function theMap() {

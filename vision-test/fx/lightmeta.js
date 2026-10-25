@@ -8,8 +8,9 @@
 //   LIGHT_KEY {kind}          the DM's light; {kind: "none"} = the DM put it out (a tombstone:
 //                             no auto light, no adopted Smoke torch; a spell light still shows)
 //   SPELL_LIGHT_KEY {kind, magic}  a spell's light (fx/lightjobs.js)
-//   VISION_KEY {dm, out}      dm: the DM's overrides {sight?, dark?, seer?} (feet; from the 🔥
-//                             Lighting list, or adopted from an edit in Smoke's own panel);
+//   VISION_KEY {dm, out}      dm: the DM's overrides {sight?, dark?, seer?, blind?, truesight?}
+//                             (feet; from the 🔥 Lighting list, or adopted from an edit in Smoke's
+//                             own panel; a cleared blind or truesight is kept as null);
 //                             out: the Smoke keys we last wrote, and their values. `out` is the
 //                             ONLY history: it tells a DM's edit in Smoke from our own write,
 //                             and which keys are ours to take off (written as null: below).
@@ -41,9 +42,10 @@
 // The deletes below (migrate, adoptInto, planItem, release) all work on COPIES (`clone`), which
 // reach a draft only through writeLightPart (or lightui.js applyMeta, which writes the same nulls).
 
-import { BUBBLES_NAME_KEY, CARRIER_KEY, LIGHT_BASE_KEY, LIGHT_KEY, SMOKE, SPELL_LIGHT_KEY, VISION_KEY } from "../keys.js?v=52156fe";
-import { SOURCES } from "./lights.js?v=52156fe";
-import { farLight, lightsFor, regionAt } from "./darkness.js?v=52156fe";
+import { BUBBLES_NAME_KEY, CARRIER_KEY, LIGHT_BASE_KEY, LIGHT_KEY, SMOKE, SPELL_LIGHT_KEY, VISION_KEY } from "../keys.js?v=9a30147";
+import { SOURCES } from "./lights.js?v=9a30147";
+import { farLight, lightsFor, regionAt } from "./darkness.js?v=9a30147";
+import { MAX_SENSE_FT } from "../rules2024.js?v=9a30147";
 
 const K = (name) => `${SMOKE}/${name}`;
 // The Smoke keys we write (and so may have to remove), by their short names.
@@ -105,8 +107,10 @@ export function rangeDefaultOf(x) {
 
 // ---- which light a token has ----
 
+// (first match wins: a "bullseye lantern" is a bullseye, never a hooded lantern; a "bullseye"
+// without "lantern" (an archery target, a dartboard) is no light at all, as before the 2024 kinds)
 const AUTO = [[/candle/, "candle"], [/torch|sconce/, "torch"], [/brazier|campfire|fire ?pit|hearth/, "brazier"],
-  [/lantern/, "hooded_lantern"], [/lamp/, "lamp"]];
+  [/bull\W?s?\W?eye[\W_]*lantern|lantern[\W_]*bull\W?s?\W?eye/, "bullseye_lantern"], [/lantern/, "hooded_lantern"], [/lamp/, "lamp"]];
 
 function fileOf(url) {
   const last = String(url || "").split(/[?#]/)[0].split("/").pop() || "";
@@ -173,27 +177,38 @@ export function isAmbientLight(item, ctx = {}) {
   return isSecret(item, { parentOf });
 }
 
-// The light this token gives, or null: {kind, reach, from: "hand"|"spell"|"auto"|"smoke", magic?}.
-// The DM's light (not "none") against a spell's: the bigger reach wins, the DM's wins a tie. The
-// tombstone "none": only a spell counts. No LIGHT_KEY at all: the prop's own (autoKind, while the
-// scene's auto lights are on), else a Smoke torch nobody adopted yet (a torch). A carrier (the
-// child item that carries a goblin's torchlight for Smoke) is never a light itself.
+// How far a light of this kind with this reach is BRIGHT (feet; the rest of its reach is its dim
+// ring, the 2024 rules' 💡): its kind's own bright radius when the reach is its kind's own;
+// otherwise (a reach the DM set: a Smoke slider or preset, an adopted Smoke torch's own range, a
+// typed reach) there's no bright/dim split to go by, so half the reach is bright.
+export function brightOf(kind, reach) {
+  if (!(reach > 0)) return 0;
+  return known(kind) && reach === reachOf(kind) ? SOURCES[kind].bright : reach / 2;
+}
+
+// The light this token gives, or null: {kind, reach, bright, from: "hand"|"spell"|"auto"|"smoke",
+// magic?}; reach and bright in feet (brightOf). The DM's light (not "none") against a spell's: the
+// bigger reach wins, the DM's wins a tie. The tombstone "none": only a spell counts. No LIGHT_KEY at
+// all: the prop's own (autoKind, while the scene's auto lights are on), else a Smoke torch nobody
+// adopted yet (a torch). A carrier (the child item that carries a goblin's torchlight for Smoke) is
+// never a light itself.
 export function effectiveLight(item, lighting = DEFAULT_LIGHTING) {
   const meta = item?.metadata;
   if (!isObj(meta) || meta[CARRIER_KEY]) return null;
   const s = meta[SPELL_LIGHT_KEY];
-  const spell = isObj(s) && known(s.kind) ? { kind: s.kind, reach: reachOf(s.kind), from: "spell", magic: s.magic ?? null } : null;
+  const lit = (kind, reach, from) => ({ kind, reach, bright: brightOf(kind, reach), from });
+  const spell = isObj(s) && known(s.kind) ? { ...lit(s.kind, reachOf(s.kind), "spell"), magic: s.magic ?? null } : null;
   const hand = meta[LIGHT_KEY];
   // dm.reach: the DM's Smoke range on a torch of ours (a slider, a preset, an adopted Smoke torch's
   // own range): the reach; the kind gives only the look. A Smoke torch nobody adopted: its range.
   const own = num(meta[VISION_KEY]?.dm?.reach) || null;
   let base = null;
   if (isObj(hand) && (hand.kind === "none" || known(hand.kind))) {
-    if (hand.kind !== "none") base = { kind: hand.kind, reach: own || reachOf(hand.kind), from: "hand" };
+    if (hand.kind !== "none") base = lit(hand.kind, own || reachOf(hand.kind), "hand");
   } else {
     const auto = lightingOf(lighting).auto ? autoKind(item) : null;
-    if (auto) base = { kind: auto, reach: own || reachOf(auto), from: "auto" };
-    else if (smokeTorch(meta)) base = { kind: autoKind(item) || "torch", reach: own || num(meta[K("visionRange")]) || DEFAULT_RANGE, from: "smoke" };
+    if (auto) base = lit(auto, own || reachOf(auto), "auto");
+    else if (smokeTorch(meta)) base = lit(autoKind(item) || "torch", own || num(meta[K("visionRange")]) || DEFAULT_RANGE, "smoke");
   }
   if (base && spell) return spell.reach > base.reach ? spell : base;
   return base || spell;
@@ -212,22 +227,29 @@ export function profileOf(meta) {
 
 const callPc = (ctx, item) => !!safe(() => ctx?.isPc?.(item), false);
 
-// How this token sees: {seer, sight, dark, pc, where}. ctx: {isPc(item), senses(item) -> {dark} |
-// null, lighting (SCENE_LIGHTING_KEY's value), regions (fx/darkness.js darknessCtx: the darkness
-// under each point; without it, the scene's)}. Darkness comes from light (docs/lights-darkness-spec.md):
+// How this token sees: {seer, sight, dark, pc, where, blind, truesight, tremor}. ctx: {isPc(item),
+// senses(item) -> {dark, blind, truesight, tremor} (rules2024.js sensesOf's shape; an older {dark}
+// is fine) | null, lighting (SCENE_LIGHTING_KEY's value), regions (fx/darkness.js darknessCtx: the
+// darkness under each point; without it, the scene's)}. Darkness comes from light
+// (docs/lights-darkness-spec.md):
 //   seer: a PC always; anything else when the DM gave it vision (dm.seer).
 //   where: the darkness where it stands ("lit" | "dim" | "dark").
 //   sight (feet): on ☀/🌒 everything in line of sight, min(dm.sight ?? LIT_SIGHT, LIT_SIGHT) (dm.sight
 //     is only a sight LIMIT now: fog, mist); on 🌑 0 (only lights and darkvision show anything).
-//   dark (darkvision, feet): the DM's, else the party sheet's (PCs), else 0.
+//   dark (darkvision), blind (blindsight), truesight (feet): the DM's override (VISION_KEY dm; a
+//     missing or null one means "use the party file"), else the party sheet's (PCs), else 0.
+//   tremor (tremorsense, feet): the party sheet's only (it draws nothing), else 0.
+// Every distance is whole feet, 0 to MAX_SENSE_FT.
 export function visionOf(item, ctx = {}) {
   const { dm } = profileOf(item?.metadata);
   const pc = callPc(ctx, item);
   const where = ctx.regions ? regionAt(item?.position, ctx.regions) : lightingOf(ctx.lighting).darkness;
   const sight = where === "dark" ? 0 : Math.min(num(dm.sight) ?? LIT_SIGHT, LIT_SIGHT);
   const sensed = safe(() => ctx.senses?.(item));
+  const sense = (over, sheet) => Math.min(MAX_SENSE_FT, num(over) ?? num(sheet) ?? 0);
   const dark = num(dm.dark) ?? num(sensed?.dark) ?? 0;
-  return { seer: pc || dm.seer === true, sight, dark, pc, where };
+  return { seer: pc || dm.seer === true, sight, dark, pc, where,
+           blind: sense(dm.blind, sensed?.blind), truesight: sense(dm.truesight, sensed?.truesight), tremor: sense(null, sensed?.tremor) };
 }
 
 // How far a seer sees, in feet. On ☀/🌒 where it stands: by line of sight (visionOf's sight: its
@@ -368,6 +390,10 @@ function adoptInto(meta, item, ctx, notes) {
 // The DM's overrides with what says nothing left out, so equal wishes are equal keys whatever
 // the order they came in: a PC's seer (always), seer false (the default). A sight limit is kept
 // whatever it is (30 included: Smoke's default is dropped where it's adopted, adoptInto).
+// The 2024 senses' overrides (blind, truesight) are kept exactly as stored, a number or null (a
+// cleared one), and never added where they're absent: the lights writer never erases one, and never
+// writes a token that never had one (docs/vision-layer-2024.md section 7).
+const SENSE_OVERRIDES = ["blind", "truesight"];
 function canonDm(dm, view, ctx) {
   const out = {};
   const s = num(dm.sight), d = num(dm.dark);
@@ -376,6 +402,7 @@ function canonDm(dm, view, ctx) {
   const r = num(dm.reach);
   if (r) out.reach = r; // a torch's range (effectiveLight); kept once set, so the order never matters
   if (dm.seer === true && !callPc(ctx, view)) out.seer = true;
+  for (const f of SENSE_OVERRIDES) if (dm[f] !== undefined) out[f] = dm[f] === null ? null : num(dm[f]);
   return out;
 }
 
@@ -490,20 +517,29 @@ export function setSpellLight(meta, spell) {
   return meta;
 }
 
-// The DM's overrides: {sight?, dark?, seer?}; a field given as null clears that override, one
-// left out stays. Numbers in feet; seer a boolean.
+// The DM's overrides: {sight?, dark?, seer?, blind?, truesight?}; a field given as null clears that
+// override, one left out (or undefined) stays. Numbers in feet; seer a boolean. A cleared blind or
+// truesight is STORED as null (never a deleted field: docs/vision-layer-2024.md), which reads as
+// "use the party file"; sight, dark and seer keep their old handling (a cleared one is dropped from
+// the profile, which is written whole). The profile is a fresh object either way.
 export function setVision(meta, change = {}) {
   if (!isObj(meta)) return meta;
+  const c = isObj(change) ? change : {};
   const { dm, out } = profileOf(meta);
   for (const f of ["sight", "dark"]) {
-    if (!(f in change)) continue;
-    const n = num(change[f]);
-    if (change[f] === null || n === null) delete dm[f];
+    if (!(f in c)) continue;
+    const n = num(c[f]);
+    if (c[f] === null || n === null) delete dm[f];
     else dm[f] = n;
   }
-  if ("seer" in change) {
-    if (change.seer === null || change.seer === undefined) delete dm.seer;
-    else dm.seer = !!change.seer;
+  if ("seer" in c) {
+    if (c.seer === null || c.seer === undefined) delete dm.seer;
+    else dm.seer = !!c.seer;
+  }
+  for (const f of SENSE_OVERRIDES) {
+    if (c[f] === undefined) continue;
+    const n = num(c[f]);
+    dm[f] = c[f] === null || n === null ? null : Math.min(MAX_SENSE_FT, n);
   }
   meta[VISION_KEY] = { dm, out };
   return meta;

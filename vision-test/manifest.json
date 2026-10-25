@@ -1,15 +1,15 @@
 {
   "name": "DND NPC (vision test)",
-  "version": "2.1384.0",
+  "version": "2.1615.0",
   "manifest_version": 1,
   "author": "dnd-npc",
   "description": "Spell effects, aiming and map sync for the DND NPC table.",
   "icon": "https://versaielle.github.io/dnd-owlbear/vision-test/icon.svg",
-  "background_url": "https://versaielle.github.io/dnd-owlbear/vision-test/background.html?v=52156fe",
+  "background_url": "https://versaielle.github.io/dnd-owlbear/vision-test/background.html?v=9a30147",
   "action": {
     "title": "DND NPC (vision test)",
     "icon": "https://versaielle.github.io/dnd-owlbear/vision-test/icon.svg",
-    "popover": "https://versaielle.github.io/dnd-owlbear/vision-test/popover.html?v=52156fe",
+    "popover": "https://versaielle.github.io/dnd-owlbear/vision-test/popover.html?v=9a30147",
     "width": 380,
     "height": 560
   }

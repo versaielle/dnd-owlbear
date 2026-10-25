@@ -4,12 +4,15 @@
 // door checks and aim/fog.js. Pure: no Owlbear import and no DOM, so the offline checks load it.
 //
 // A segment is {a: {x, y}, b: {x, y}, kind, open} in scene units. kind: "wall", "door" (open:
-// true while it stands open), "window", or "secret" (a secret door nobody has found: a wall to
-// everything; once found it becomes a "door"). A missing or unknown kind is a wall.
+// true while it stands open), "window", "secret" (a secret door nobody has found: a wall to
+// everything; once found it becomes a "door"), or "zone" (the ring of a heavily obscured zone,
+// docs/vision-layer-2024.md section 7: it stops sight, never a drag). A missing or unknown kind is
+// a wall.
 //
-//   sightBlockers(segments)   what sight stops at: walls, closed doors, secret doors (an open
-//                             door or a window lets it through)
-//   moveBlockers(segments)    what a drag stops at: the same, and windows
+//   sightBlockers(segments)   what sight stops at: walls, closed doors, secret doors, zone rings
+//                             (an open door or a window lets it through)
+//   moveBlockers(segments)    what a drag stops at: walls, closed doors, secret doors and windows
+//                             (never a zone ring: tokens walk through fog)
 //   rectWalls(rect)           four walls round {x0, y0, x1, y1}: a map's edge, so a PC's sight
 //                             never spills onto the maps laid out beside it
 //   visibilityPolygon(origin, blockers, reach, {arcSteps})   what a point sees within `reach` scene
@@ -39,13 +42,16 @@ const finite = (...xs) => xs.every((x) => typeof x === "number" && Number.isFini
 const isPt = (p) => !!p && finite(p.x, p.y);
 const isSeg = (s) => !!s && isPt(s.a) && isPt(s.b);
 
-export const KINDS = ["wall", "door", "window", "secret"];
+export const KINDS = ["wall", "door", "window", "secret", "zone"];
 export const kindOf = (s) => (KINDS.includes(s?.kind) ? s.kind : "wall");
-const blocksSight = (s) => { const k = kindOf(s); return k === "wall" || k === "secret" || (k === "door" && !s.open); };
+// Walls, secret doors and closed doors stop sight and moves alike; a zone ring stops sight only,
+// a window moves only.
+const blocksBoth = (s) => { const k = kindOf(s); return k === "wall" || k === "secret" || (k === "door" && !s.open); };
+const blocksSight = (s) => blocksBoth(s) || kindOf(s) === "zone";
 
 export const sightBlockers = (segments) => (Array.isArray(segments) ? segments : []).filter((s) => isSeg(s) && blocksSight(s));
 export const moveBlockers = (segments) =>
-  (Array.isArray(segments) ? segments : []).filter((s) => isSeg(s) && (blocksSight(s) || kindOf(s) === "window"));
+  (Array.isArray(segments) ? segments : []).filter((s) => isSeg(s) && (blocksBoth(s) || kindOf(s) === "window"));
 
 // The four walls round a rectangle (darkness.js mapRect's {x0, y0, x1, y1}); [] for a broken one.
 export function rectWalls(r, kind = "wall") {

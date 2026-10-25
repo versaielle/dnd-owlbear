@@ -15,7 +15,8 @@
 //   SEEN_WRITE_MS            one map written at most this often
 //   CLIP_WAIT_MS             a new writer waits this long for the polygon library before it writes the
 //                            squares alone
-//   darkReachFt(item, vctx)  🌑: how far a PC sees by itself, feet (fog/shapes.js's stand-in, re-exported)
+//   darkReachFt(item, vctx)  🌑: how far a PC sees by itself, feet (fog/sight.js's, re-exported through
+//                            fog/shapes.js)
 //   cellsSeen(snap)          -> Map(mapId -> sorted square indices): what the party sees NOW (pure)
 //   seenInputSig(snap)       -> string: everything cellsSeen and seenShapes depend on (pure)
 //   mergeSeen(value, cells, grid)  -> {value, added}: value = the whole new SEEN_KEY value, or null
@@ -58,17 +59,18 @@
 // kind). api: {OBR}; the checks may pass clip (the library, already loaded) or loadClip() (a promise
 // of it).
 
-import { EXPLORED_KEY, RULES_KEY, SEEN_KEY } from "../keys.js?v=52156fe";
-import { visionOf } from "../fx/lightmeta.js?v=52156fe";
-import { centreOf, mapRects } from "../views.js?v=52156fe";
-import { createBits, decode, encode, getBit, setBits } from "./bitset.js?v=52156fe";
-import { seenCells, visibilityPolygon } from "./los.js?v=52156fe";
-import { seenOf } from "./maps.js?v=52156fe";
+import { EXPLORED_KEY, RULES_KEY, SEEN_KEY } from "../keys.js?v=9a30147";
+import { visionOf } from "../fx/lightmeta.js?v=9a30147";
+import { effectiveRules } from "../rules2024.js?v=9a30147";
+import { centreOf, mapRects } from "../views.js?v=9a30147";
+import { createBits, decode, encode, getBit, setBits } from "./bitset.js?v=9a30147";
+import { seenCells, visibilityPolygon } from "./los.js?v=9a30147";
+import { seenOf } from "./maps.js?v=9a30147";
 import { EXPLORED_CALL_MAX_BYTES, areaOf, clipOk, darkReachFt, decodeRings, litLights, litLightsOn, mergeExplored, pcViews, readValue,
-  rectSize, seenShapes, sightBlockersOf, uniteRings } from "./shapes.js?v=52156fe";
-import { sightReachFt } from "./sight.js?v=52156fe";
+  rectSize, seenShapes, sightBlockersOf, uniteRings } from "./shapes.js?v=9a30147";
+import { senseLightsFt, sightReachFt } from "./sight.js?v=9a30147";
 
-export { darkReachFt } from "./shapes.js?v=52156fe";
+export { darkReachFt } from "./shapes.js?v=9a30147";
 
 export const SEEN_EVERY_MS = 1000;
 export const SEEN_WRITE_MS = 5000;
@@ -145,14 +147,16 @@ export function cellsSeen(snap) {
 // Everything cellsSeen and seenShapes read, and nothing else: each PC's id, middle (to 1 px), reach and
 // whether it stands in 🌑 (with its own reach there), the public lights with their cones (only while
 // some PC is in 🌑), each line's id, map, kind, open, disabled and points, each map's id, rect and grid;
-// and for the 2024 rules (docs/vision-layer-2024.md): the obscured zones (snap.zones: id, level, map and
-// ring, once the fog engine adds them) and the scene's 2024 switches (RULES_KEY, raw). A switch tapped,
-// a zone ending or a cone turning recomputes with nobody moving.
+// and for the 2024 rules (docs/vision-layer-2024.md): the obscured zones (snap.zones: id, level, magic, map
+// and ring), each PC's truesight and blindsight shapes while 🧱 Senses through fog is on (fog/sight.js
+// senseLightsFt), and the scene's 2024 switches (RULES_KEY, raw). A switch tapped, a zone ending or a cone
+// turning recomputes with nobody moving.
 export function seenInputSig(snap) {
   const byMap = mapsById(snap);
   const dpi = snap?.grid?.dpi;
   const pcs = [];
   let anyDark = false;
+  const on = effectiveRules(snap?.rules);
   for (const pc of Array.isArray(snap?.pcs) ? snap.pcs : []) {
     if (pc?.id == null) continue;
     const c = safe(() => centreOf(pc, dpi));
@@ -160,7 +164,9 @@ export function seenInputSig(snap) {
     const where = safe(() => visionOf(pc, snap.vctx || {}).where, null);
     const dark = where === "dark";
     if (dark) anyDark = true;
-    pcs.push([pc.id, c && finite(c.x, c.y) ? [r1(c.x), r1(c.y)] : null, ft, dark ? darkReachFt(pc, snap.vctx || {}) : 0]);
+    const row = [pc.id, c && finite(c.x, c.y) ? [r1(c.x), r1(c.y)] : null, ft, dark ? darkReachFt(pc, snap.vctx || {}) : 0];
+    if (on.pierce) row.push((safe(() => senseLightsFt(pc, snap.vctx || {}), []) || []).map((s) => [s?.sense ?? null, s?.ft ?? null]));
+    pcs.push(row);
   }
   const coneSig = (k) => (k == null ? null : [finite(k?.facing) ? r2(k.facing) : null, finite(k?.half) ? r2(k.half) : null]);
   const lights = anyDark ? litLights(snap?.vctx).map((l) => [r1(l.x), r1(l.y), l.reach, coneSig(l.cone)]) : [];
@@ -168,8 +174,8 @@ export function seenInputSig(snap) {
     !!l.open, !!l.disabled, (Array.isArray(l.points) ? l.points : []).map((p) => (p && finite(p.x, p.y) ? [r2(p.x), r2(p.y)] : null))]);
   const maps = [...byMap.values()].map((m) => [m.id, m.rect ? [r2(m.rect.x0), r2(m.rect.y0), r2(m.rect.x1), r2(m.rect.y1)] : null,
     m.grid ? [m.grid.x0, m.grid.y0, m.grid.cell, m.grid.cols, m.grid.rows] : null]);
-  const zones = (Array.isArray(snap?.zones) ? snap.zones : []).filter(Boolean).map((z) => [z.id ?? null, z.level ?? null, z.mapId ?? null,
-    (Array.isArray(z.points) ? z.points : []).map((p) => (p && finite(p.x, p.y) ? [r1(p.x), r1(p.y)] : null))]);
+  const zones = (Array.isArray(snap?.zones) ? snap.zones : []).filter(Boolean).map((z) => [z.id ?? null, z.level ?? null,
+    !!z.magic, z.mapId ?? null, (Array.isArray(z.points) ? z.points : []).map((p) => (p && finite(p.x, p.y) ? [r1(p.x), r1(p.y)] : null))]);
   const rules = snap?.sceneMeta?.[RULES_KEY] ?? null;
   return JSON.stringify([dpi ?? null, snap?.grid?.pxPerFt ?? null, pcs, lights, lines, maps, zones, rules]);
 }
@@ -195,7 +201,7 @@ export function createSeen(api = {}, ctx = {}) {
   const log = (text) => { try { ctx.log?.(text, "seen"); } catch { /* nowhere to say it */ } };
   const answerer = () => !!safe(() => ctx.isAnswerer?.(), false);
   const clock = () => (typeof performance !== "undefined" && performance?.now ? performance.now() : Date.now());
-  const loadClip = typeof api.loadClip === "function" ? api.loadClip : () => import("./clipper.js?v=52156fe").then((m) => m.default);
+  const loadClip = typeof api.loadClip === "function" ? api.loadClip : () => import("./clipper.js?v=9a30147").then((m) => m.default);
 
   let epoch = 0; // a clear()/forget() moves it on: anything in flight from before is dropped
   let alive = false; // a sync ran since the last clear()

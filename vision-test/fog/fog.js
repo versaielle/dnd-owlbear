@@ -6,7 +6,7 @@
 // fog/seen.js: the explored squares, written by the one GM screen that answers the doors,
 // fog/memory.js: the explored memory drawn on every screen), the scene's fog colour (snap.fogColor),
 // the throttle, and the 🪵 Live log (fog/livelog.js). The dark covers (docs/vision-layer-2024.md
-// section 12, fix C) black out, on players' screens and the projector only, every creature that
+// section 14, fix C) black out, on players' screens and the projector only, every creature that
 // stands unseen on 🌑 ground with a PC on it (where a PC's sight light lifts the fog, and under the
 // fog too, so it is on before the fog lifts), its HP bar and badges too, only where our overlay
 // paints black.
@@ -31,8 +31,13 @@
 //                           sceneId and a token's hasVision never count: they outlive the extension,
 //                           and our own lights writer writes hasVision on the PCs
 //   inputSig(sceneMeta) / roomSig(roomMeta)   the metadata a pass depends on
-//   buildSnapshot(items, sceneMeta, roomMeta, grid, ctx)   the one snapshot every part plans from (pure)
+//   buildSnapshot(items, sceneMeta, roomMeta, grid, ctx)   the one snapshot every part plans from (pure);
+//                           with the 2024 rules' inputs (docs/vision-layer-2024.md section 7): the
+//                           switches, the weather and the obscured zones (fog/zoneread.js)
 //   createFog(api, ctx, opts) -> {start(), stop(), status(), setOn(on), setRoofs(on), kick(), snapshot(), log(kind, text), logLines(max)}
+//
+// (The "obscured" marks were right-click rows this file started on a GM screen while 🌫 was on; since V2
+// they are 🎲 DND's ☁ Obscured tab, obscure.html, offered whatever 🌫 says: fog/obscuremenu.js.)
 //
 // INERT WHEN OFF. While the scene's FOG_KEY.on isn't true, this file only watches the scene's
 // metadata (and whether a scene is open): no local item, no write, no menu, no item listener. The
@@ -89,23 +94,25 @@
 // the answerer watch, at most every SMOKE_CHECK_MS (one OBR.scene.local.getItems), never on a
 // player's screen. Smoke's leftover shared data (its sceneId, a token's hasVision) never counts.
 
-import { FOG_KEY, FOG_LOCAL_KEY, FOG_LOOK_KEY, PARTY_KEY, PARTY_SENSES_KEY, ROOFS_KEY, RULES_KEY, SCENE_LIGHTING_KEY, SMOKE, WEATHER_KEY } from "../keys.js?v=52156fe";
-import { planCtx } from "../fx/lightwriter.js?v=52156fe";
-import { readGrid } from "../fx/darkness.js?v=52156fe";
-import { mapRects } from "../views.js?v=52156fe";
-import { doorEdit, drift, occupiedMaps, readLines } from "./lines.js?v=52156fe";
-import { mapStates } from "./maps.js?v=52156fe";
-import { createSight } from "./sight.js?v=52156fe";
-import { createWalls } from "./walls.js?v=52156fe";
-import { ANSWERER_SETTLE_MS, createDoors } from "./doors.js?v=52156fe";
-import { createSeen } from "./seen.js?v=52156fe";
-import { createMemory } from "./memory.js?v=52156fe";
-import { createCover } from "./cover.js?v=52156fe";
-import { createRoofs, parkAll, parseRoofName, roofsOn, roofsWords, writeRoofs } from "./roofs.js?v=52156fe";
-import { createLiveLog, lineText } from "./livelog.js?v=52156fe";
+import { FOG_KEY, FOG_LOCAL_KEY, FOG_LOOK_KEY, PARTY_KEY, PARTY_SENSES_KEY, ROOFS_KEY, RULES_KEY, SCENE_LIGHTING_KEY, SMOKE, WEATHER_KEY } from "../keys.js?v=9a30147";
+import { planCtx } from "../fx/lightwriter.js?v=9a30147";
+import { readGrid } from "../fx/darkness.js?v=9a30147";
+import { effectiveRules, rulesOf, weatherOf } from "../rules2024.js?v=9a30147";
+import { mapAt, mapRects } from "../views.js?v=9a30147";
+import { doorEdit, drift, occupiedMaps, readLines } from "./lines.js?v=9a30147";
+import { mapStates } from "./maps.js?v=9a30147";
+import { createSight } from "./sight.js?v=9a30147";
+import { createWalls } from "./walls.js?v=9a30147";
+import { ANSWERER_SETTLE_MS, createDoors } from "./doors.js?v=9a30147";
+import { createSeen } from "./seen.js?v=9a30147";
+import { createMemory } from "./memory.js?v=9a30147";
+import { createCover } from "./cover.js?v=9a30147";
+import { createRoofs, parkAll, parseRoofName, roofsOn, roofsWords, writeRoofs } from "./roofs.js?v=9a30147";
+import { createLiveLog, lineText } from "./livelog.js?v=9a30147";
+import { zonesOf } from "./zoneread.js?v=9a30147";
 
 export { lineText }; // a live-log line as text (background.js sends them to the GM box)
-export { cleanRoofs, roofOriginals, roofsOn, roofsWords, writeRoofs } from "./roofs.js?v=52156fe"; // 🛖 Roofs' switch (lightpanel.js: its chip, its fallback, its "🌫 is off" line)
+export { cleanRoofs, roofOriginals, roofsOn, roofsWords, writeRoofs } from "./roofs.js?v=9a30147"; // 🛖 Roofs' switch (lightpanel.js: its chip, its fallback, its "🌫 is off" line)
 
 export const SETTLE_MS = 150; // item changes settle this long before a pass
 export const MAX_WAIT_MS = 750; // ...but a long drag still gets a pass this often
@@ -261,6 +268,12 @@ export const roomSig = (m) => stable([m?.[PARTY_SENSES_KEY], m?.[PARTY_KEY]]);
 // ---- the snapshot (pure) ----
 
 // grid: {dpi, ftPerCell, pxPerFt} (fx/darkness.js readGrid). ctx: {isPc(item), pcTokens, party}.
+// The 2024 rules (docs/vision-layer-2024.md section 7, "The snapshot"): snap.rules (the seven switches as
+// the drawing obeys them: rules2024.js effectiveRules), snap.weather (weatherOf), snap.zones (every
+// obscured zone, fog/zoneread.js zonesOf: ALWAYS read, whatever ☁ says; the drawing obeys the switch,
+// the 👁 badge doesn't); and in vctx, so fog/sight.js sightReachFt and darkReachFt can read them:
+// rules, weather, zones, outdoorAt(point) (the topmost map under the point is marked outdoor) and dpi.
+// With every switch off nothing here changes what any part draws.
 export function buildSnapshot(items, sceneMeta, roomMeta, grid, ctx = {}, at = 0) {
   const list = (Array.isArray(items) ? items : []).filter((i) => i?.id != null);
   const sm = isObj(sceneMeta) ? sceneMeta : {};
@@ -270,12 +283,22 @@ export function buildSnapshot(items, sceneMeta, roomMeta, grid, ctx = {}, at = 0
   // An uploaded 🛖 roof original isn't a map (until the take-in removes it): no rect, no map state.
   const rects = mapRects(list.filter((i) => !(i?.layer === "MAP" && parseRoofName(i.name))), g.dpi);
   const party = Array.isArray(ctx.party) && ctx.party.length ? ctx.party : undefined;
+  const maps = mapStates({ items: list, rects, grid: g, sceneMeta: sm });
+  const rules = effectiveRules(rulesOf(sm));
+  const weather = weatherOf(sm);
+  let zones = [];
+  try { zones = zonesOf(list, { rects, dpi: g.dpi }); } catch { zones = []; } // a broken shape never stops a pass
+  const kindOf = new Map(maps.map((m) => [m.id, m.kind]));
+  const outdoorAt = (p) => { try { const id = mapAt(p, rects); return id != null && kindOf.get(id) === "outdoor"; } catch { return false; } };
+  const vctx = planCtx(list, sm, rm, { pcTokens: ctx.pcTokens ?? null, party, grid: g });
+  Object.assign(vctx, { rules, weather, zones, outdoorAt, dpi: g.dpi });
   return {
     items: list, byId: new Map(list.map((i) => [i.id, i])), sceneMeta: sm, roomMeta: rm, grid: g,
-    fog: cleanFog(sm[FOG_KEY]), rects, maps: mapStates({ items: list, rects, grid: g, sceneMeta: sm }),
+    fog: cleanFog(sm[FOG_KEY]), rects, maps,
     lines: readLines(list, { dpi: g.dpi, rects }),
     pcs: list.filter(isPc), occupied: occupiedMaps(list, { isPc, rects, dpi: g.dpi }),
-    vctx: planCtx(list, sm, rm, { pcTokens: ctx.pcTokens ?? null, party, grid: g }), at,
+    rules, weather, zones,
+    vctx, at,
   };
 }
 
@@ -287,7 +310,7 @@ export function buildSnapshot(items, sceneMeta, roomMeta, grid, ctx = {}, at = 0
 // locked: a live-check flag), memoryOnGm (false: this GM screen draws no memory items, the live-check
 // flag "dnd-npc/fog-memory-gm"), dimOpacity (a number, or a function giving one: the dim layer's
 // opacity, a live-tuning knob), timers, random() (the checks'), liveLog: false (none), makers
-// ({sight, walls, doors, seen, memory, cover}: the offline check's fakes)}.
+// ({sight, walls, doors, seen, memory, cover, roofs}: the offline check's fakes)}.
 export function createFog(api = {}, ctx = {}, opts = {}) {
   const O = api.OBR;
   const T = opts.timers || ctx.timers || {

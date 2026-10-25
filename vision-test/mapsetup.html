@@ -16,14 +16,14 @@
 <h4>🏘 Map setup</h4>
 <div id="app" class="note">Loading…</div>
 <script type="module">
-// 🏘 Map setup, on a map image or one text label (only the copy the panel on this PC serves makes it:
+// 🏘 Map setup, on a map image, one text label or one drawing marked as a place (only the copy the panel on this PC serves makes it:
 // background.js thisPcMenus). A button for each job the old right-click entries ran, with their labels
 // (on a text label: 🎨 Copy label style and ↩ Undo label style, labelstyle.js). A tap asks
 // this copy's background to run it (CH.LOCAL_ASK, need "map-setup", host "local"): the job runs
 // there, exactly as before, with the same notices, so closing this popover doesn't stop it.
-import OBR from "./obr-sdk.js?v=52156fe";
-import { CH, send } from "./bus.js?v=52156fe";
-import { MAP_SETUP_JOBS, MAP_SETUP_NEED, MAP_SETUP_POPOVER_ID } from "./dndmenu.js?v=52156fe";
+import OBR from "./obr-sdk.js?v=9a30147";
+import { CH, send } from "./bus.js?v=9a30147";
+import { MAP_SETUP_JOBS, MAP_SETUP_NEED, MAP_SETUP_POPOVER_ID } from "./dndmenu.js?v=9a30147";
 
 const params = new URLSearchParams(location.search);
 const id = (params.get("ids") || "").split(",").filter(Boolean)[0] || "";
@@ -41,7 +41,7 @@ OBR.onReady(() => {
   const offered = MAP_SETUP_JOBS.filter((j) => jobs.includes(j.key));
   app.textContent = "";
   if (!id || !offered.length) {
-    app.textContent = "Right-click one map image or one text label.";
+    app.textContent = "Right-click one map image, one text label or one drawing marked as a place.";
     return;
   }
   app.className = "";

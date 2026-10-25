@@ -15,8 +15,8 @@
 // or written, the switch, the answerer changing, an error), never per frame or per pass.
 // echo(text): this screen's console too (background.js's ctx.log).
 
-import { FOG_LOG_CH } from "../keys.js?v=52156fe";
-import { on, send } from "../bus.js?v=52156fe";
+import { FOG_LOG_CH } from "../keys.js?v=9a30147";
+import { on, send } from "../bus.js?v=9a30147";
 
 export const LOG_SHOW = 40; // lines the GM box shows
 export const LOG_KEEP = 60; // a screen's own lines kept, and the lines a GM screen holds

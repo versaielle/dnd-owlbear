@@ -17,15 +17,20 @@
 //                                    map's edge wall (fog/walls.js), so it never counts for this token
 //   lightsOnMap(lights, mapId, maps), lightMapOf(light, maps)   the same by a map's id; a light's map
 //   darknessCtx(items, scene, {isPc, grid})  what fx/lightmeta.js visionOf/smokeFor read from a
-//                                    ctx: {regions, lights (the public ones: [{id, x, y, reach, mapId}],
-//                                    scene px and feet; mapId the map under the light's item, or null),
-//                                    pxPerFt, maps (views.js mapRects, topmost first), dpi}
+//                                    ctx: {regions, lights (the public ones: [{id, x, y, reach,
+//                                    bright, cone, mapId}], scene px and feet: lightShape; mapId the
+//                                    map under the light's item, or null), pxPerFt, maps (views.js
+//                                    mapRects, topmost first), dpi}
+//   lightShape(item, light, rules)   one light as the overlay, the badge and the explored memory
+//                                    get it (docs/vision-layer-2024.md section 7)
 // `grid`: {dpi, ftPerCell} (or a dpi number); missing = Owlbear's default 150 dpi, 5 ft.
 
-import { CARRIER_KEY, MAP_DARKNESS_KEY, SCENE_LIGHTING_KEY, SMOKE } from "../keys.js?v=52156fe";
-import * as LM from "./lightmeta.js?v=52156fe";
-import { finite, footprint, gridOf } from "./place.js?v=52156fe";
-import { centreOf, mapAt, mapRects } from "../views.js?v=52156fe";
+import { CARRIER_KEY, MAP_DARKNESS_KEY, SCENE_LIGHTING_KEY, SMOKE } from "../keys.js?v=9a30147";
+import { capCones, coneOf, effectiveRules, farReach, rulesOf } from "../rules2024.js?v=9a30147";
+import * as LM from "./lightmeta.js?v=9a30147";
+import { CONES_BUILT, hasCone } from "./lights.js?v=9a30147";
+import { finite, footprint, gridOf } from "./place.js?v=9a30147";
+import { centreOf, mapAt, mapRects } from "../views.js?v=9a30147";
 
 export const CODES = ["lit", "dim", "dark"];
 export const codeOf = (v) => (CODES.includes(v) ? v : null);
@@ -100,14 +105,15 @@ export function mapsExtent(items, grid) {
 }
 
 // How far (feet) a token could see a light from where it stands: the farthest light's far edge,
-// max over lights of (distance + reach). 0 with no light. lights: [{x, y, reach}] (px, feet).
+// max over lights of (distance + reach; a 2024 Cone's flat-end corners, rules2024.js farReach). 0
+// with no light. lights: [{x, y, reach, cone}] (px, feet).
 export function farLight(token, lights, pxPerFt = gridFrom().pxPerFt) {
   const p = token?.position;
   if (!p || !finite(p.x, p.y) || !(pxPerFt > 0)) return 0;
   let far = 0;
   for (const l of Array.isArray(lights) ? lights : []) {
     if (!l || !finite(l.x, l.y) || !(l.reach > 0)) continue;
-    far = Math.max(far, Math.hypot(l.x - p.x, l.y - p.y) / pxPerFt + l.reach);
+    far = Math.max(far, Math.hypot(l.x - p.x, l.y - p.y) / pxPerFt + farReach(l));
   }
   return Math.ceil(far);
 }
@@ -164,11 +170,32 @@ export function ambientReach(item, lighting) {
 
 // ---- the ctx planCtx gives visionOf / smokeFor ----
 
+// One light as the overlay, the badge and the explored memory get it: {id, x, y, reach, bright,
+// cone}. x, y: scene px (the item's position); reach (bright + dim) and bright: feet; bright is the
+// light's own (fx/lightmeta.js effectiveLight: its kind's, or half its reach when it has no split:
+// a typed reach, an adopted Smoke torch); a light given as a bare reach (the DM's hidden ambient
+// torch) gets half of it. cone: null, or {facing, half} (degrees: rules2024.js coneOf of the token's
+// rotation) for a light that shines in a cone (the bullseye) while 🔦 and 💡 are both on
+// (`rules`: rules2024.js effectiveRules) and the cone is drawn (fx/lights.js CONES_BUILT; `built`
+// stands in for it in the checks); else null.
+export function lightShape(item, light, rules = null, { built = CONES_BUILT } = {}) {
+  const reach = +light?.reach;
+  if (!item || !finite(item.position?.x, item.position?.y) || !(reach > 0)) return null;
+  const b = light?.bright;
+  const bright = b == null || !finite(+b) ? reach / 2 : Math.max(0, Math.min(+b, reach));
+  const cone = rules?.cones === true && built === true && hasCone(light?.kind) ? coneOf(finite(item.rotation) ? item.rotation : 0) : null;
+  return { id: item.id, x: item.position.x, y: item.position.y, reach, bright, cone };
+}
+
 // The PUBLIC lights (R1: not secret; a carrier child never: its NPC's own light counts) and the
-// DM's ambient lights, in scene px with reach in feet, each with the map its item's middle is on
+// DM's ambient lights (lightShape: scene px, feet), each with the map its item's middle is on
 // (mapId: views.js mapAt over mapRects, null between the maps); the darkness regions; the grid; the
 // map rectangles (`maps`, topmost first) and the dpi they were worked out at, for lightsFor.
-// opts: {isPc(item), grid, lighting (SCENE_LIGHTING_KEY's value; else read off the scene)}.
+// opts: {isPc(item), grid, lighting (SCENE_LIGHTING_KEY's value; else read off the scene)}. The
+// scene's 2024 switches (RULES_KEY) decide whether a bullseye gets its cone; a cone never changes
+// which map a light is on (the same-map rule holds with the switches on or off). At most
+// rules2024.js MAX_CONES lights keep a cone that lights (capCones: a PC's own first, then by id, as
+// fx/lighting.js keeps them for the overlay and the flames); a further one's cone has no width.
 export function darknessCtx(items, scene, opts = {}) {
   const list = (Array.isArray(items) ? items : []).filter((i) => i?.id != null);
   const G = gridFrom(opts.grid);
@@ -177,7 +204,9 @@ export function darknessCtx(items, scene, opts = {}) {
   const byId = new Map(list.map((i) => [i.id, i]));
   const isPc = (i) => { try { return !!opts.isPc?.(i); } catch { return false; } };
   const lighting = opts.lighting ?? metaOf(scene)[SCENE_LIGHTING_KEY];
+  const rules = effectiveRules(rulesOf(metaOf(scene)));
   const lights = [];
+  const pcLights = new Set(); // the lights a PC token carries itself
   const secret = (i) => LM.isSecret(i, { parentOf: (id) => byId.get(id), isPc: (id) => { const x = byId.get(id); return x ? isPc(x) : false; } });
   // Each light as it is once the DM's Smoke edits are adopted (what any writer's planItem makes of
   // it first), so a writer's pass never changes the lights a seer's range was planned from: one
@@ -193,16 +222,25 @@ export function darknessCtx(items, scene, opts = {}) {
     const i = adopted(i0);
     if (i.metadata?.[CARRIER_KEY] || !finite(i.position?.x, i.position?.y)) continue;
     if (isAmbientLight(i, { lighting, byId, isPc, isSecret: secret })) {
-      const reach = ambientReach(i, lighting);
-      if (reach) lights.push({ id: i.id, x: i.position.x, y: i.position.y, reach, mapId: mapOf(i) });
+      // (its Smoke range alone: no bright/dim split, so half of it is bright; never a cone)
+      const shape = lightShape(i, { reach: ambientReach(i, lighting) });
+      if (shape) lights.push({ ...shape, mapId: mapOf(i) });
       continue;
     }
     const l = LM.effectiveLight(i, lighting);
     if (!l || !(l.reach > 0)) continue;
     if (secret(i)) continue;
-    lights.push({ id: i.id, x: i.position.x, y: i.position.y, reach: l.reach, mapId: mapOf(i) });
+    const shape = lightShape(i, l, rules);
+    if (!shape) continue;
+    const at = { ...shape, mapId: mapOf(i) };
+    if (isPc(i)) pcLights.add(at);
+    lights.push(at);
   }
-  return { regions: darkRegions(list, scene, G), lights, pxPerFt: G.pxPerFt, maps, dpi: G.dpi };
+  // At most rules2024.js MAX_CONES of them shine in a cone, a PC's own first, then by id (capCones):
+  // the overlay's cone copy has no room for more, so a further bullseye lights nothing here either
+  // (the fog's sight, memory, seen test and covers and the badge all read these)
+  const capped = capCones(lights, { rank: (x) => (pcLights.has(x) ? 0 : 1) });
+  return { regions: darkRegions(list, scene, G), lights: capped, pxPerFt: G.pxPerFt, maps, dpi: G.dpi };
 }
 
 // The grid as darknessCtx wants it, read from Owlbear: {dpi, ftPerCell}.

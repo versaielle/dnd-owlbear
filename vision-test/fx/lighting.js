@@ -17,7 +17,7 @@
 //
 // ctx (background.js): role, kind, host, isPc(idOrItem, item), isPublic(idOrItem, item),
 // pcTokens and party (only to notice a change), relayOnly, log; optionally senses(item) ->
-// {dark} (else the room's PARTY_SENSES_KEY by the PC's name).
+// {dark, blind, truesight, tremor} (else the room's PARTY_SENSES_KEY by the PC's name).
 //
 // Everything drawn here is LOCAL (OBR.scene.local): nothing is saved in the room, and no write of
 // ours fires scene.items.onChange (which would start Smoke's full run on every client).
@@ -63,15 +63,34 @@
 // Their uniforms are worked out again on EVERY item change, at once (cheap arithmetic, one
 // local update): a carried torch's colour moves with the drag; the flames and walls wait for the
 // scene to settle.
-import { CARRIER_KEY, LIGHT_FX_KEY, PARTY_SENSES_KEY, SCENE_LIGHTING_KEY } from "../keys.js?v=52156fe";
-import { DV_DARK_BLEND, DV_GREY, DV_SOFT_FT, FLAME_BLEND, WALL_SLOTS, darknessPlan, darkvisionShader, dimFor,
-  flameShader, flameUniforms } from "./lights.js?v=52156fe";
-import { ambientReach, darkRegions, isAmbientLight, mapsExtent, sceneDarkness } from "./darkness.js?v=52156fe";
-import { DEFAULT_LIGHTING, effectiveLight, lightingOf, rangeDefaultOf, visionOf } from "./lightmeta.js?v=52156fe";
-import { nameKey, pcName, tokenLabel } from "./pcs.js?v=52156fe";
-import { finite, footprint, gridOf } from "./place.js?v=52156fe";
-import { readLine, toWorld } from "../fog/lineread.js?v=52156fe";
-import { customUniforms, fillUniforms } from "./shaders.js?v=52156fe";
+//
+// The 2024 rules (docs/vision-layer-2024.md; the scene's RULES_KEY, rules2024.js effectiveRules):
+// while 💡 dim light, 👓 darkvision or 🦇 senses is on, the two passes draw the 2024 COPY of the
+// overlay (fx/lights.js darkness2024Shader / darkness2024Plan): a light's dim ring at the dim level,
+// darkvision that sees dim light as bright and darkness as dim (grey), and blindsight and truesight
+// circles. With all three off, the overlay above runs exactly as before (today's shader, today's
+// plan, the same inputs). Switching between them takes both passes off and puts the other copy on
+// (one delete and one add of the two local items, never per frame).
+// While 🔦 cones and 💡 dim light are both on, the two passes draw a third copy, the cone's
+// (fx/lights.js darknessConeShader / darknessConePlan): the 2024 copy, with a bullseye lantern
+// lighting only a cone the way its token is turned (fx/darkness.js lightShape gives each light its
+// `cone`). Turning the token updates the passes' uniforms once (an item change, like a move).
+// The flames follow it: while 🔦 and 💡 are both on every flame here is drawn with the flame's cone
+// copy (fx/lights.js flameConeShader), so the bullseye's warm glow lights only its cone too and a
+// neighbour's flame treats it as absent outside its cone; with either off, the plain flame, exactly
+// as before. A turn rewrites the flames' uniforms once it settles (a flame isn't turned with its
+// token: ROTATION is detached, so its cone is worked out from the token's turn, like the overlay's).
+import { CARRIER_KEY, LIGHT_FX_KEY, PARTY_SENSES_KEY, SCENE_LIGHTING_KEY } from "../keys.js?v=9a30147";
+import { capCones, effectiveRules, rulesOf, senseMapOf } from "../rules2024.js?v=9a30147";
+import { DV_DARK_BLEND, DV_GREY, DV_SOFT_FT, FLAME_BLEND, WALL_SLOTS, coneSlot, darkness2024Plan, darkness2024Shader, darknessConePlan,
+  darknessConeShader, darknessPlan, darkvisionShader, dimFor, DKC_CONES, flameConeShader, flameConeUniforms, flameShader, flameUniforms,
+  uses2024, usesCone } from "./lights.js?v=9a30147";
+import { ambientReach, darkRegions, isAmbientLight, lightShape, mapsExtent, sceneDarkness } from "./darkness.js?v=9a30147";
+import { DEFAULT_LIGHTING, effectiveLight, lightingOf, rangeDefaultOf, visionOf } from "./lightmeta.js?v=9a30147";
+import { nameKey, pcName, tokenLabel } from "./pcs.js?v=9a30147";
+import { finite, footprint, gridOf } from "./place.js?v=9a30147";
+import { readLine, toWorld } from "../fog/lineread.js?v=9a30147";
+import { customUniforms, fillUniforms } from "./shaders.js?v=9a30147";
 
 export const MAX_FLAMES = 12; // flames per screen: each full one makes Owlbear redraw every frame
 export const LIGHT_Z = 1; // on ATTACHMENT: above the tokens, under rings and badges (auto z-indexes are timestamps)
@@ -210,6 +229,17 @@ export function publicChain(item, byId, { isPc, isPublic } = {}) {
   return false;
 }
 
+// Which bullseyes keep their cone when a scene has more than rules2024.js MAX_CONES (capCones'
+// rank): a PC's own light 0, a public one 1, one only the GM's screen shows 2 (then by id). The fog
+// (fx/darkness.js darknessCtx) ranks a PC's 0 and every public one 1, so a GM's overlay keeps the
+// same public cones the players' screens and the seen test keep.
+export function coneRank(item, byId, pub = {}) {
+  try {
+    if (pub?.isPc?.(item)) return 0;
+  } catch { /* not a PC */ }
+  return publicChain(item, byId, pub) ? 1 : 2;
+}
+
 // Where a dim or dark SCENE's overlay goes: every map, else 120 ft around every token.
 export function extentOf(items, grid) {
   const maps = mapsExtent(items, grid);
@@ -225,11 +255,19 @@ export function extentOf(items, grid) {
   return e;
 }
 
-// The overlay's inputs on one screen (scene pixels, feet), for fx/lights.js darknessPlan():
+// The overlay's inputs on one screen (scene pixels, feet), for fx/lights.js darknessPlan() (and
+// darkness2024Plan(), which reads the 2024 fields too):
 //   regions (fx/darkness.js darkRegions), extent, lights: every light this screen shows (`show`:
 //   its R1; a GM's shows all) and every ambient light of the DM's (its Smoke range), never a
-//   carrier child (its NPC's own light counts); seers: every PUBLIC seer with darkvision (the same
-//   on every screen); selves: every PC's own mini (selfDisc), which the darkness never covers.
+//   carrier child (its NPC's own light counts), each {id, x, y, reach, bright, cone} (fx/darkness.js
+//   lightShape: bright the light's own, effectiveLight, an ambient light half its range; cone null
+//   unless 🔦 and 💡 are both on in sceneMeta's RULES_KEY and it's a bullseye, then {facing, half}
+//   from its token's turn: only darknessConePlan reads it; past rules2024.js MAX_CONES bullseyes,
+//   the rest in coneRank's order get a cone of no width, capCones); seers: every PUBLIC seer with
+//   darkvision (the same on every screen); selves: every PC's own mini (selfDisc), which the
+//   darkness never covers; senses: every PUBLIC seer with blindsight or truesight ({id, x, y, blind,
+//   truesight}, feet: visionOf, the DM's override over the party file). darknessPlan reads none of the 2024
+//   fields (bright, senses, cone), so today's overlay is drawn from exactly what it always was.
 //   opts: {sceneMeta, lighting, grid {dpi, ftPerCell}, vctx (visionOf's ctx), pub (publicChain's),
 //   show(item, byId)}.
 // A scene released to Smoke (SCENE_LIGHTING_KEY managed false): null (Smoke draws its own there).
@@ -238,8 +276,10 @@ export function darkInputs(items, { sceneMeta = {}, lighting, grid, vctx, pub, s
   const byId = new Map();
   for (const i of items || []) if (i?.id != null) byId.set(i.id, i);
   const list = [...byId.values()];
-  const seers = [], lights = [], selves = [];
+  const seers = [], lights = [], selves = [], senses = [];
+  const owner = new Map(); // light -> its item, for capCones' rank (coneRank)
   const dpi = gridOf(grid?.dpi, grid?.ftPerCell).dpi;
+  const rules = effectiveRules(rulesOf(sceneMeta)); // (only a light's cone reads it)
   const pcOf = (i) => { try { return !!pub?.isPc?.(i); } catch { return false; } };
   for (const item of list) {
     if (isCarrier(item) || !finite(item.position?.x, item.position?.y)) continue;
@@ -251,16 +291,25 @@ export function darkInputs(items, { sceneMeta = {}, lighting, grid, vctx, pub, s
     }
     if (isAmbientLight(item, { lighting, byId, isPc: pub?.isPc, isSecret: (i) => !publicChain(i, byId, pub) })) {
       const reach = ambientReach(item, lighting);
-      if (reach) lights.push({ ...at, reach });
+      if (reach) lights.push({ ...at, reach, bright: reach / 2 });
       continue;
     }
     const l = effectiveLight(item, lighting);
-    if (l && l.reach > 0 && (show ? show(item, byId) : publicChain(item, byId, pub))) lights.push({ ...at, reach: l.reach });
+    if (l && l.reach > 0 && (show ? show(item, byId) : publicChain(item, byId, pub))) {
+      const shape = lightShape(item, l, rules);
+      if (shape) {
+        lights.push(shape);
+        owner.set(shape, item);
+      }
+    }
     if (!publicChain(item, byId, pub)) continue;
     const v = visionOf(item, vctx);
     if (v?.seer && +v.dark > 0) seers.push({ ...at, dark: +v.dark, pc: !!v.pc });
+    if (v?.seer && (+v.blind > 0 || +v.truesight > 0)) senses.push({ ...at, blind: +v.blind || 0, truesight: +v.truesight || 0 });
   }
-  return { regions: darkRegions(list, sceneMeta, grid), extent: extentOf(list, grid), seers, lights, selves };
+  // at most MAX_CONES bullseyes shine, the ones the fog keeps too (capCones; the same list when fewer)
+  const shining = capCones(lights, { rank: (x) => coneRank(owner.get(x), byId, pub) });
+  return { regions: darkRegions(list, sceneMeta, grid), extent: extentOf(list, grid), seers, lights: shining, selves, senses };
 }
 
 // A token's mini as drawn, in scene px: {x, y, r}, its image's centre and half its smaller side
@@ -308,7 +357,7 @@ export function createLights(api = {}, ctx = {}) {
   let full = null;
   const loading = (async () => {
     if (api.OBR && typeof api.buildEffect === "function") return api;
-    const sdk = await import("../obr-sdk.js?v=52156fe");
+    const sdk = await import("../obr-sdk.js?v=9a30147");
     return { OBR: sdk.default, buildEffect: sdk.buildEffect, MathM: sdk.MathM, ...api };
   })().then((a) => {
     full = a;
@@ -344,11 +393,15 @@ export function createLights(api = {}, ctx = {}) {
   const shows = (item, byId = null) => role() === "GM" || isPublicChain(item, byId);
   const pcSignature = () => `${[...(ctx.pcTokens || [])].map(String).sort().join(",")}|${(ctx.party || []).join(",")}`;
 
-  // ---- the scene's lighting and the party's senses ----
+  // ---- the scene's lighting, its 2024 switches and the party's senses ----
   let lighting = { ...DEFAULT_LIGHTING };
   let sceneMeta = {};
   let rangeDefault = 30;
   let roomSenses = {};
+  // the 2024 switches the overlay obeys (rules2024.js effectiveRules of the scene's RULES_KEY):
+  // only 💡 dim, 👓 darkvision, 🦇 senses and 🔦 cones (with 💡 only) change what it draws
+  let rules = effectiveRules(null);
+  const drawRules = () => ({ dim: rules.dim, darkvision: rules.darkvision, senses: rules.senses, cones: rules.cones });
   const sensesOf = (item) => {
     if (typeof ctx.senses === "function") {
       try { return ctx.senses(item) || null; } catch (e) { return null; }
@@ -358,18 +411,19 @@ export function createLights(api = {}, ctx = {}) {
     return s && typeof s === "object" ? s : null;
   };
   const vctx = { isPc, senses: sensesOf, get lighting() { return lighting; }, get rangeDefault() { return rangeDefault; } };
-  const metaSig = () => JSON.stringify([lighting, sceneDarkness(sceneMeta), rangeDefault, roomSenses]);
+  const metaSig = () => JSON.stringify([lighting, sceneDarkness(sceneMeta), rangeDefault, roomSenses, drawRules()]);
   function takeScene(meta) {
     const before = metaSig();
     sceneMeta = meta && typeof meta === "object" ? meta : {};
     lighting = sceneLighting(meta);
     rangeDefault = rangeDefaultOf(meta);
+    rules = effectiveRules(rulesOf(sceneMeta));
     return metaSig() !== before;
   }
   function takeRoom(meta) {
     const before = metaSig();
-    const s = meta?.[PARTY_SENSES_KEY];
-    roomSenses = s && typeof s === "object" ? s : {};
+    // all four senses per PC, by name key (rules2024.js senseMapOf, the one parser every screen uses)
+    roomSenses = senseMapOf(meta?.[PARTY_SENSES_KEY], { keyOf: nameKey });
     return metaSig() !== before;
   }
 
@@ -381,6 +435,7 @@ export function createLights(api = {}, ctx = {}) {
   const dv = new Map();
   let dvInfo = { seers: 0, circles: 0, regions: 0, selves: 0, dropped: { regions: 0, seers: 0, circles: 0, selves: 0 } };
   let dvSaid = "";
+  let coneSaid = ""; // the bullseyes logged as dark (capCones), by id
   const wallsSaid = new Set(); // flames whose walls past WALL_SLOTS were logged already
   // The items this screen showed at the last scene change it looked at (null: none yet, or a
   // GM's screen): one that was shown and isn't now has its light taken off at once.
@@ -419,17 +474,21 @@ export function createLights(api = {}, ctx = {}) {
     }
   }
 
-  // A flame's uniforms: its light, its seed, how hard it may flicker here, and its walls.
+  // A flame's uniforms: its light, its seed, how hard it may flicker here, and its walls; in the cone
+  // copy (w.cone: 🔦 and 💡 both on) its own cone too (w.k) and its neighbours' (their `k`).
   const flameDecl = {};
+  const flameSksl = (w, t) => (w.cone ? flameConeShader(t) : flameShader(t));
   function flameValues(w, t) {
-    const sksl = flameShader(t);
-    if (!flameDecl[t]) flameDecl[t] = customUniforms(sksl);
-    return fillUniforms(flameDecl[t], flameUniforms(w.light.kind,
-      { seed: seedOf(w.item.id), ftPerCell: G.ftPerCell, walls: w.walls, neighbours: w.neighbours }), warn);
+    const sksl = flameSksl(w, t);
+    const dk = w.cone ? `cone.${t}` : t;
+    if (!flameDecl[dk]) flameDecl[dk] = customUniforms(sksl);
+    const opts = { seed: seedOf(w.item.id), ftPerCell: G.ftPerCell, walls: w.walls, neighbours: w.neighbours };
+    return fillUniforms(flameDecl[dk], w.cone ? flameConeUniforms(w.light.kind, { ...opts, cone: w.k, softFt: DV_SOFT_FT })
+      : flameUniforms(w.light.kind, opts), warn);
   }
 
   function flameItem(a, w, t) {
-    const sksl = flameShader(t);
+    const sksl = flameSksl(w, t);
     const S = w.S;
     const { x, y } = w.item.position;
     return a.buildEffect()
@@ -448,15 +507,17 @@ export function createLights(api = {}, ctx = {}) {
       .build();
   }
 
-  const DV = darkvisionShader();
-  const DV_DECL = customUniforms(DV);
+  // the overlay's three shaders: today's ("today"), the 2024 rules' copy ("2024", only while 💡,
+  // 👓 or 🦇 is on), and the cone's copy ("cone", only while 🔦 and 💡 are both on)
+  const DV_SHADERS = { today: darkvisionShader(), 2024: darkness2024Shader(), cone: darknessConeShader() };
+  const DV_DECLS = { today: customUniforms(DV_SHADERS.today), 2024: customUniforms(DV_SHADERS[2024]), cone: customUniforms(DV_SHADERS.cone) };
   const DV_PARTS = { grey: { blend: DV_GREY.blend, pass: 0 }, dim: { blend: DV_DARK_BLEND, pass: 1 } };
 
-  function dvItem(a, part, plan, uniforms) {
+  function dvItem(a, part, plan, uniforms, shader = "today") {
     const b = plan.box;
     return a.buildEffect()
       .effectType("STANDALONE")
-      .sksl(DV)
+      .sksl(DV_SHADERS[shader] || DV_SHADERS.today)
       .uniforms(uniforms)
       .blendMode(DV_PARTS[part].blend)
       .width(b.w).height(b.h)
@@ -469,24 +530,40 @@ export function createLights(api = {}, ctx = {}) {
   }
 
   // What darkness this screen draws now (docs/lights-darkness-spec.md): null, or {plan, uniforms:
-  // {grey, dim}}. Released to Smoke: nothing of ours (Smoke's own ring; the flames stay).
+  // {grey, dim}, shader: "today" | "2024" | "cone"}. Released to Smoke: nothing of ours (Smoke's own
+  // ring; the flames stay). With 💡, 👓 and 🦇 all off: today's plan and shader, exactly as before.
   const noDv = () => ({ seers: 0, circles: 0, regions: 0, selves: 0, dropped: { regions: 0, seers: 0, circles: 0, selves: 0 } });
   function dvWant(all) {
     const inp = darkInputs(all, { sceneMeta, lighting, grid: G, vctx, pub, show: shows });
-    const plan = inp && darknessPlan(inp, { pxPerFt: G.pxPerFt, softFt: DV_SOFT_FT, quant: 1, kind: kind() });
+    const r = drawRules();
+    const shader = usesCone(r) ? "cone" : uses2024(r) ? "2024" : "today";
+    const opts = { pxPerFt: G.pxPerFt, softFt: DV_SOFT_FT, quant: 1, kind: kind() };
+    const plan = inp && (shader === "cone" ? darknessConePlan(inp, { ...opts, rules: r })
+      : shader === "2024" ? darkness2024Plan(inp, { ...opts, rules: r }) : darknessPlan(inp, opts));
     dvInfo = plan ? { seers: plan.seers.length, circles: plan.circles, regions: plan.regions, selves: plan.selves.length, dropped: plan.dropped } : noDv();
     const d = dvInfo.dropped;
     const said = `${d.regions}|${d.seers}|${d.circles}|${d.selves}`;
     if (said !== dvSaid) {
       dvSaid = said;
       if (d.regions || d.seers || d.circles || d.selves) {
-        log(`lights: the darkness has room for 12 marked maps, 8 darkvisions, 32 lights and 8 PC minis; left out here: ${d.regions} maps, ${d.seers} darkvisions, ${d.circles} lights, ${d.selves} PC minis`);
+        log(`lights: the darkness has room for 12 marked maps, 8 darkvisions, 32 lights${shader === "cone" ? ` (at most ${DKC_CONES} of them in a cone)` : ""} and 8 PC minis; left out here: ${d.regions} maps, ${d.seers} darkvisions, ${d.circles} lights, ${d.selves} PC minis`);
+      }
+    }
+    // the bullseyes past the few that shine (capCones gave them a cone of no width): said once per change
+    const dark = (inp?.lights || []).filter((l) => l.cone && !(l.cone.half > 0));
+    const darkSaid = dark.map((l) => String(l.id)).sort().join(",");
+    if (darkSaid !== coneSaid) {
+      coneSaid = darkSaid;
+      if (dark.length) {
+        const byId = new Map((all || []).map((i) => [i?.id, i]));
+        const names = dark.map((l) => byId.get(l.id)?.name || l.id).join(", ");
+        log(`lights: only ${DKC_CONES} bullseye lanterns can shine at once (a PC's own first); ${names} ${dark.length === 1 ? "is" : "are"} dark and light${dark.length === 1 ? "s" : ""} nothing until another goes out`);
       }
     }
     if (!plan) return null;
     const uniforms = {};
-    for (const part of Object.keys(DV_PARTS)) uniforms[part] = fillUniforms(DV_DECL, { ...plan.values, pass: DV_PARTS[part].pass }, warn);
-    return { plan, uniforms };
+    for (const part of Object.keys(DV_PARTS)) uniforms[part] = fillUniforms(DV_DECLS[shader], { ...plan.values, pass: DV_PARTS[part].pass }, warn);
+    return { plan, uniforms, shader };
   }
 
   // Make what's on this screen match the scene: the flames (unless `dark` only) and the
@@ -520,6 +597,10 @@ export function createLights(api = {}, ctx = {}) {
     const byId = new Map(all.map((i) => [i.id, i]));
 
     const del = [], add = [], addedFlames = [], addedDv = [];
+    // part -> the old copy's record, when a 2024 switch swaps the darkness overlay's shader copy: it
+    // comes off only once the new copy is added (below), so no screen goes a frame without its
+    // darkness overlay (both copies for a moment: darker, never lighter)
+    const swapped = new Map();
     // item id -> [(draft) => void]: every change to one of ours in one update
     const upd = new Map();
     const change = (id, f) => {
@@ -531,20 +612,34 @@ export function createLights(api = {}, ctx = {}) {
     // ---- flames: every light this screen may see, the PCs' first, at most MAX_FLAMES ----
     if (!darkOnly) {
       const shown = [];
-      const want = new Map(); // source id -> {item, light, S, sig, walls, wkey, neighbours, nkey}
+      const want = new Map(); // source id -> {item, light, S, sig, cone, k, ckey, walls, wkey, neighbours, nkey}
+      // 🔦 and 💡 both on: every flame is the cone copy (a swap of copies when it flips, as the overlay's),
+      // each with its cone, k (fx/lights.js coneSlot of fx/darkness.js lightShape's: null for a circle)
+      const cone = usesCone(drawRules());
       if (draw) {
+        const cands = [];
         all.forEach((item, n) => {
           if (isCarrier(item) || !finite(item?.position?.x, item?.position?.y)) return;
           const light = effectiveLight(item, lighting);
           if (!light || !(light.reach > 0)) return;
           if (!shows(item, byId)) return;
-          shown.push({ item, light, pc: isPc(item), n });
+          cands.push({ item, light, n, shape: cone ? lightShape(item, light, rules) : null });
+        });
+        // at most MAX_CONES bullseyes shine: the same ones as the overlay's (capCones in coneRank's
+        // order over the same lights, as darkInputs keeps them); a further one gets no flame
+        const owner = new Map(cands.map((c) => [c.shape, c.item]));
+        const capped = cone ? capCones(cands.map((c) => c.shape), { rank: (x) => coneRank(owner.get(x), byId, pub) }) : [];
+        cands.forEach((c, i) => {
+          const k = cone ? coneSlot(capped[i]?.cone ?? null) : null;
+          if (k === "none") return; // a cone that lights nothing: no flame (the overlay leaves it out too)
+          shown.push({ item: c.item, light: c.light, pc: isPc(c.item), n: c.n, k });
         });
         const order = [...shown].sort((x, y) => (x.pc === y.pc ? x.n - y.n : x.pc ? -1 : 1));
         for (const c of order.slice(0, MAX_FLAMES)) {
           const S = Math.min(c.light.reach * 2 * G.pxPerFt, MAX_PX);
           if (!finite(S) || S <= 0) continue;
-          want.set(c.item.id, { ...c, S, sig: `${c.light.kind}|${t}|${Math.round(S)}|${G.ftPerCell}` });
+          want.set(c.item.id, { ...c, S, cone, ckey: c.k ? JSON.stringify(c.k) : "",
+            sig: `${c.light.kind}|${t}|${Math.round(S)}|${G.ftPerCell}${cone ? "|cone" : ""}` });
         }
         noteDropped(order.slice(MAX_FLAMES));
         // Overlapping lights never add up: each flame knows the others drawn here whose reach
@@ -560,10 +655,10 @@ export function createLights(api = {}, ctx = {}) {
             const dx = Math.round((o.item.position.x - w.item.position.x) / step) * step;
             const dy = Math.round((o.item.position.y - w.item.position.y) / step) * step;
             if (Math.hypot(dx, dy) >= (w.S + o.S) / 2) continue;
-            nb.push({ dx: dx / G.pxPerFt, dy: dy / G.pxPerFt, kind: o.light.kind, id: o.item.id });
+            nb.push({ dx: dx / G.pxPerFt, dy: dy / G.pxPerFt, kind: o.light.kind, id: o.item.id, k: o.k });
           }
           w.neighbours = nb;
-          w.nkey = nb.map((n) => `${n.id}:${n.kind}:${Math.round(n.dx * 10)},${Math.round(n.dy * 10)}`).sort().join(";");
+          w.nkey = nb.map((n) => `${n.id}:${n.kind}:${Math.round(n.dx * 10)},${Math.round(n.dy * 10)}${n.k ? `:${JSON.stringify(n.k)}` : ""}`).sort().join(";");
         }
         // ...and each stops at the walls within its reach
         const segs = drawn.length ? lightWalls(all) : [];
@@ -589,16 +684,17 @@ export function createLights(api = {}, ctx = {}) {
           if (cur && finite(cur.x, cur.y) && Math.hypot(cur.x - at.x, cur.y - at.y) > 1) change(f.id, (d) => { d.position = at; });
           // Its walls are measured again once it has moved a quarter of a square (a carried torch)
           // or a wall near it changed (a door opened), and its flicker when a flame came or went
-          // near it; written only when that changes its uniforms (a torch carried down an empty
-          // hall writes nothing).
+          // near it, and its cone when it or a neighbour in a cone turned; written only when that
+          // changes its uniforms (a torch carried down an empty hall writes nothing).
           const pos = { ...w.item.position };
           const moved = !f.at || Math.hypot(pos.x - f.at.x, pos.y - f.at.y) > WALL_MOVE * G.dpi;
-          if (moved || w.wkey !== f.wkey || w.nkey !== f.nkey) {
+          if (moved || w.wkey !== f.wkey || w.nkey !== f.nkey || w.ckey !== f.ckey) {
             const uniforms = flameValues(w, t);
             const usig = uniformSig(uniforms);
             f.at = pos;
             f.wkey = w.wkey;
             f.nkey = w.nkey;
+            f.ckey = w.ckey;
             if (usig !== f.usig) {
               f.usig = usig;
               change(f.id, (d) => { d.uniforms = uniforms; });
@@ -614,7 +710,7 @@ export function createLights(api = {}, ctx = {}) {
         try {
           w.uniforms = flameValues(w, t);
           const item = flameItem(a, w, t);
-          flames.set(sid, { id: item.id, sig: w.sig, at: { ...w.item.position }, wkey: w.wkey, nkey: w.nkey, usig: uniformSig(w.uniforms) });
+          flames.set(sid, { id: item.id, sig: w.sig, at: { ...w.item.position }, wkey: w.wkey, nkey: w.nkey, ckey: w.ckey, usig: uniformSig(w.uniforms) });
           add.push(item);
           addedFlames.push(sid);
         } catch (e) {
@@ -626,13 +722,21 @@ export function createLights(api = {}, ctx = {}) {
     // ---- darkvision: whatever the flame tier ----
     const dw = live ? dvWant(all) : null;
     for (const part of Object.keys(DV_PARTS)) {
-      const rec = dv.get(part);
+      let rec = dv.get(part);
       if (!dw) {
         if (rec) {
           if (here.has(rec.id)) del.push(rec.id);
           dv.delete(part);
         }
         continue;
+      }
+      // a 2024 switch tapped on or off (💡, 👓, 🦇 or 🔦): another copy of the shader (Owlbear
+      // builds an effect's SkSL once: a new item comes, then the old one goes, after the add:
+      // `swapped`)
+      if (rec && (rec.shader || "today") !== dw.shader) {
+        if (here.has(rec.id)) swapped.set(part, rec);
+        dv.delete(part);
+        rec = null;
       }
       const uniforms = dw.uniforms[part];
       const usig = uniformSig(uniforms);
@@ -641,8 +745,8 @@ export function createLights(api = {}, ctx = {}) {
       if (!rec || !here.has(rec.id)) {
         if (rec) dv.delete(part);
         try {
-          const item = dvItem(a, part, dw.plan, uniforms);
-          dv.set(part, { id: item.id, geo, usig });
+          const item = dvItem(a, part, dw.plan, uniforms, dw.shader);
+          dv.set(part, { id: item.id, geo, usig, shader: dw.shader });
           add.push(item);
           addedDv.push(part);
         } catch (e) {
@@ -667,6 +771,7 @@ export function createLights(api = {}, ctx = {}) {
     const kept = new Set();
     for (const f of flames.values()) kept.add(f.id);
     for (const rec of dv.values()) kept.add(rec.id);
+    for (const rec of swapped.values()) kept.add(rec.id); // (comes off after the add)
     const going = new Set(del);
     for (const i of local) {
       if (kept.has(i.id) || going.has(i.id)) continue;
@@ -688,13 +793,34 @@ export function createLights(api = {}, ctx = {}) {
         fail("delete", e);
       }
     }
+    let addFailed = false;
     if (add.length) {
       try {
         await OBR.scene.local.addItems(add);
       } catch (e) {
+        addFailed = true;
         for (const sid of addedFlames) flames.delete(sid);
         for (const part of addedDv) dv.delete(part);
         fail("add", e);
+      }
+    }
+    // The old copies a 2024 switch replaced: off now that the new ones stand. A new copy that
+    // couldn't be built or added leaves its old one standing and tracked, so the next try swaps
+    // again (new first) instead of leaving the screen without its overlay.
+    let swappedOff = 0;
+    if (swapped.size) {
+      const off = [];
+      for (const [part, rec] of swapped) {
+        if (!addFailed && addedDv.includes(part) && dv.has(part)) off.push(rec.id);
+        else if (!dv.has(part)) dv.set(part, rec);
+      }
+      swappedOff = off.length;
+      if (off.length) {
+        try {
+          await OBR.scene.local.deleteItems(off);
+        } catch (e) {
+          fail("delete", e); // (untracked now: the next pass sweeps them up)
+        }
       }
     }
     if (upd.size) {
@@ -715,7 +841,7 @@ export function createLights(api = {}, ctx = {}) {
     orphans = failed;
     if (failed) tryAgain();
     else retryMs = RETRY_MS / 2;
-    return { added: add.length, removed: del.length, updated: upd.size };
+    return { added: add.length, removed: del.length + swappedOff, updated: upd.size };
   }
 
   function tryAgain() {
@@ -918,8 +1044,10 @@ export function createLights(api = {}, ctx = {}) {
   function status() {
     const t = tier();
     const on = active && t !== "off";
+    // (darkvision.look: which copy of the overlay is drawn, "today", "2024" or "cone")
+    const look = dv.get("dim")?.shader || dv.get("grey")?.shader || (usesCone(drawRules()) ? "cone" : uses2024(drawRules()) ? "2024" : "today");
     return { on, tier: t, table: active && kind() === "table", flames: flames.size, rings: dv.size ? dvInfo.seers : 0,
-      darkvision: { ...dvInfo, drawn: dv.size === 2, dim: dimFor(kind()) }, dropped, error: lastError };
+      darkvision: { ...dvInfo, drawn: dv.size === 2, dim: dimFor(kind()), look }, dropped, error: lastError };
   }
 
   return { start, stop, setSettings, pcTokensChanged, status, reconcile, idle: () => chain };

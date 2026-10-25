@@ -11,10 +11,11 @@
 // with CARRIER_KEY {of} and Smoke's torch keys; only while the goblin is lit, shown and doesn't
 // see by itself. Its id is CARRIER_PREFIX + the goblin's id, so every writer names it alike.
 
-import { CARRIER_KEY, PARTY_KEY, PARTY_SENSES_KEY, SCENE_LIGHTING_KEY, SMOKE, WHO_KEY } from "../keys.js?v=52156fe";
-import { LIGHT_PART, SMOKE_DEFAULT_KEYS, effectiveLight, isSecret, lightingOf, planItem, rangeDefaultOf, stable, visionOf, writeLightPart } from "./lightmeta.js?v=52156fe";
-import { isPcToken, nameKey, pcName, whoMarksFor } from "./pcs.js?v=52156fe";
-import { darknessCtx, readGrid } from "./darkness.js?v=52156fe";
+import { CARRIER_KEY, PARTY_KEY, PARTY_SENSES_KEY, SCENE_LIGHTING_KEY, SMOKE, WHO_KEY } from "../keys.js?v=9a30147";
+import { LIGHT_PART, SMOKE_DEFAULT_KEYS, effectiveLight, isSecret, lightingOf, planItem, rangeDefaultOf, stable, visionOf, writeLightPart } from "./lightmeta.js?v=9a30147";
+import { isPcToken, nameKey, pcName, whoMarksFor } from "./pcs.js?v=9a30147";
+import { darknessCtx, readGrid } from "./darkness.js?v=9a30147";
+import { senseMapOf } from "../rules2024.js?v=9a30147";
 
 const K = (name) => `${SMOKE}/${name}`;
 export const CARRIER_PREFIX = "dnd-npc-carrier-";
@@ -26,20 +27,15 @@ export const RECHECK_MS = 15000; // a blocked or standing-by writer looks again 
 const isObj = (x) => !!x && typeof x === "object" && !Array.isArray(x);
 const metaOf = (x) => (isObj(x?.metadata) ? x.metadata : isObj(x) ? x : {});
 
-// The room's party names (PARTY_KEY) and darkvision (PARTY_SENSES_KEY: {nameKey: {dark}}).
+// The room's party names (PARTY_KEY) and senses (PARTY_SENSES_KEY: {nameKey: {dark, blind,
+// truesight, tremor}}, whole feet; an older {dark} reads the rest as 0): rules2024.js senseMapOf,
+// the one parser every screen shares (docs/vision-layer-2024.md section 3).
 export function partyOf(roomMeta) {
   const v = roomMeta?.[PARTY_KEY];
   return Array.isArray(v) ? v.filter((n) => typeof n === "string" && n.trim()) : [];
 }
 export function sensesOf(roomMeta) {
-  const v = roomMeta?.[PARTY_SENSES_KEY];
-  const out = {};
-  if (!isObj(v)) return out;
-  for (const [k, s] of Object.entries(v)) {
-    const d = Number(s?.dark);
-    if (k && Number.isFinite(d) && d >= 0) out[nameKey(k)] = { dark: Math.round(d) };
-  }
-  return out;
+  return senseMapOf(roomMeta?.[PARTY_SENSES_KEY], { keyOf: nameKey });
 }
 
 // The ctx planItem() takes, for a scene: `items` (all of them, for the attachment chains),

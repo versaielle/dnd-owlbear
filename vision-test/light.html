@@ -39,19 +39,19 @@
 // name doesn't relight by itself), then fx/lightwriter.js writeNow plans Smoke & Spectre's keys
 // with the lights writer's own ctx (the party's darkvision, the PC rule and WHO marks, the scene's
 // lighting, Smoke's default range), all in ONE write: the writer's next pass plans nothing more.
-// Below the chips it says what it did ("Ana carries a torch (40 ft)") and what's missing
+// Below the chips it says what it did ("Ana carries a torch (20 + 20 ft)") and what's missing
 // (no table screen heard, a screen on an older build), from the screens this GM copy has heard.
 // A light from a spell cast on the panel is kept apart: shown, never changed here.
-import OBR from "./obr-sdk.js?v=52156fe";
-import { CH, isLocalOrigin, on, send } from "./bus.js?v=52156fe";
-import { LIGHT_KEY, PARTY_KEY } from "./keys.js?v=52156fe";
-import { SOURCES } from "./fx/lights.js?v=52156fe";
-import * as LM from "./fx/lightmeta.js?v=52156fe";
-import { readGrid } from "./fx/darkness.js?v=52156fe";
-import { writeNow } from "./fx/lightwriter.js?v=52156fe";
-import { cleanParty } from "./gather.js?v=52156fe";
-import { autoKind, describe, editFor, effectiveLight, lightName, reachOf, screenWarnings, uiCtx } from "./lightui.js?v=52156fe";
-import { clickedIds, showTabs } from "./tabs.js?v=52156fe";
+import OBR from "./obr-sdk.js?v=9a30147";
+import { CH, isLocalOrigin, on, send } from "./bus.js?v=9a30147";
+import { LIGHT_KEY, PARTY_KEY } from "./keys.js?v=9a30147";
+import { SOURCES } from "./fx/lights.js?v=9a30147";
+import * as LM from "./fx/lightmeta.js?v=9a30147";
+import { readGrid } from "./fx/darkness.js?v=9a30147";
+import { writeNow } from "./fx/lightwriter.js?v=9a30147";
+import { cleanParty } from "./gather.js?v=9a30147";
+import { autoKind, describe, editFor, effectiveLight, feetSaid, lightName, lightTitle, screenWarnings, uiCtx } from "./lightui.js?v=9a30147";
+import { clickedIds, showTabs } from "./tabs.js?v=9a30147";
 
 const HOST = isLocalOrigin(location.origin) ? "local" : "pages";
 const clicked = clickedIds(location.search); // the 🎲 DND popover's items; [] elsewhere
@@ -103,7 +103,7 @@ async function show() {
   const lit = items.length ? shownKind(items[0], ctx) : "";
   hint = !items.length ? "Nothing selected"
     : spells.length ? (items.length === 1 ? `✨ ${SOURCES[spells[0].kind]?.label || "spell"}` : `✨ spell on ${spells.length}`)
-    : lit && items.every((i) => shownKind(i, ctx) === lit) ? `${SOURCES[lit].bright}/${SOURCES[lit].dim} ft`
+    : lit && items.every((i) => shownKind(i, ctx) === lit) ? feetSaid(lit)
     : items.length > 1 ? `${items.length} selected` : "";
   note.title = spells.length ? "Also lit by a spell cast on the panel: it goes out when the spell ends" : "";
   note.textContent = hovered || hint;
@@ -185,7 +185,7 @@ async function write(kind) {
   else {
     const names = fresh.map((i) => ctx2.pcName(i) || (i.text?.plainText || i.name || "?").replace(/\.\w+$/, ""));
     const who = names.length > 3 ? `${names.slice(0, 3).join(", ")} +${names.length - 3}` : names.join(", ");
-    said.textContent = kind ? `${who}: ${lightName(kind)} (${reachOf(kind)} ft)` : `${who}: put out — won't relight by themselves`;
+    said.textContent = kind ? `${who}: ${lightName(kind)} (${feetSaid(kind)})` : `${who}: put out — won't relight by themselves`;
   }
   if (!r.wrote.length) said.textContent += " (already so)";
   else if (r.released) said.textContent += " (scene released to Smoke: our flame only; Smoke's own panel has the rest)";
@@ -202,11 +202,11 @@ for (const kind of ["", ...Object.keys(SOURCES)]) {
   if (s) {
     const ft = document.createElement("span");
     ft.className = "ft";
-    ft.textContent = `${s.bright}/${s.dim}`;
+    ft.textContent = `${s.bright}+${s.dim}`;
     b.append(ft);
   }
-  const about = s ? `${s.label} ${s.bright}/${s.dim} ft` : "No light (put out: a sconce lit by its name stays out)";
-  b.title = s ? `${s.label}: ${s.bright} ft bright, ${s.dim} ft dim` : about;
+  const about = s ? `${s.label} ${feetSaid(kind)}` : "No light (put out: a sconce lit by its name stays out)";
+  b.title = s ? lightTitle(kind) : about;
   b.onclick = () => pick(kind);
   b.onmouseenter = () => { note.textContent = hovered = about; };
   b.onmouseleave = () => { hovered = ""; note.textContent = hint; };

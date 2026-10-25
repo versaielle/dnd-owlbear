@@ -18,15 +18,18 @@
 //                       it (outer rings one way round, holes the other), whole px
 //   areaOf(rings)       the area of a set of rings as a union gives them, px²
 //   clipOk(clip)        is this the polygon library (fog/clipper.js's default export)
-//   pcViews(snap)       one record per PC that sees anything: {id, mapId, map, c, ft, reachPx, dark}
+//   pcViews(snap)       one record per PC that sees anything: {id, mapId, map, c, ft, reachPx, dark,
+//                       senses} (senses: its truesight and blindsight lights, only while 🧱 is on)
 //                       (what cellsSeen and seenShapes both start from, so the squares and the shapes
 //                       always agree about where a PC stands and how far it sees)
+//   darkReachFt(item, vctx), sightBlockersOf(snap, mapId, {sense})   re-exported from the fog engine
+//                       (fog/sight.js and fog/walls.js, Phase 2's F1; wired in by I2), so the memory and
+//                       the live sight read one rule: with every 2024 switch off they're exactly the
+//                       stand-ins Phase 1 kept here (fog/seen.js re-exports darkReachFt in turn)
+//   litLights(vctx)     the public lights that light anything
 //   litLightsOn(snap, mapId)  the public lights on map mapId only (fx/darkness.js lightsOnMap): a light
 //                       on another map is behind that map's edge wall, so it lights nothing a PC here sees
-//   darkReachFt(item, vctx), sightBlockersOf(snap, mapId), litLights(vctx)   STAND-INS for Phase 2's
-//                       fog/sight.js darkReachFt and fog/walls.js sightBlockersOf (F1): today's rules,
-//                       moved here from fog/seen.js (which re-exports darkReachFt). The integrator (I2)
-//                       swaps in F1's functions here, and nowhere else
+//                       (a coned light included: its cone never reaches past its own map's edge wall)
 //
 //   VERSION, ARC_ERROR_PX, MAX_ARC_STEPS, CLEAN_PX, MIN_RING, MIN_GROW, EXPLORED_MAX_BYTES,
 //   EXPLORED_CALL_MAX_BYTES, MAX_POINTS, SIZE_SLACK_PX, RANGE_SLACK_PX   (see each below)
@@ -71,8 +74,12 @@
 // secret doors, and lines on no map, plus the map's edge ring), out to its sight reach (fog/sight.js
 // sightReachFt). Standing in 🌑, that polygon is cut down to what is lit for it: its own circle
 // (darkReachFt: darkvision, its own light, at least SELF_SIGHT) and each public light's circle (its
-// reach), a light with a `cone` only inside the cone. A torch seen far off doesn't reveal the dark
-// between. Several PCs on one map are united; nothing reaches past the map's rectangle.
+// reach) on the PC's own map (litLightsOn), a light with a `cone` only inside the cone. A torch seen
+// far off doesn't reveal the dark between, and a torch on another map lights nothing here. With 🧱
+// Senses through fog on (and so 🦇), a PC's truesight and blindsight add their own shapes (fog/sight.js
+// senseLightsFt), each among the blockers its layer meets (sightBlockersOf with {sense}) and never cut
+// by the dark rule, as the live sense lights draw them. Several PCs on one map are united; nothing
+// reaches past the map's rectangle.
 //
 // THE UNION (mergeExplored, on the one GM screen that writes): the stored rings and the new ones, each
 // read even-odd as they're drawn, united by Clipper on whole px; then Clipper's clean at CLEAN_PX, rings
@@ -80,14 +87,18 @@
 // after the clean. Written only when the area grew by more than MIN_GROW of a square. Over
 // EXPLORED_MAX_BYTES: cleaned harder (3, 6, then 12 px); still over, nothing is written (capped).
 
-import { EXPLORED_KEY } from "../keys.js?v=52156fe";
-import { SELF_SIGHT, effectiveLight, visionOf } from "../fx/lightmeta.js?v=52156fe";
-import { lightsOnMap } from "../fx/darkness.js?v=52156fe";
-import { inCone } from "../rules2024.js?v=52156fe";
-import { centreOf, mapAt } from "../views.js?v=52156fe";
-import { edgeWalls, segmentsOf } from "./lines.js?v=52156fe";
-import { sightBlockers, visibilityPolygon } from "./los.js?v=52156fe";
-import { sightReachFt } from "./sight.js?v=52156fe";
+import { EXPLORED_KEY } from "../keys.js?v=9a30147";
+import { visionOf } from "../fx/lightmeta.js?v=9a30147";
+import { lightsOnMap } from "../fx/darkness.js?v=9a30147";
+import { effectiveRules, inCone } from "../rules2024.js?v=9a30147";
+import { centreOf, mapAt } from "../views.js?v=9a30147";
+import { visibilityPolygon } from "./los.js?v=9a30147";
+import { darkReachFt, senseLightsFt, sightReachFt } from "./sight.js?v=9a30147";
+import { sightBlockersOf } from "./walls.js?v=9a30147";
+
+// The fog engine's own rules (Phase 2, F1), so the memory and the live sight never disagree.
+export { darkReachFt } from "./sight.js?v=9a30147";
+export { sightBlockersOf } from "./walls.js?v=9a30147";
 
 export const VERSION = 1;
 // Arcs: every chord within this many px of the true circle (about 28 points round a 5 ft circle at 150
@@ -313,29 +324,16 @@ export function holeRings(rings, rect) {
 
 // ---- where each PC stands (shared with fog/seen.js cellsSeen) ----
 
-const safe = (f, dflt = null) => { try { return f(); } catch { return dflt; } };
+// onError(e), when given, is told of each throw safe() swallows (the fallback is taken all the same).
+const safe = (f, dflt = null, onError = null) => { try { return f(); } catch (e) { try { onError?.(e); } catch { /* a broken onError never changes the fallback */ } return dflt; } };
 
-// STAND-IN (F1 moves it to fog/sight.js in Phase 2): 🌑, how far a PC sees by itself, feet:
-// max(SELF_SIGHT, its darkvision, its own light's reach). fog/seen.js re-exports it.
-export function darkReachFt(item, vctx = {}) {
-  const v = safe(() => visionOf(item, vctx || {}), null);
-  const light = safe(() => effectiveLight(item, vctx?.lighting));
-  const own = light && finite(light.reach) && light.reach > 0 ? light.reach : 0;
-  const dark = v && finite(v.dark) && v.dark > 0 ? v.dark : 0;
-  return Math.max(SELF_SIGHT, dark, own);
-}
+// darkReachFt (🌑: how far a PC sees by itself) is fog/sight.js's and sightBlockersOf (the segments the
+// live light meets on a map: its lines and lines on no map that stop sight, the map's edge ring, and with
+// ☁ on its heavy zones) is fog/walls.js's, both re-exported above. Phase 1 kept stand-ins of both here;
+// with every 2024 switch off the fog engine's give exactly their answers on every map the memory reads
+// (the memory asks only for maps in the snapshot).
 
 const mapsById = (snap) => new Map((Array.isArray(snap?.maps) ? snap.maps : []).filter((m) => m?.id != null).map((m) => [m.id, m]));
-
-// STAND-IN (F1's fog/walls.js sightBlockersOf in Phase 2): the segments the live light meets on map
-// `mapId`: its lines and lines on no map that stop sight (walls, closed and secret doors), and the
-// map's edge ring. [] for a map the snapshot doesn't hold.
-export function sightBlockersOf(snap, mapId) {
-  const map = mapsById(snap).get(mapId);
-  if (!map) return [];
-  const lines = (Array.isArray(snap?.lines) ? snap.lines : []).filter((l) => l && (l.mapId === mapId || l.mapId == null));
-  return sightBlockers([...segmentsOf(lines), ...edgeWalls(map.item, snap?.grid?.dpi)]);
-}
 
 // The public lights (fx/darkness.js darknessCtx: [{x, y, reach, cone?}], scene px and feet) that light
 // anything.
@@ -348,14 +346,18 @@ export const litLightsOn = (snap, mapId) => lightsOnMap(litLights(snap?.vctx), m
 
 // One record per PC (snap.pcs, each once) that sees anything: {id, mapId, map (snap.maps' entry), c
 // (its centre, scene px), ft and reachPx (sightReachFt), dark: {ft: darkReachFt} | null (null unless it
-// stands in 🌑)}. A PC whose centre is on no map (or on a map without a grid) sees nothing here.
-export function pcViews(snap) {
+// stands in 🌑), senses: [{sense: "true" | "blind", ft}] (fog/sight.js senseLightsFt: only while 🧱 Senses
+// through fog is on, else [])}. A PC whose centre is on no map (or on a map without a grid) sees nothing
+// here. onError(e): told when working out a PC's reach throws (visionOf, its light, the lights near it);
+// the old fallback is taken all the same (no reach: the PC sees nothing here; no light: it counts 0).
+export function pcViews(snap, onError = null) {
   const out = [];
   const pcs = Array.isArray(snap?.pcs) ? snap.pcs : [];
   if (!pcs.length) return out;
   const dpi = snap?.grid?.dpi, pxPerFt = snap?.grid?.pxPerFt;
   if (!finite(dpi, pxPerFt) || !(pxPerFt > 0)) return out;
   const byMap = mapsById(snap);
+  const pierce = effectiveRules(snap?.rules).pierce;
   const done = new Set();
   for (const pc of pcs) {
     if (pc?.id == null || done.has(pc.id)) continue;
@@ -365,12 +367,13 @@ export function pcViews(snap) {
     const mapId = mapAt(c, snap.rects);
     const map = mapId != null ? byMap.get(mapId) : null;
     if (!map || !map.grid) continue;
-    const ft = safe(() => sightReachFt(pc, snap.vctx || {}), 0);
+    const ft = safe(() => sightReachFt(pc, snap.vctx || {}, onError), 0, onError);
     const reachPx = finite(ft) && ft > 0 ? ft * pxPerFt : 0;
     if (!(reachPx > 0)) continue;
-    const where = safe(() => visionOf(pc, snap.vctx || {}).where, null);
-    const dark = where === "dark" ? { ft: darkReachFt(pc, snap.vctx || {}) } : null;
-    out.push({ id: pc.id, mapId, map, c, ft, reachPx, dark });
+    const where = safe(() => visionOf(pc, snap.vctx || {}).where, null, onError);
+    const dark = where === "dark" ? { ft: darkReachFt(pc, snap.vctx || {}, onError) } : null;
+    const senses = pierce ? (safe(() => senseLightsFt(pc, snap.vctx || {}), [], onError) || []).filter((s) => finite(s?.ft) && s.ft > 0) : [];
+    out.push({ id: pc.id, mapId, map, c, ft, reachPx, dark, senses });
   }
   return out;
 }
@@ -437,7 +440,9 @@ function circlePath(cx, cy, r, arcPx = ARC_ERROR_PX) {
 }
 
 // A public light's shape, in px from the map's top-left: its circle, or with a cone (rules2024.js
-// coneOf: facing 0 = up the screen, clockwise) the apex and the arc between the cone's edges.
+// coneOf: facing 0 = up the screen, clockwise) the 2024 Cone, a triangle: its apex and its flat end's
+// two corners, reach / cos(half) out along its edges (rules2024.js reachDist). A half of 90 degrees
+// or more (never made by coneOf) has no flat end: the apex and the arc between its edges.
 function lightPath(light, rect, pxPerFt, arcPx = ARC_ERROR_PX) {
   const r = light.reach * pxPerFt;
   const cx = light.x - rect.x0, cy = light.y - rect.y0;
@@ -445,6 +450,14 @@ function lightPath(light, rect, pxPerFt, arcPx = ARC_ERROR_PX) {
   if (cone == null) return circlePath(cx, cy, r, arcPx);
   if (!finite(cone?.facing, cone?.half) || !(cone.half > 0) || !(r > 0)) return [];
   if (cone.half >= 180) return circlePath(cx, cy, r, arcPx);
+  const apex = { X: Math.round(cx) + 0, Y: Math.round(cy) + 0 };
+  if (cone.half < 90) {
+    const R = r / Math.cos((cone.half * Math.PI) / 180);
+    return [apex, ...[cone.facing - cone.half, cone.facing + cone.half].map((deg) => {
+      const a = (deg * Math.PI) / 180;
+      return { X: Math.round(cx + R * Math.sin(a)) + 0, Y: Math.round(cy - R * Math.cos(a)) + 0 };
+    })];
+  }
   const span = 2 * cone.half;
   const n = Math.max(2, Math.ceil((arcSteps(r, arcPx) * span) / 360));
   const out = [{ X: Math.round(cx) + 0, Y: Math.round(cy) + 0 }];
@@ -463,6 +476,7 @@ export function seenShapes(snap, clip, { arcPx = ARC_ERROR_PX } = {}) {
   const pxPerFt = snap?.grid?.pxPerFt;
   const lightsOf = new Map(); // mapId -> the public lights on it (litLightsOn, worked out once per map)
   const blockers = new Map(); // mapId -> its sight blockers (worked out once per map)
+  const senseBlockers = new Map(); // mapId -> {true, blind} -> the blockers that sense's layer meets (🧱 only)
   const per = new Map(); // mapId -> {rect, size, paths}
   for (const v of pcViews(snap)) {
     const rect = v.map.rect;
@@ -471,8 +485,8 @@ export function seenShapes(snap, clip, { arcPx = ARC_ERROR_PX } = {}) {
     if (!blockers.has(v.mapId)) blockers.set(v.mapId, sightBlockersOf(snap, v.mapId));
     if (!lightsOf.has(v.mapId)) lightsOf.set(v.mapId, litLightsOn(snap, v.mapId));
     const poly = visibilityPolygon(v.c, blockers.get(v.mapId), v.reachPx, { arcSteps: arcSteps(v.reachPx, arcPx) });
-    if (poly.length < 3) continue;
-    let paths = [positive(clip, toPath(toLocal(poly, rect)))].filter((p) => p.length >= 3);
+    if (poly.length < 3 && !v.senses?.length) continue;
+    let paths = poly.length < 3 ? [] : [positive(clip, toPath(toLocal(poly, rect)))].filter((p) => p.length >= 3);
     // 🌑: cut down to what's lit for it. When its own circle reaches as far as its sight does (no public
     // light farther off), the polygon is inside that circle already: no cut (the cut of two 1 px
     // circles of one radius would only add points where they cross).
@@ -480,6 +494,18 @@ export function seenShapes(snap, clip, { arcPx = ARC_ERROR_PX } = {}) {
       const lit = [circlePath(v.c.x - rect.x0, v.c.y - rect.y0, v.dark.ft * pxPerFt, arcPx),
         ...lightsOf.get(v.mapId).map((l) => lightPath(l, rect, pxPerFt, arcPx))].filter((p) => p.length >= 3).map((p) => positive(clip, p));
       paths = run(clip, "ctIntersection", paths, "pftNonZero", lit, "pftNonZero");
+    }
+    // 🧱 Senses through fog: truesight and blindsight, each among the blockers its layer meets, never cut
+    // by the dark rule (they need no light). Each is one simple polygon, turned positive, so the NonZero
+    // union below fills whatever the sight shape left as a hole.
+    for (const s of v.senses || []) {
+      if (!senseBlockers.has(v.mapId)) senseBlockers.set(v.mapId, new Map());
+      const own = senseBlockers.get(v.mapId);
+      if (!own.has(s.sense)) own.set(s.sense, sightBlockersOf(snap, v.mapId, { sense: s.sense }));
+      const r = s.ft * pxPerFt;
+      const sp = visibilityPolygon(v.c, own.get(s.sense), r, { arcSteps: arcSteps(r, arcPx) });
+      const path = sp.length >= 3 ? positive(clip, toPath(toLocal(sp, rect))) : [];
+      if (path.length >= 3) paths.push(path);
     }
     if (!paths.length) continue;
     if (!per.has(v.mapId)) per.set(v.mapId, { size, paths: [] });

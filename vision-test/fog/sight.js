@@ -10,16 +10,40 @@
 //   SIGHT_FALLOFF           the lights' falloff (0: a hard edge, as Smoke draws a PC's sight)
 //   SOURCE_RADIUS           the default sourceRadius (0: Owlbear's fast light path, and a blocking
 //                           wall stops an attached token with its middle on the wall line)
-//   sightReachFt(item, vctx)   how far a PC sees (feet): the number Smoke gets from
-//                           fx/lightmeta.js smokeFor for a seer today
+//   sightReachFt(item, vctx)   how far a PC sees (feet). With every 2024 switch off: the number Smoke
+//                           gets from fx/lightmeta.js smokeFor for a seer. With them (vctx.rules, below):
+//                           truesight, the weather, heavy zones, Blinded and blindsight too
+//   darkReachFt(item, vctx)  🌑: how far a PC sees by itself, feet (the explored memory's dark rule):
+//                           max(SELF_SIGHT, its darkvision, its own light's reach); with 🦇 Senses on,
+//                           its truesight and blindsight too; its own light only while it has no cone
+//   senseLightsFt(item, vctx)  while 🧱 Senses through fog is on: [{sense: "true" | "blind", ft}], the
+//                           extra lights of a PC with truesight or blindsight (else [])
+//   senseFt(item, vctx)     while 🦇 Senses is on: {truesight, blind}, a PC's feet of each (the DM's
+//                           override first), the circles the 2024 darkness paints for it; else 0 each
 //   sightAttached(ctx)      whether this screen attaches the lights: always, except on a GM screen
 //                           with ctx.gmPass "B" (the default), where they stand alone (section 8)
 //   sightPlan(snap, {attached, sourceRadius})   -> [{key, of, attached, position, attenuation,
 //                           sourceRadius, sig}]: one per PC in snap.pcs (pure); a PC whose middle
-//                           is on no map (between maps, past an edge) sees SELF_SIGHT at most
+//                           is on no map (between maps, past an edge) sees SELF_SIGHT at most. While
+//                           🧱 is on, a PC with truesight or blindsight also gets one light per sense
+//                           (key "<token id>|true" or "|blind", z its layer: fog/walls.js LAYERS)
 //   planSig(plan)           what a sync compares: the specs as they'd be drawn (an attached
 //                           light's position is left out: it rides with its token)
 //   createSight(api, ctx)   -> {sync(snap), clear(), forget(), status()}
+//
+// THE 2024 RULES (docs/vision-layer-2024.md section 7, "How far a PC sees"). fog.js puts in vctx the
+// scene's switches (vctx.rules: rules2024.js effectiveRules), its weather (vctx.weather: weatherOf),
+// the zones (vctx.zones: fog/zoneread.js zonesOf), outdoorAt(point) and the grid's dpi. sightReachFt, in
+// order:
+//   1. the reach above (on 🌑 ground, with 🦇 Senses on, truesight joins darkvision in the maximum);
+//   2. 🌦 Weather on, the PC's centre on a map marked outdoor: at most the weather's limit (fog 100,
+//      200 or 300 ft; rain and snow reach past LIT_SIGHT, so they change nothing);
+//   3. ☁ Obscured on, the PC's centre inside a heavy zone: SELF_SIGHT at most (5 ft from its centre);
+//   4. 🦇 Senses on, the PC Blinded (COND_KEY holds "blinded"): SELF_SIGHT at most;
+//   5. 🦇 Senses on: at least its blindsight.
+// A PC's truesight and blindsight: visionOf's (the DM's override first, once the lights carry them),
+// else the party file's (vctx.senses(item), rules2024.js sensesOf). A missing switch is off, so with
+// every switch off (or no vctx.rules at all) everything here is exactly as before the 2024 rules.
 //
 // A light ATTACHED to its PC (players, the projector, a GM screen on pass "A") rides with the
 // token, so a drag or a nudge changes nothing here. Its VISIBLE and SCALE behaviours are off: a
@@ -38,10 +62,13 @@
 // FOG_LOCAL_KEY {kind: "sight", key, sig, host}) only on its first sync after a clear(), a
 // forget() (the scene closed: Owlbear dropped them) or a failed write; fog.js retries a failure.
 
-import { FOG_LOCAL_KEY } from "../keys.js?v=52156fe";
-import { LIT_SIGHT, SELF_SIGHT, effectiveLight, visionOf } from "../fx/lightmeta.js?v=52156fe";
-import { farLight, lightsFor } from "../fx/darkness.js?v=52156fe";
-import { centreOf, mapAt } from "../views.js?v=52156fe";
+import { COND_KEY, FOG_LOCAL_KEY } from "../keys.js?v=9a30147";
+import { LIT_SIGHT, SELF_SIGHT, effectiveLight, visionOf } from "../fx/lightmeta.js?v=9a30147";
+import { farLight, lightsFor } from "../fx/darkness.js?v=9a30147";
+import { MAX_SENSE_FT, effectiveRules, sensesOf } from "../rules2024.js?v=9a30147";
+import { centreOf, mapAt } from "../views.js?v=9a30147";
+import { layerOf } from "./walls.js?v=9a30147";
+import { insideZone } from "./zoneread.js?v=9a30147";
 
 export const SIGHT_Z = 0;
 // A hard edge: Smoke's default for a seer (BSConstants FALLOFFDEFAULT "0"). buildLight's own
@@ -55,22 +82,104 @@ const DETACHED = ["VISIBLE", "SCALE"];
 
 const finite = (...xs) => xs.every((x) => typeof x === "number" && Number.isFinite(x));
 const r2 = (x) => Math.round(x * 100) / 100 + 0;
-const safe = (f, dflt = null) => { try { return f(); } catch { return dflt; } };
+const safe = (f, dflt = null, onError = null) => { try { return f(); } catch (e) { try { onError?.(e); } catch { /* a broken onError never changes the fallback */ } return dflt; } };
+
+// ---- the 2024 inputs in vctx (fog.js buildSnapshot) ----
+
+const blinded = (item) => { const c = item?.metadata?.[COND_KEY]; return Array.isArray(c) && c.includes("blinded"); };
+// A PC's truesight and blindsight, feet: visionOf's when it gives them (the DM's override first), else
+// the party file's.
+function sensesFor(item, ctx, v) {
+  const sheet = sensesOf(safe(() => ctx?.senses?.(item)));
+  const pick = (k) => (finite(v?.[k]) && v[k] >= 0 ? Math.min(MAX_SENSE_FT, v[k]) : sheet[k]);
+  return { truesight: pick("truesight"), blind: pick("blind") };
+}
+const centreIn = (item, ctx) => safe(() => centreOf(item, finite(ctx?.dpi) && ctx.dpi > 0 ? ctx.dpi : 150));
+const outdoorAt = (ctx, c) => !!c && !!safe(() => ctx?.outdoorAt?.(c), false);
+const weatherLimit = (ctx) => (finite(ctx?.weather?.limitFt) && ctx.weather.limitFt >= 0 ? ctx.weather.limitFt : null);
+// The heavy zones (vctx.zones) holding point c; magic: true / false for only those, null for any.
+const inHeavy = (ctx, c, magic = null) => !!c && (Array.isArray(ctx?.zones) ? ctx.zones : [])
+  .some((z) => z?.level === "heavy" && (magic == null || !!z.magic === magic) && insideZone(c, z));
 
 // ---- the plan (pure) ----
 
 // How far this PC sees, in feet. ☀/🌒 where it stands: its sight (everything in line of sight, or
 // the DM's limit). 🌑: the farthest of its darkvision, its own light and the far edge of the
 // farthest public light ON ITS OWN MAP (fx/darkness.js lightsFor: a light on another map is behind
-// that map's edge wall, so it never counts), at least SELF_SIGHT, at most LIT_SIGHT. vctx:
-// fx/lightwriter.js planCtx (the darkness regions, the lights with their maps, the map rectangles,
-// pxPerFt, senses, lighting).
-export function sightReachFt(item, vctx = {}) {
-  const v = visionOf(item, vctx || {});
-  if (v.where !== "dark") return v.sight;
-  const light = safe(() => effectiveLight(item, vctx?.lighting));
-  const reach = light && light.reach > 0 ? light.reach : 0;
-  return Math.min(LIT_SIGHT, Math.max(SELF_SIGHT, v.dark, reach, farLight(item, lightsFor(item, vctx || {}), vctx?.pxPerFt)));
+// that map's edge wall, so it never counts, with the 2024 switches on or off), at least SELF_SIGHT,
+// at most LIT_SIGHT. vctx: fx/lightwriter.js planCtx (the darkness regions, the lights with their
+// maps, the map rectangles, pxPerFt, senses, lighting), and fog.js's 2024 inputs (rules, weather,
+// zones, outdoorAt, dpi): the steps in the header. onError(e): told when its own light throws (it
+// then counts 0, as it always did); visionOf and the public lights throw to the caller.
+export function sightReachFt(item, vctx = {}, onError = null) {
+  const ctx = vctx || {};
+  const v = visionOf(item, ctx);
+  const rules = effectiveRules(ctx.rules);
+  const s = rules.senses ? sensesFor(item, ctx, v) : null;
+  let reach;
+  if (v.where !== "dark") reach = v.sight;
+  else {
+    const light = safe(() => effectiveLight(item, ctx.lighting), null, onError);
+    const own = light && light.reach > 0 ? light.reach : 0;
+    reach = Math.min(LIT_SIGHT, Math.max(SELF_SIGHT, v.dark, own, farLight(item, lightsFor(item, ctx), ctx.pxPerFt), s ? s.truesight : 0));
+  }
+  if (!rules.weather && !rules.zones && !rules.senses) return reach; // every switch off: as before the 2024 rules
+  const c = centreIn(item, ctx);
+  const limit = weatherLimit(ctx);
+  if (rules.weather && limit != null && outdoorAt(ctx, c)) reach = Math.min(reach, limit);
+  if (rules.zones && inHeavy(ctx, c)) reach = Math.min(reach, SELF_SIGHT);
+  if (rules.senses && blinded(item)) reach = Math.min(reach, SELF_SIGHT);
+  if (s) reach = Math.max(reach, s.blind);
+  return reach;
+}
+
+// 🌑: how far a PC sees by itself (the explored memory's dark rule, fog/seen.js until the integration
+// re-exports this one). Its own light counts only while it has no cone (vctx.lights' entry for this
+// token, which carries the cone only while 🔦 and 💡 are both on): a coned light lights only its cone,
+// which the memory's dark rule takes from the public lights. onError(e): told when visionOf or
+// effectiveLight throws (that part then counts 0, as it always did).
+export function darkReachFt(item, vctx = {}, onError = null) {
+  const ctx = vctx || {};
+  const v = safe(() => visionOf(item, ctx), null, onError);
+  const rules = effectiveRules(ctx.rules);
+  const light = safe(() => effectiveLight(item, ctx.lighting), null, onError);
+  let own = light && finite(light.reach) && light.reach > 0 ? light.reach : 0;
+  if (own && rules.cones) {
+    const mine = (Array.isArray(ctx.lights) ? ctx.lights : []).find((l) => l && l.id === item?.id);
+    if (mine?.cone != null) own = 0;
+  }
+  const dark = v && finite(v.dark) && v.dark > 0 ? v.dark : 0;
+  const s = rules.senses ? sensesFor(item, ctx, v) : { truesight: 0, blind: 0 };
+  return Math.max(SELF_SIGHT, dark, own, s.truesight, s.blind);
+}
+
+// While 🧱 Senses through fog is on (so 🦇 too): the extra lights of a PC with truesight or blindsight,
+// each on its own layer (fog/walls.js LAYERS: truesight passes magic darkness, blindsight every zone).
+// Truesight is sight: none while Blinded, none from inside a heavy zone that isn't magic (fog), and
+// outdoors no farther than the weather lets anyone see. Blindsight isn't: none of those stop it.
+export function senseLightsFt(item, vctx = {}) {
+  const ctx = vctx || {};
+  const rules = effectiveRules(ctx.rules);
+  if (!rules.pierce) return [];
+  const v = safe(() => visionOf(item, ctx), null);
+  const s = sensesFor(item, ctx, v);
+  const out = [];
+  const c = centreIn(item, ctx);
+  if (s.truesight > 0 && !blinded(item) && !(rules.zones && inHeavy(ctx, c, false))) {
+    const limit = weatherLimit(ctx);
+    const ft = rules.weather && limit != null && outdoorAt(ctx, c) ? Math.min(s.truesight, limit) : s.truesight;
+    if (ft > 0) out.push({ sense: "true", ft });
+  }
+  if (s.blind > 0) out.push({ sense: "blind", ft: s.blind });
+  return out;
+}
+
+// While 🦇 Senses is on: a PC's truesight and blindsight, feet (fx/lighting.js darkInputs paints a circle
+// of each; fog/cover.js keeps a hidden creature's cover off them). 🦇 off: none.
+export function senseFt(item, vctx = {}) {
+  const ctx = vctx || {};
+  if (!effectiveRules(ctx.rules).senses) return { truesight: 0, blind: 0 };
+  return sensesFor(item, ctx, safe(() => visionOf(item, ctx), null));
 }
 
 // Attached everywhere but a GM screen on pass "B" (contract section 8; "B" when unset).
@@ -93,17 +202,27 @@ export function sightPlan(snap, { attached = true, sourceRadius = SOURCE_RADIUS 
   const rects = Array.isArray(snap?.rects) ? snap.rects : [];
   const out = [];
   const seen = new Set();
+  const vctx = snap?.vctx || {};
+  const rules = effectiveRules(vctx.rules);
   for (const item of pcs) {
     const of = item?.id;
     if (of == null || seen.has(of)) continue;
     const c = centreOf(item, dpi);
     if (!c || !finite(c.x, c.y)) continue;
     seen.add(of);
-    let ft = safe(() => sightReachFt(item, snap?.vctx || {}), 0);
-    if (rects.length && !mapAt(c, rects) && finite(ft)) ft = Math.min(ft, SELF_SIGHT);
+    let ft = safe(() => sightReachFt(item, vctx), 0);
+    const offMap = rects.length && !mapAt(c, rects);
+    if (offMap && finite(ft)) ft = Math.min(ft, SELF_SIGHT);
     const attenuation = finite(ft, pxPerFt) && ft > 0 && pxPerFt > 0 ? r2(ft * pxPerFt) : 0;
-    out.push({ key: of, of, attached: !!attached, position: { x: r2(c.x), y: r2(c.y) }, attenuation,
-      sourceRadius: sr, sig: sigOf(!!attached, of) });
+    const position = { x: r2(c.x), y: r2(c.y) };
+    out.push({ key: of, of, attached: !!attached, position, attenuation, sourceRadius: sr, sig: sigOf(!!attached, of) });
+    // 🧱 Senses through fog: one more light per sense, on its own layer (none for a PC off every map)
+    if (!rules.pierce || offMap || !(pxPerFt > 0)) continue;
+    for (const { sense, ft: sf } of safe(() => senseLightsFt(item, vctx), []) || []) {
+      if (!finite(sf) || !(sf > 0)) continue;
+      out.push({ key: `${of}|${sense}`, of, attached: !!attached, position: { ...position }, attenuation: r2(sf * pxPerFt),
+        sourceRadius: sr, z: layerOf(sense, rules), sig: `${sigOf(!!attached, of)}|${sense}` });
+    }
   }
   return out;
 }
@@ -140,7 +259,7 @@ export function createSight(api = {}, ctx = {}) {
       .attenuationRadius(s.attenuation)
       .falloff(SIGHT_FALLOFF)
       .lightType("PRIMARY")
-      .zIndex(SIGHT_Z)
+      .zIndex(finite(s.z) ? s.z : SIGHT_Z)
       .locked(true)
       .disableHit(true)
       .metadata({ [FOG_LOCAL_KEY]: { kind: KIND, key: s.key, sig: s.sig, host } })

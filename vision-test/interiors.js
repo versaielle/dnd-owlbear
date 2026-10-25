@@ -7,11 +7,17 @@
 //   walls    Smoke & Spectre vision lines, doors and windows (POINTER layer), and one closed
 //            line round the town map's edge, so nothing walks off it
 //   portals  the "Portals" extension: town spot <-> building entry, stairs <-> stairs
+//   zones    a floor's obscured areas (fog, foliage, magical darkness: the painter's Floor.zone),
+//            hidden outlines on the PROP layer (so never taken for a room) carrying OBSCURE_KEY
+//            {src: "map"}: a circle as a CIRCLE shape, a rectangle or polygon as a closed curve. They
+//            hide things only while the scene's "☁ Obscured" switch is on (docs/vision-layer-2024.md)
 // Everything it makes is attached to its map image (so it moves with it) and tagged with
 // INTERIOR_KEY, so a re-run deletes it all and starts over.
 // Buildings in a scene group (interiors.json's town.scenes: Chapter 3's sites, in a "Chapter 3"
 // scene) are left out of the town's run: 🏘 on one of their maps lays out that group's maps in its
-// own scene, with no town (scenePlan), and replaces only that group's marks.
+// own scene, with no town (scenePlan), and replaces only that group's marks. A group's map may take
+// the place of another adventure's maps in a scene that adventure's 🏘 set up (town.replaces): it is
+// laid over them, and they are hidden and stop counting (replacing, replacedMarks).
 //
 // Coordinates in interiors.json are pixels of that map's image, origin top-left.
 // check_interiors.mjs tests the pure parts offline.
@@ -23,9 +29,10 @@
 // imports gather.js, which imports this) but never fetches anything there. What 🧭 Bring PCs here
 // needs of it (each map's entry, stairs and furniture: numbers, no names) is written on the map
 // images themselves (MAP_INFO_KEY, mapInfo()), so 🧭 works on every copy.
-import OBR, { buildCurve, buildShape } from "./obr-sdk.js?v=52156fe";
-import { directBase } from "./bus.js?v=52156fe";
-import { INTERIOR_KEY, MAP_INFO_KEY, PLACE_KEY } from "./keys.js?v=52156fe";
+import OBR, { buildCurve, buildShape } from "./obr-sdk.js?v=9a30147";
+import { directBase } from "./bus.js?v=9a30147";
+import { INTERIOR_KEY, MAP_INFO_KEY, OBSCURE_KEY, PLACE_KEY } from "./keys.js?v=9a30147";
+import { obscureValue } from "./rules2024.js?v=9a30147";
 
 const GAP_FLOORS = 2, GAP_ROWS = 3, GAP_TOWN = 6, GAP_COLUMNS = 6, GAP_SITES = 6; // in squares
 // Owlbear rate-limits requests ("RateLimitHit: Too many requests" with 20-item batches, live
@@ -37,6 +44,7 @@ const SMOKE = "com.battle-system.smoke";
 const PORTAL_KEY = "de.resident-uhlig.portals/destination-id";
 const ROOM_COLOR = "#d9a441";
 const PORTAL_COLOR = "#9b6bff";
+const ZONE_COLOR = "#5aa0f0";
 const WALL_NAMES = { wall: "Vision Line (Line)", door: "Vision Line (Door)", window: "Vision Line (Window)" };
 // All of it stays hidden and locked even when the DM shows, hides or unlocks the map image.
 const KEEP_OWN = ["VISIBLE", "LOCKED"];
@@ -197,6 +205,60 @@ function link(a, b) {
   return [a, b];
 }
 
+// ---- a floor's obscured zones (interiors.json's "zones": the painter's Floor.zone) ----
+
+const finite = (...xs) => xs.every((x) => typeof x === "number" && Number.isFinite(x));
+
+// One zone of the file, read safely: {level, what, magic, circle: {cx, cy, r}} or {level, what, magic,
+// points: [{x, y}, ...]} in the file's image pixels; null for a level that isn't light or heavy, or no
+// shape with some area. A `circle` key decides it when there is one (a null reads as missing). `what`
+// and `magic` as rules2024.js obscureValue reads them (junk: "other", false).
+export function zoneShape(z) {
+  if (!z || typeof z !== "object" || Array.isArray(z)) return null;
+  if (z.level !== "light" && z.level !== "heavy") return null;
+  const v = obscureValue({ level: z.level, what: z.what, magic: z.magic, src: "map" });
+  const base = { level: v.level, what: v.what, magic: v.magic };
+  if (z.circle != null) {
+    const c = z.circle;
+    return Array.isArray(c) && c.length === 3 && finite(...c) && c[2] > 0 ? { ...base, circle: { cx: c[0], cy: c[1], r: c[2] } } : null;
+  }
+  if (!Array.isArray(z.points) || z.points.length < 3) return null;
+  const pts = z.points.map(pt);
+  if (!pts.every((p) => p && finite(p.x, p.y))) return null;
+  let twice = 0;
+  for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) twice += pts[j].x * pts[i].y - pts[i].x * pts[j].y;
+  return Math.abs(twice) > 1e-9 ? { ...base, points: pts.map((p) => ({ x: p.x, y: p.y })) } : null;
+}
+
+// A zone's item: a hidden, locked outline on the PROP layer, attached to its map image, that a click
+// passes through (disableHit: a fog bank over a room must not catch the DM's right-clicks on the room
+// or the map), tagged INTERIOR_KEY {map, kind: "zone"} and carrying OBSCURE_KEY whole, src "map". A
+// circle is a CIRCLE shape (position its centre, width its diameter, both through the image); a
+// rectangle or polygon a closed curve. null when zoneShape says there's nothing to make.
+export function zoneItem(id, zone, map, image, here, sceneDpi) {
+  const z = zoneShape(zone);
+  if (!z) return null;
+  const metadata = { [INTERIOR_KEY]: { map: map.name, kind: "zone" },
+                     [OBSCURE_KEY]: obscureValue({ level: z.level, magic: z.magic, what: z.what, src: "map" }) };
+  const name = `☁ ${z.what}${z.magic ? " (magic)" : ""}, ${z.level === "heavy" ? "heavily" : "lightly"} obscured`;
+  const stroke = { fillColor: ZONE_COLOR, fillOpacity: 0.12, strokeColor: ZONE_COLOR, strokeOpacity: 1,
+                   strokeWidth: Math.max(2, sceneDpi / 50), strokeDash: [sceneDpi / 10, sceneDpi / 15] };
+  if (z.circle) {
+    const centre = here({ x: z.circle.cx, y: z.circle.cy });
+    const edge = here({ x: z.circle.cx + z.circle.r, y: z.circle.cy });
+    const d = 2 * Math.hypot(edge.x - centre.x, edge.y - centre.y);
+    return {
+      type: "SHAPE", shapeType: "CIRCLE", id, name, layer: "PROP", position: centre, rotation: 0,
+      scale: { x: 1, y: 1 }, width: d, height: d, visible: false, locked: true, disableHit: true,
+      attachedTo: image.id, metadata, style: stroke,
+    };
+  }
+  return curve(id, z.points.map(here), {
+    name, layer: "PROP", attachedTo: image.id, disableHit: true, metadata,
+    style: { ...stroke, tension: 0, closed: true },
+  });
+}
+
 function landing(id, centre, diameter, attachedTo, mapName, from) {
   // A one-way portal's far end: where a token lands, never a trigger (no destination of its own).
   return { ...circle(id, centre, diameter, attachedTo, mapName, from), name: `Landing ← ${from}` };
@@ -271,8 +333,9 @@ function place(maps, found, at, pps, sceneDpi) {
   return { placed, updates };
 }
 
-// Every placed map's rooms, walls, doors and windows.
-function markUp(placed, groups, counts, sceneDpi, newId) {
+// Every placed map's rooms, walls, doors and windows, and its obscured zones (a junk zone left out, in
+// `notes`).
+function markUp(placed, groups, counts, sceneDpi, newId, notes) {
   for (const { map, image, here } of placed.values()) {
     for (const room of map.rooms || []) {
       if ((room.points || []).length < 3) continue;
@@ -286,6 +349,17 @@ function markUp(placed, groups, counts, sceneDpi, newId) {
         counts[n]++;
       }
     }
+    let skipped = 0;
+    for (const zone of Array.isArray(map.zones) ? map.zones : []) {
+      const item = zoneItem(newId(), zone, map, image, here, sceneDpi);
+      if (!item) {
+        skipped++;
+        continue;
+      }
+      groups.push([item]);
+      counts.zones++;
+    }
+    if (skipped) notes.push(`${skipped} zone${skipped === 1 ? "" : "s"} on ${map.name} left out (not light or heavy, or no shape)`);
   }
 }
 
@@ -332,7 +406,7 @@ export function plan(json, town, images, sceneDpi, newId) {
   const found = matchImages(maps, images, town.id);
   const at = layout(listed(json), pps, bounds(town, sceneDpi), sceneDpi);
   const { placed, updates } = place(maps, found, at, pps, sceneDpi);
-  const counts = { maps: placed.size, town: 0, townWall: 0, rooms: 0, walls: 0, doors: 0, windows: 0, portals: 0 };
+  const counts = { maps: placed.size, town: 0, townWall: 0, rooms: 0, walls: 0, doors: 0, windows: 0, portals: 0, zones: 0 };
   const groups = [], notes = [];
   // The town map is an area too: one room over the whole image. Not clickable (disableHit), so
   // a right-click on the town still finds the map image under it.
@@ -348,7 +422,7 @@ export function plan(json, town, images, sceneDpi, newId) {
     groups.push([wallItem(newId(), "wall", [...corners, corners[0]], { name: townName }, town)]);
     counts.townWall = 1;
   }
-  markUp(placed, groups, counts, sceneDpi, newId);
+  markUp(placed, groups, counts, sceneDpi, newId, notes);
   // Town spot <-> the building's entry.
   const townRatio = json.town?.width ? town.image.width / json.town.width : 1;
   const townPx = (sceneDpi / town.grid.dpi) * Math.abs(town.scale?.x ?? 1);
@@ -415,24 +489,74 @@ export function sceneLayout(maps, pps, anchorMap, anchor, dpi) {
   return at;
 }
 
+// The maps a scene group's maps take the place of (interiors.json's town.replaces, from the town's maps/*.py:
+// {"<a group's map>": ["<a map of another adventure's>", ...]}): another adventure's maps of the same places, which that
+// adventure's own 🏘 set up in a scene the group's maps now share. There, each of the group's maps is laid over the first
+// map listed for it, and every map listed for one of the group's maps in the scene stops counting: hidden, its marks taken
+// off, a way in to it from a map that stays handed to the map laid over it (scenePlan's `replaced`, replacedMarks).
+// normName(the group's map) -> the names listed for it, as written. (No real names here: this file is published.)
+export function replacing(json) {
+  const r = json?.town?.replaces;
+  const out = new Map();
+  if (!r || typeof r !== "object" || Array.isArray(r)) return out;
+  for (const [k, v] of Object.entries(r)) {
+    const names = (Array.isArray(v) ? v : []).filter((n) => typeof n === "string" && normName(n));
+    if (normName(k) && names.length) out.set(normName(k), names);
+  }
+  return out;
+}
+
+// True when this map image is one a group's map takes the place of (replacing): never set up as a town.
+export function replacedMap(json, image) {
+  const names = [image?.name, image?.text?.plainText].map(normName).filter(Boolean);
+  return [...replacing(json).values()].some((list) => list.some((n) => names.includes(normName(n))));
+}
+
 // 🏘 Set up interiors on a map of a scene group (groupOf): the group's maps in this scene laid out
 // round the clicked one (it keeps its top-left corner), marked up as the town's buildings are (rooms,
 // walls, doors, windows, stairs within a building, each map's mapInfo), with no town area, town
 // portals or town-spot notes. `missing`: the group's maps not in this scene.
+// A map the group's maps take the place of (replacing) that is in this scene: each of the group's maps found goes on
+// the top-left corner of the first map listed for it (exactly, unsnapped), and above it (zIndex), and the rest are
+// laid out round the clicked one as before (round the corner of the map it goes over, when it has one). `replaced`:
+// {under: [{map, id, over, overId}] (each of the group's maps laid over one), gone: [{name, id, by}] (every map listed
+// for one of the group's maps found, to be hidden; `by`, that map)}.
 export function scenePlan(json, group, clicked, images, sceneDpi, newId) {
   const pps = json.px_per_square;
   const maps = group.maps;
   const found = matchImages(maps, images, clicked.id);
   const [mine] = matchImages(maps, [clicked]).keys();
   if (mine) found.set(mine, clicked);
-  const at = sceneLayout(maps, pps, mine, bounds(clicked, sceneDpi).min, sceneDpi);
+  const repl = replacing(json);
+  const under = new Map(), gone = [];
+  for (const m of maps) {
+    const list = found.has(m.name) ? repl.get(normName(m.name)) || [] : [];
+    const there = matchImages(list.map((name) => ({ name })), images);
+    for (const n of list) {
+      const i = there.get(n);
+      if (i && !gone.some((g) => g.id === i.id) && ![...found.values()].includes(i)) gone.push({ name: n, id: i.id, by: m.name });
+    }
+    const first = list.length && there.get(list[0]);
+    if (first && gone.some((g) => g.id === first.id)) under.set(m.name, first);
+  }
+  const at = sceneLayout(maps, pps, mine, bounds(under.get(mine) || clicked, sceneDpi).min, sceneDpi);
+  // exactly on it, unsnapped: a way in kept on it (replacedMarks) stays on the entry of the map laid over it
+  for (const [name, old] of under) at[name] = bounds(old, sceneDpi).min;
   const { placed, updates } = place(maps, found, at, pps, sceneDpi);
-  const counts = { maps: placed.size, town: 0, townWall: 0, rooms: 0, walls: 0, doors: 0, windows: 0, portals: 0 };
-  const groups = [];
-  markUp(placed, groups, counts, sceneDpi, newId);
+  // the topmost map at a point is the one the fog and the screens take: a map laid over another goes above it
+  const z = (i) => (Number.isFinite(i?.zIndex) ? i.zIndex : 0);
+  for (const [name, old] of under) {
+    const u = updates.find((x) => x.id === found.get(name).id);
+    if (u && !(z(found.get(name)) > z(old))) u.zIndex = z(old) + 1;
+  }
+  const counts = { maps: placed.size, town: 0, townWall: 0, rooms: 0, walls: 0, doors: 0, windows: 0, portals: 0, zones: 0 };
+  const groups = [], notes = [];
+  markUp(placed, groups, counts, sceneDpi, newId, notes);
   stairs(placed, groups, counts, sceneDpi, newId);
   const missing = maps.filter((m) => !found.has(m.name)).map((m) => m.name);
-  return { scene: group.name, updates, townInfo: null, groups, counts, missing, notes: [] };
+  const replaced = { under: [...under].map(([map, old]) => ({ map, id: found.get(map).id, over: gone.find((g) => g.id === old.id).name,
+                                                               overId: old.id })), gone };
+  return { scene: group.name, updates, townInfo: null, groups, counts, missing, notes, replaced };
 }
 
 // True when this scene holds the town map (an image named or labelled json.town.name): a scene group's
@@ -445,16 +569,73 @@ export function townInScene(json, images) {
 // The old marks a run replaces (this scene's INTERIOR_KEY items): a scene group's run only its own
 // maps'; the town's run all but a scene group's maps', so a group set up in the town's scene by
 // mistake keeps its marks.
+// A scene group's run also keeps its maps' portal ends wired to a map outside the group (the end
+// either names the other or is named by it): that portal isn't the group's to make again. So a map
+// the campaign groups on its own, in a scene another adventure's 🏘 set up round its town map, keeps
+// the way in from that town's spot. (No real names here: this file is published.)
 export function oldMarks(items, json, group) {
   const names = (maps) => new Set(maps.map((m) => m.name));
   const mine = group ? names(group.maps) : null;
   const all = sceneGroups(json).flatMap((g) => g.buildings);
   const grouped = names(listed(json || {}).filter((m) => all.includes(buildingKey(m))));
+  const byId = new Map(items.map((i) => [i.id, i]));
+  const namedBy = new Map();
+  for (const i of items) {
+    const to = i.metadata?.[PORTAL_KEY];
+    if (to) namedBy.set(to, [...(namedBy.get(to) || []), i]);
+  }
+  // (a portal the DM made by hand, with no tag, is outside too: a way in replacedMarks handed over may lead from one)
+  const outside = (i) => [byId.get(i.metadata?.[PORTAL_KEY]), ...(namedBy.get(i.id) || [])]
+    .some((o) => o && o.id !== i.id && !(typeof o.metadata?.[INTERIOR_KEY]?.map === "string"
+      && mine.has(o.metadata[INTERIOR_KEY].map)));
   return items.filter((i) => {
     const tag = i.metadata?.[INTERIOR_KEY];
     if (!tag) return false;
-    return mine ? mine.has(tag.map) : !grouped.has(tag.map);
+    if (!mine) return !grouped.has(tag.map);
+    return mine.has(tag.map) && !(tag.kind === "portal" && outside(i));
   });
+}
+
+// What a scene group's run does to the marks of the maps its maps take the place of (scenePlan's `replaced`):
+// {remove: [items], handOver: [{id, attachedTo, map, from}]}. Every mark of a map gone (its rooms, walls, doors, windows,
+// portals) is taken off, but a portal end whose other end is on a map that stays (neither the group's nor one any group's
+// map takes the place of: a town's spot) is kept. On a map laid over, that end is handed to the map laid over it, at the
+// same spot, so that way in leads there now (`from`: the other end's map, as its tag names it, or null). Also taken off:
+// a portal end of a map not gone this run (listed, but its group's map isn't in the scene yet) that leads to one taken off.
+// `items`: the scene's INTERIOR_KEY items and every item with a Portals destination.
+export function replacedMarks(items, json, group, replaced) {
+  const gone = new Set((replaced?.gone || []).map((g) => normName(g.name)));
+  if (!gone.size) return { remove: [], handOver: [] };
+  const listedAny = new Set([...replacing(json).values()].flat().map(normName));
+  const mine = new Set((group?.maps || []).map((m) => normName(m.name)));
+  const over = new Map((replaced.under || []).map((u) => [normName(u.over), u]));
+  const tag = (i) => i.metadata?.[INTERIOR_KEY];
+  const mapOf = (i) => (typeof tag(i)?.map === "string" ? normName(tag(i).map) : null);
+  const byId = new Map(items.map((i) => [i.id, i]));
+  const namedBy = new Map();
+  for (const i of items) {
+    const to = i.metadata?.[PORTAL_KEY];
+    if (to) namedBy.set(to, [...(namedBy.get(to) || []), i]);
+  }
+  const others = (i) => [byId.get(i.metadata?.[PORTAL_KEY]), ...(namedBy.get(i.id) || [])].filter((o) => o && o.id !== i.id);
+  const stays = (o) => !listedAny.has(mapOf(o)) && !mine.has(mapOf(o));
+  const remove = [], handOver = [];
+  for (const i of items) {
+    if (!gone.has(mapOf(i))) continue;
+    const out = tag(i).kind === "portal" ? others(i).find(stays) : null;
+    if (!out) {
+      remove.push(i);
+      continue;
+    }
+    const u = over.get(mapOf(i));
+    if (u) handOver.push({ id: i.id, attachedTo: u.id, map: u.map, from: typeof tag(out)?.map === "string" ? tag(out).map : null });
+  }
+  const off = new Set(remove.map((i) => i.id));
+  for (const i of items) {
+    const m = mapOf(i);
+    if (m !== null && listedAny.has(m) && !gone.has(m) && tag(i).kind === "portal" && others(i).some((o) => off.has(o.id))) remove.push(i);
+  }
+  return { remove, handOver };
 }
 
 // Groups packed into addItems calls of at most n items, a group never split.
@@ -472,17 +653,27 @@ export function batches(groups, n) {
   return out;
 }
 
-export function summaryText({ counts: c, missing, notes, scene }) {
+export function summaryText({ counts: c, missing, notes, scene, replaced, wayIn = [] }) {
   if (scene) {
-    // A scene group's run (scenePlan): no town, and its missing maps belong in this scene.
-    let s = `🏘 ${scene}: ${c.maps} maps laid out, ${c.rooms} rooms, ${c.walls} walls, ${c.doors} doors`
-      + `${c.windows ? `, ${c.windows} windows` : ""}${c.portals ? `, ${c.portals} portals` : ""}`;
+    // A scene group's run (scenePlan): no town, and its missing maps belong in this scene. The maps it takes the place
+    // of (replaced.gone) are named, and each way in it was handed (wayIn: replacedMarks' handOver).
+    let s = `🏘 ${scene}: ${c.maps} map${c.maps === 1 ? "" : "s"} laid out, ${c.rooms} rooms, ${c.walls} walls, ${c.doors} doors`
+      + `${c.windows ? `, ${c.windows} windows` : ""}${c.portals ? `, ${c.portals} portals` : ""}`
+      + `${c.zones ? `, ${c.zones} obscured zone${c.zones === 1 ? "" : "s"}` : ""}`;
+    const gone = replaced?.gone || [];
+    if (gone.length) {
+      s += `. ${gone.length} old map${gone.length === 1 ? "" : "s"} hidden, ${gone.length === 1 ? "its" : "their"} marks taken off: `
+        + gone.map((g) => g.name).join(", ");
+    }
+    for (const w of wayIn) s += `. The way in from ${w.from || "another map"} leads to ${w.map} now`;
     if (missing.length) s += `. Not in this scene yet: ${missing.join(", ")} (upload ${missing.length > 1 ? "them" : "it"} here, then run 🏘 again)`;
+    if (notes.length) s += `. Also: ${notes.join("; ")}`;
     return s;
   }
   const town = c.town ? `the town area${c.townWall ? " and its wall" : ""} + ` : c.townWall ? "the town wall + " : "";
   let s = `🏘 ${c.maps} maps laid out, ${town}${c.rooms} rooms, ${c.walls} walls, ${c.doors} doors`
-    + `${c.windows ? `, ${c.windows} windows` : ""}, ${c.portals} portals`;
+    + `${c.windows ? `, ${c.windows} windows` : ""}, ${c.portals} portals`
+    + `${c.zones ? `, ${c.zones} obscured zone${c.zones === 1 ? "" : "s"}` : ""}`;
   if (missing.length) s += `. Not in the scene yet: ${missing.join(", ")}`;
   if (notes.length) s += `. Also: ${notes.join("; ")}`;
   return s;
@@ -596,38 +787,48 @@ const newId = () => (crypto.randomUUID ? crypto.randomUUID()
 // On the town map (an image interiors.json doesn't list): the town's buildings beside it. On a map of a
 // scene group (town.scenes, Chapter 3's sites): that group's maps in this scene, round the clicked one,
 // with no town. On any other listed map: refused.
-export async function setUpInteriors(townId) {
-  const json = await loadInteriors();
+// `O`, `load` and `build` stand in for Owlbear, the panel and Owlbear's item builders in check_interiors.mjs (`pause`:
+// between the addItems calls).
+export async function setUpInteriors(townId, { O = OBR, load = loadInteriors, pause = PAUSE_MS, build = toItem } = {}) {
+  const json = await load();
   if (!json) {
-    OBR.notification.show(directBase() ? "🏘 No interiors.json on the panel yet (owlbear/maps/interiors.py makes it)"
+    O.notification.show(directBase() ? "🏘 No interiors.json on the panel yet (owlbear/maps/interiors.py makes it)"
       : "🏘 Can't reach the DND panel from here: use the “DND NPC (this PC)” copy's menu on the Dell", "ERROR");
     return;
   }
-  const [town] = await OBR.scene.items.getItems([townId]);
+  const [town] = await O.scene.items.getItems([townId]);
   if (!town?.image) return;
   const group = groupOf(json, town);
   if (!group && listed(json).some((m) => normName(m.name) === normName(town.name))) {
-    OBR.notification.show("🏘 That's a building map. Run this on the town map.", "WARNING");
+    O.notification.show("🏘 That's a building map. Run this on the town map.", "WARNING");
     return;
   }
-  const images = await OBR.scene.items.getItems((i) => i.layer === "MAP" && i.type === "IMAGE");
+  if (!group && replacedMap(json, town)) {
+    // an old map a group's map takes the place of (hidden by that run): never set up as the town
+    O.notification.show("🏘 That's an old map the new ones take the place of. Run this on one of the new maps.", "WARNING");
+    return;
+  }
+  const images = await O.scene.items.getItems((i) => i.layer === "MAP" && i.type === "IMAGE");
   if (group && townInScene(json, images)) {
-    OBR.notification.show(`🏘 This scene has the town map; set up ${group.name} in its own scene.`, "WARNING");
+    O.notification.show(`🏘 This scene has the town map; set up ${group.name} in its own scene.`, "WARNING");
     return;
   }
-  OBR.notification.show(group ? `🏘 Setting up the ${group.name} maps… (about half a minute)`
+  O.notification.show(group ? `🏘 Setting up the ${group.name} map${group.maps.length === 1 ? "" : "s"}… (about half a minute)`
     : "🏘 Setting up interiors… (about half a minute)", "INFO");
-  const sceneDpi = await OBR.scene.grid.getDpi();
+  const sceneDpi = await O.scene.grid.getDpi();
   const p = group ? scenePlan(json, group, town, images, sceneDpi, newId) : plan(json, town, images, sceneDpi, newId);
-  const old = oldMarks(await OBR.scene.items.getItems((i) => i.metadata?.[INTERIOR_KEY]), json, group);
-  if (old.length) await step("removing the old marks", () => OBR.scene.items.deleteItems(old.map((i) => i.id)));
+  // every item with a Portals destination too: a way in to an old map (replacedMarks) may be one the DM made by hand
+  const marks = await O.scene.items.getItems((i) => i.metadata?.[INTERIOR_KEY] || i.metadata?.[PORTAL_KEY] !== undefined);
+  const swap = group ? replacedMarks(marks, json, group, p.replaced) : { remove: [], handOver: [] };
+  const old = [...oldMarks(marks, json, group), ...swap.remove];
+  if (old.length) await step("removing the old marks", () => O.scene.items.deleteItems(old.map((i) => i.id)));
   // Every map goes (back) to its spot: one the DM has moved by hand since is moved back too.
   // Each gets what 🧭 Bring PCs here needs (MAP_INFO_KEY), and so does the town (no entry, no
   // props), so a bring on any copy finds everything on the images. (A scene group has no town:
   // the clicked map is one of its maps.)
   const to = new Map(p.updates.map((u) => [u.id, u]));
   if (to.size) {
-    await step(`moving ${to.size} maps`, () => OBR.scene.items.updateItems(group ? [...to.keys()] : [...to.keys(), town.id], (items) => {
+    await step(`moving ${to.size} maps`, () => O.scene.items.updateItems(group ? [...to.keys()] : [...to.keys(), town.id], (items) => {
       for (const i of items) {
         if (!group && i.id === town.id) {
           i.metadata[MAP_INFO_KEY] = p.townInfo;
@@ -640,15 +841,38 @@ export async function setUpInteriors(townId) {
         i.scale = { x: 1, y: 1 };
         i.grid.dpi = u.dpi;
         i.grid.offset = { x: 0, y: 0 };
+        if (u.zIndex !== undefined) i.zIndex = u.zIndex;
+      }
+    }));
+  }
+  // The old maps a group's maps take the place of: each way in from a map that stays handed to the map laid over its
+  // own (once that map is in its spot, so the end stays where it was), then the old maps hidden.
+  if (swap.handOver.length) {
+    const hand = new Map(swap.handOver.map((h) => [h.id, h]));
+    await step("handing over the ways in", () => O.scene.items.updateItems([...hand.keys()], (items) => {
+      for (const i of items) {
+        i.attachedTo = hand.get(i.id).attachedTo;
+        i.metadata[INTERIOR_KEY] = { map: hand.get(i.id).map, kind: "portal" };
+      }
+    }));
+  }
+  // (each keeps what 🧭 needs of it but its furniture, so a bring or a 👥 press no longer steers round furniture it hides)
+  const hide = (p.replaced?.gone || []).map((g) => g.id);
+  if (hide.length) {
+    await step(`hiding ${hide.length} old maps`, () => O.scene.items.updateItems(hide, (items) => {
+      for (const i of items) {
+        i.visible = false;
+        const info = i.metadata?.[MAP_INFO_KEY];
+        if (info && typeof info === "object" && !Array.isArray(info)) i.metadata[MAP_INFO_KEY] = { ...info, props: [] };
       }
     }));
   }
   for (const batch of batches(p.groups, BATCH)) {
     const maps = [...new Set(batch.map((x) => x.metadata?.[INTERIOR_KEY]?.map))];
     const what = maps.length > 3 ? `${maps.slice(0, 3).join(", ")} and ${maps.length - 3} more` : maps.join(", ");
-    const items = await step(`building the marks for ${what}`, async () => batch.map(toItem));
-    await step(`adding the marks for ${what}`, () => OBR.scene.items.addItems(items));
-    await sleep(PAUSE_MS);
+    const items = await step(`building the marks for ${what}`, async () => batch.map(build));
+    await step(`adding the marks for ${what}`, () => O.scene.items.addItems(items));
+    await sleep(pause);
   }
-  OBR.notification.show(summaryText(p), p.missing.length || p.notes.length ? "WARNING" : "SUCCESS");
+  O.notification.show(summaryText({ ...p, wayIn: swap.handOver }), p.missing.length || p.notes.length ? "WARNING" : "SUCCESS");
 }

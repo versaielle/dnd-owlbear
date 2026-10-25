@@ -55,10 +55,12 @@ export const LS = {
 };
 
 // What every client assumes until the bridge's first heartbeat brings the panel's settings.
+// sight: the panel's ✨ "👁 Sight hints" switch (the bridge adds `sight` to its map report while it's on);
+// off until the panel says otherwise, as the panel's own default is.
 export const DEFAULT_SETTINGS = {
   fx: true, style: "shader", zones: true, lights: true, sfx: true, player_casts: true, shake: true,
   quality: { gm: "full", table: "full", touch: "lite", other: "full" },
-  table_players: [], uniform_path: "normal",
+  table_players: [], uniform_path: "normal", sight: false,
 };
 
 export const QUALITIES = ["auto", "full", "lite", "off"];

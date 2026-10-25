@@ -13,21 +13,41 @@
 // and one dim pass over every public seer's band, leaving every public light and every seer's
 // own sight in colour (darkvisionPlan, darkvisionShader below).
 
-import { CLOCK, CLOCK_STATIC, HELPERS } from "./shaders.js?v=52156fe";
+import { MAX_CONES } from "../rules2024.js?v=9a30147";
+import { CLOCK, CLOCK_STATIC, HELPERS } from "./shaders.js?v=9a30147";
 
-// D&D light sources: bright and dim reach in feet, and the look that draws them (5e PHB/SRD
-// numbers; the brazier is a house number, like a torch).
+// D&D light sources: bright and dim reach in feet, and the look that draws them (2024 PHB/SRD
+// numbers, docs/vision-layer-2024.md; the brazier is a house number, like a torch). `cone`: the
+// light shines in a cone the way its token is turned (only while 🔦 and 💡 are both on, and only
+// once the cone is drawn: CONES_BUILT below); otherwise it's a circle, bright + dim.
 export const SOURCES = {
-  candle:          { label: "Candle",            bright: 5,  dim: 5,  look: "candle" },
-  torch:           { label: "Torch",             bright: 20, dim: 20, look: "torch" },
-  lamp:            { label: "Lamp",              bright: 15, dim: 30, look: "lantern" },
-  hooded_lantern:  { label: "Hooded lantern",    bright: 30, dim: 30, look: "lantern" },
-  brazier:         { label: "Campfire / brazier", bright: 20, dim: 20, look: "brazier" },
-  light:           { label: "Light (cantrip)",   bright: 20, dim: 20, look: "magic" },
-  continual_flame: { label: "Continual Flame",   bright: 20, dim: 20, look: "torch" },
-  dancing_lights:  { label: "Dancing Lights",    bright: 0,  dim: 10, look: "magic" },
-  produce_flame:   { label: "Produce Flame",     bright: 20, dim: 20, look: "torch" },
+  candle:             { label: "Candle",                     bright: 5,  dim: 5,  look: "candle" },
+  torch:              { label: "Torch",                      bright: 20, dim: 20, look: "torch" },
+  lamp:               { label: "Lamp",                       bright: 15, dim: 30, look: "lantern" },
+  hooded_lantern:     { label: "Hooded lantern",             bright: 30, dim: 30, look: "lantern" },
+  hooded_lantern_low: { label: "Hooded lantern (hood down)", bright: 0,  dim: 5,  look: "lantern" },
+  bullseye_lantern:   { label: "Bullseye lantern",           bright: 60, dim: 60, look: "lantern", cone: true },
+  brazier:            { label: "Campfire / brazier",         bright: 20, dim: 20, look: "brazier" },
+  light:              { label: "Light (cantrip)",            bright: 20, dim: 20, look: "magic" },
+  continual_flame:    { label: "Continual Flame",            bright: 20, dim: 20, look: "torch" },
+  dancing_lights:     { label: "Dancing Lights",             bright: 0,  dim: 10, look: "magic" },
+  produce_flame:      { label: "Produce Flame",              bright: 20, dim: 20, look: "torch" },
+  daylight:           { label: "Daylight",                   bright: 60, dim: 60, look: "sun" },
 };
+
+// "20 + 20 ft": a source's bright and dim reach, the way the 🔥 menus label it ("" for no source).
+export const feetOf = (kind) => {
+  const s = Object.prototype.hasOwnProperty.call(SOURCES, kind) ? SOURCES[kind] : null;
+  return s ? `${s.bright} + ${s.dim} ft` : "";
+};
+
+// Is this a light that can shine in a cone (the bullseye lantern)?
+export const hasCone = (kind) => Object.prototype.hasOwnProperty.call(SOURCES, kind) && SOURCES[kind].cone === true;
+// The cone has its own copy of the darkness shader (darknessConeShader below, L2), so a bullseye
+// gets its cone while 🔦 and 💡 are both on: the overlay (fx/lighting.js), and the explored memory
+// and the badge through fx/darkness.js darknessCtx (each light's `cone`), all from the one shape,
+// so they agree. With 🔦 off (or 💡 off) it's a circle everywhere, 60 bright + 60 dim.
+export const CONES_BUILT = true;
 
 // How each look moves. colA is the light's colour, colB the flame's hot core.
 //   amp    how hard it flickers (0 steady .. 0.15 restless)
@@ -46,6 +66,8 @@ export const LOOKS = {
   lantern: { label: "Lantern", colA: [1.0, 0.76, 0.42], colB: [1.0, 0.93, 0.72], amp: 0.03, rate: 3.2, jitter: 0.0,  core: 0.14, sparks: 0, gutter: 0.0, warm: 0.34 },
   brazier: { label: "Brazier", colA: [1.0, 0.68, 0.26], colB: [1.0, 0.84, 0.44], amp: 0.11, rate: 4.2, jitter: 0.2,  core: 0.45, sparks: 1, gutter: 0.0, warm: 0.40 },
   magic:   { label: "Magic",   colA: [0.80, 0.92, 1.0], colB: [0.94, 0.98, 1.0], amp: 0.025, rate: 0.7, jitter: 0.0, core: 0.12, sparks: 2, gutter: 0.0, warm: 0.16 },
+  // Daylight: a steady, warm-white sunlight (barely a shimmer, no flame to speak of, no sparks)
+  sun:     { label: "Sunlight", colA: [1.0, 0.96, 0.84], colB: [1.0, 0.99, 0.93], amp: 0.008, rate: 0.4, jitter: 0.0, core: 0.30, sparks: 0, gutter: 0.0, warm: 0.12 },
 };
 
 // The blend mode a flame is drawn with. OVERLAY multiplies the dark half of the map and
@@ -277,6 +299,84 @@ export function flameShader(tier = "full") {
   return flameSrc[key];
 }
 
+// ---- the flame's cone copy (🔦 Cones and 💡 Dim light both on: fx/lighting.js draws every flame with it then) ----
+//
+// The flame above, word for word, except that its light may shine in a cone (the bullseye: the
+// darkness overlay's cone copy, darknessConeShader below, lights only its cone, so its flame must
+// too, or its warm glow would paint the ground behind and beside the lantern that the rules call
+// dark), and that a neighbour in a cone counts only inside its cone (so a torch beside the bullseye
+// isn't left with a hole behind it, where the bullseye was the stronger light but lights nothing).
+// With 🔦 or 💡 off every flame is the plain copy above, exactly as live-checked; with no light in a
+// cone this copy draws what the plain one draws (the shader gate checks it pixel for pixel).
+// Extra uniforms (float3: no float4 in Owlbear):
+//   fk     this light's cone: its facing as a unit vector in the flame's square (x right, y down,
+//          as the scene: facing 0, up the screen, is (0, -1)) and the cosine of its half-angle
+//          (coneSlot below, from rules2024.js coneOf); all 0 for a circle
+//   ksoft  how far past a cone's sides its light fades out, in the flame's square (DV_SOFT_FT, as
+//          the overlay's cone fades)
+//   nbkN   neighbour N's cone, as fk (all 0: a circle)
+// Nothing shows behind or beside the cone, the lantern's own little flame included (a bullseye's
+// light leaves only by its lens; the bearer's mini covers the apex anyway).
+const FLAME_CONE_HEAD = FLAME_HEAD + "uniform float3 fk;\nuniform float ksoft;\n"
+  + Array.from({ length: NEIGHBOUR_SLOTS }, (_, i) => `uniform float3 nbk${i};\n`).join("");
+// coneIn(): 1 inside cone k fading to 0 over ksoft past its sides, a point behind the apex as far
+// from the cone as from the apex (light2k()'s test below, in the flame's square); 1 for no cone.
+// rivalK(): how much of this pixel a neighbour takes from this flame (0..1): rival()'s cross-fade
+// where it's the stronger, times how much of its cone is here. 1 - the most any neighbour takes is
+// exactly the plain flame's `mine` when no neighbour has a cone.
+const FLAME_CONE_FNS = `float coneIn(float2 r, float3 k) {
+  if (dot(k.xy, k.xy) <= 0.0) { return 1.0; }
+  float ca = dot(r, k.xy);
+  float sa = abs(r.x * k.y - r.y * k.x);
+  float sh = sqrt(max(1.0 - k.z * k.z, 0.0));
+  float side = sa * k.z - ca * sh;
+  float w = side;
+  if (side > 0.0 && sa * sh + ca * k.z <= 0.0) { w = length(r); }
+  return 1.0 - smoothstep(0.0, ksoft, w);
+}
+float rivalK(float2 p, float3 n, float nbright, float self, float pen, float3 nk) {
+  float r = rival(p, n, nbright, self, pen);
+  return coneIn(p - n.xy, nk) * (1.0 - smoothstep(-${STRENGTH_EDGE}, ${STRENGTH_EDGE}, self - r));
+}
+`;
+// The plain body with the cone's parts put in (each anchor is there exactly once; check_fx strips
+// them back out and gets the plain body).
+const FLAME_CONE_BODY = FLAME_BODY
+  .replace("half4 main(float2 coord) {\n", FLAME_CONE_FNS + "half4 main(float2 coord) {\n")
+  .replace("  float best = -1.0;\n", "  float take = 0.0;\n")
+  .replace(/best = max\(best, rival\(p, nbr(\d+), nbf\1, self, pen\)\);/g, "take = max(take, rivalK(p, nbr$1, nbf$1, self, pen, nbk$1));")
+  .replace(`  float mine = smoothstep(-${STRENGTH_EDGE}, ${STRENGTH_EDGE}, self - best);\n`, "  float mine = 1.0 - take;\n")
+  .replace("  return outp(clamp(src, float3(0.0), float3(1.0)), alpha * lit * mine);\n",
+    "  return outp(clamp(src, float3(0.0), float3(1.0)), alpha * lit * mine * coneIn(pc, fk));\n");
+const flameConeSrc = {};
+export function flameConeShader(tier = "full") {
+  const lite = tier === "lite";
+  const key = lite ? "lite" : "full";
+  if (!flameConeSrc[key]) {
+    flameConeSrc[key] = lite
+      ? FLAME_CONE_HEAD.replace("uniform float time;\n", "") + CLOCK_STATIC + HELPERS + FLAME_CONE_BODY
+      : FLAME_CONE_HEAD + CLOCK + HELPERS + FLAME_CONE_BODY;
+  }
+  return flameConeSrc[key];
+}
+
+// The cone copy's values: flameUniforms()'s, plus fk (`cone`: this light's coneSlot vector, or null
+// for a circle), ksoft (`softFt` feet, in its square) and nbkN (each neighbour's `k`: its coneSlot
+// vector, or null; a neighbour whose cone lights nothing, "none", is no neighbour), in the same
+// slots as its nbrN.
+export function flameConeUniforms(kind, { cone = null, softFt = DV_SOFT_FT, neighbours = [], ...opts } = {}) {
+  const s = SOURCES[kind] || { bright: 20, dim: 20 };
+  const reach = s.bright + s.dim;
+  const list = (Array.isArray(neighbours) ? neighbours : []).filter((n) => n?.k !== "none");
+  const k = Array.isArray(cone) && cone.length === 3 && cone.every((v) => Number.isFinite(v)) ? [...cone] : [0, 0, 0];
+  return {
+    ...flameUniforms(kind, { ...opts, neighbours: list }),
+    fk: k,
+    ksoft: reach > 0 ? Math.max(softFt / reach, 1e-4) : 1e-4,
+    ...neighbourSlots(reach, list, true),
+  };
+}
+
 // The uniform values for one light: a source ("torch") or a look name, and how many feet one
 // square is. The effect is (bright + dim) * 2 feet wide. ampScale scales how hard it flickers
 // (1 = the look's own; less where flames overlap, so their flicker doesn't add up). walls are
@@ -312,7 +412,8 @@ export function flameUniforms(kind, { seed = 1.3, ftPerCell = 5, fade = 1, ampSc
 
 // The neighbour slots' values: nbrN = (dx, dy, its reach) in this flame's square (this reach = 1),
 // nbfN = its bright fraction; the rest 0 (none). Only lights whose reach overlaps this one's.
-function neighbourSlots(reach, list) {
+// `cones` (the cone copy's): nbkN too, each neighbour's `k` (its coneSlot vector; else all 0).
+function neighbourSlots(reach, list, cones = false) {
   const near = [];
   for (const n of Array.isArray(list) ? list : []) {
     const src = n && SOURCES[n.kind];
@@ -320,7 +421,8 @@ function neighbourSlots(reach, list) {
     const r = src.bright + src.dim;
     const d = Math.hypot(n.dx, n.dy);
     if (!(r > 0) || d >= reach + r) continue;
-    near.push({ x: n.dx / reach, y: n.dy / reach, r: r / reach, bf: src.bright / r, gap: d - r });
+    const k = Array.isArray(n.k) && n.k.length === 3 && n.k.every((v) => Number.isFinite(v)) ? [...n.k] : [0, 0, 0];
+    near.push({ x: n.dx / reach, y: n.dy / reach, r: r / reach, bf: src.bright / r, gap: d - r, k });
   }
   near.sort((a, b) => a.gap - b.gap);
   const out = {};
@@ -328,6 +430,7 @@ function neighbourSlots(reach, list) {
     const n = near[i];
     out[`nbr${i}`] = n ? [n.x, n.y, n.r] : [0, 0, 0];
     out[`nbf${i}`] = n ? n.bf : 0;
+    if (cones) out[`nbk${i}`] = n ? n.k : [0, 0, 0];
   }
   return out;
 }
@@ -796,3 +899,425 @@ export function darkvisionPlan(seers = [], lights = [], { pxPerFt = 1, softFt = 
     dropped: { seers: bands.length - kept.length, circles: circles.length - used.length },
   };
 }
+
+// ---- the 2024 rules' darkness (docs/vision-layer-2024.md: 💡 dim light, 👓 darkvision, 🦇 senses) ----
+//
+// A separate copy of the overlay above (darknessShader), drawn only while 💡, 👓 or 🦇 is on
+// (fx/lighting.js picks it); with all three off the shader above runs, untouched, from the same
+// inputs as before. One shader, the same two passes (grey SATURATION, dim MULTIPLY). Per point:
+//   lit ground: nothing.
+//   inside a light's bright radius (or a blindsight circle): nothing (as painted), dim or dark ground.
+//   dim ground elsewhere, and a light's dim ring on dark ground: the dim level (lv.x), in colour;
+//     with 👓 (dvb = 1) as painted within a public seer's darkvision (dim light seen as bright).
+//   dark ground elsewhere: grey, and lv.y within a public seer's darkvision (with 👓 the plan makes
+//     lv.y the dim level: darkness seen as dim light, in greys), else black (lv.z); as painted inside
+//     a truesight circle (on dark ground only: truesight leaves dim light dim).
+//   a PC's own mini: nothing, whatever the darkness.
+// Overlapping lights still never add up: the bright and reach masks are each the product over all.
+// Uniforms: the overlay's above, plus dvb (1 with 👓) and cbN (float3): the bright radii of circles
+// 3N, 3N+1, 3N+2 in px (0: a light with no bright part, a dim-only one; -1: a truesight circle,
+// bright to its radius on dark ground only). The PLAN does the rest: with 💡 off every light's
+// bright radius is its whole reach (today's look); with 🦇 off there's no sense circle.
+export const DK24_PACK = 3; // bright radii per float3 uniform (Owlbear takes no float4 and no arrays)
+export const DK24_BRIGHT = Math.ceil(DV_CIRCLES / DK24_PACK);
+const brightSlot = (i) => `cb${Math.floor(i / DK24_PACK)}.${"xyz"[i - DK24_PACK * Math.floor(i / DK24_PACK)]}`;
+
+const DK24_HEAD = `uniform float2 size;
+uniform float2 box;
+uniform float soft;
+uniform float pass;
+uniform float3 lv;
+uniform float sdef;
+uniform float dvb;
+` + Array.from({ length: DK_REGIONS }, (_, i) => `uniform float3 r${i}a;\nuniform float2 r${i}b;\n`).join("")
+  + Array.from({ length: DV_SEERS }, (_, i) => `uniform float3 s${i};\n`).join("")
+  + Array.from({ length: DV_CIRCLES }, (_, i) => `uniform float3 c${i};\n`).join("")
+  + Array.from({ length: DK24_BRIGHT }, (_, i) => `uniform float3 cb${i};\n`).join("")
+  + Array.from({ length: DK_SELVES }, (_, i) => `uniform float3 pc${i};\n`).join("");
+
+// light2(): one circle's (bright, reach) factors at q, each 0 inside and 1 outside (fading over
+// `soft` past its edge, as unlit()). b is its bright radius: 0 none; below 0 a truesight circle
+// (bright to its own radius, and only on dark ground, dk = 1).
+// `cones`: how many of the light slots (the first ones) may shine in a cone: 0 for the 2024 copy
+// itself (its string exactly as it was: check_fx pins it), DKC_CONES for the cone copy below, which
+// also calls light2k() (DKC_LIGHT2K) for those slots.
+const dk24Body = (cones = 0) => `float inside(float2 q, float3 a, float2 b) {
+  return step(a.x, q.x) * step(a.y, q.y) * (1.0 - step(b.x, q.x)) * (1.0 - step(b.y, q.y));
+}
+float unlit(float2 q, float3 c) {
+  if (c.z <= 0.0) { return 1.0; }
+  return smoothstep(c.z, c.z + soft, length(q - c.xy));
+}
+float sees(float2 q, float3 s) {
+  if (s.z <= 0.0) { return 0.0; }
+  return 1.0 - smoothstep(s.z, s.z + soft, length(q - s.xy));
+}
+float2 light2(float2 q, float3 c, float b, float dk) {
+  if (c.z <= 0.0) { return float2(1.0); }
+  float d = length(q - c.xy);
+  float rb = b;
+  if (b < 0.0) {
+    if (dk < 0.5) { return float2(1.0); }
+    rb = c.z;
+  }
+  float fb = 1.0;
+  if (rb > 0.0) { fb = smoothstep(rb, rb + soft, d); }
+  return float2(fb, smoothstep(c.z, c.z + soft, d));
+}
+` + (cones > 0 ? DKC_LIGHT2K : "") + `half4 main(float2 coord) {
+  float2 q = coord * (box / max(size, float2(1.0)));
+  float code = sdef;
+` + slotBlocks(DK_REGIONS, DK_BLOCK, (j) => `r${j}b.x > r${j}a.x`, (i) => `code = mix(code, r${i}a.z, inside(q, r${i}a, r${i}b));`)
+  + `  if (code < 0.5) { return half4(0.0); }
+  float dk = step(1.5, code);
+  float us = 1.0;
+` + slotBlocks(DK_SELVES, DK_SELVES, (j) => `pc${j}.z > 0.0`, (i) => `us *= unlit(q, pc${i});`)
+  + `  if (us <= 0.0) { return half4(0.0); }
+  float2 u = float2(1.0);
+` + slotBlocks(DV_CIRCLES, DV_BLOCK, (j) => `c${j}.z > 0.0`, (i) => (i < cones
+    ? `u *= light2k(q, c${i}, ${brightSlot(i)}, dk, k${i});` : `u *= light2(q, c${i}, ${brightSlot(i)}, dk);`))
+  + `  if (u.x <= 0.0) { return half4(0.0); }
+  float v = 0.0;
+  if (dk > 0.5 || dvb > 0.5) {
+` + slotBlocks(DV_SEERS, DV_SEERS, (j) => `s${j}.z > 0.0`, (i) => `v = max(v, sees(q, s${i}));`).replace(/^/gm, "  ")
+  + `  }
+  // how much of the point is in dim light (dim ground: all that isn't bright; dark ground: a
+  // light's ring between its bright radius and its reach) and how much in the dark
+  float ring = mix(u.x, u.x - u.y, dk);
+  float dark = dk * u.y;
+  float mr = mix(lv.x, 1.0, dvb * v);
+  float md = mix(lv.z, lv.y, v);
+  float g = us * dark;
+  if (pass < 0.5) { return half4(half3(0.5 * g), half(g)); }
+  return half4(half3(0.0), half(clamp(us * (ring * (1.0 - mr) + dark * (1.0 - md)), 0.0, 1.0)));
+}
+`;
+const DK24_SRC = DK24_HEAD + dk24Body(0);
+export function darkness2024Shader() {
+  return DK24_SRC;
+}
+
+// ---- the cone (docs/vision-layer-2024.md: 🔦 Cones, only while 💡 Dim light is on too) ----
+//
+// A third copy of the overlay: the 2024 copy above, word for word, except that its first
+// DKC_CONES light slots may shine in a cone (a bullseye lantern: 60 ft bright, 60 more dim, in a
+// cone the way its token is turned). fx/lighting.js draws it only while 🔦 and 💡 are both on
+// (usesCone, below); otherwise the 2024 copy or today's runs, untouched. A light in a cone lights
+// a point only inside its cone AND within its reach (bright within its bright radius), its reach
+// measured along the cone's axis (the 2024 Cone's flat end, the DM's D8): the same test as
+// rules2024.js inCone and reachDist, which the explored memory and the badge use too; outside the cone
+// it lights nothing, and the light fades over `soft` past the cone's sides as it does past its
+// reach. With no light in a cone, it draws exactly what the 2024 copy draws.
+// Uniforms: the 2024 copy's, plus kN (float3) for light slot N < DKC_CONES: the cone's facing as a
+// unit vector in scene pixels (x right, y down: facing 0, up the screen, is (0, -1)) and the cosine
+// of its half-angle; all 0 for a light that isn't in a cone (a circle, as in the 2024 copy). The
+// plan puts the lights in a cone first, so they get those slots. The number is rules2024.js
+// MAX_CONES: every layer keeps the cone on the same few (capCones), so a scene never hands the plan
+// more than this many.
+export const DKC_CONES = MAX_CONES;
+const DKC_HEAD = DK24_HEAD + Array.from({ length: DKC_CONES }, (_, i) => `uniform float3 k${i};\n`).join("");
+// light2k(): light2() for a light that may shine in a cone. Its reach and bright radius are
+// measured along the cone's axis (light2() at the point's foot on the axis, ca along it): the 2024
+// Cone's flat end, its far corners as lit as its middle (a half of 90 degrees or more, k.z <= 0:
+// straight out). side is how far the point is past the cone's nearer side (<= 0 inside it); a
+// point behind the apex (past both sides' normals) is as far from the cone as from the apex.
+// Outside the cone both factors are 1 (no light), fading in over `soft` towards its sides, as past
+// its reach (max: the light reaches a point only inside both its reach and its cone).
+const DKC_LIGHT2K = `float2 light2k(float2 q, float3 c, float b, float dk, float3 k) {
+  if (c.z <= 0.0 || dot(k.xy, k.xy) <= 0.0) { return light2(q, c, b, dk); }
+  float2 r = q - c.xy;
+  float ca = dot(r, k.xy);
+  float2 f = light2(k.z > 0.0 ? c.xy + k.xy * max(ca, 0.0) : q, c, b, dk);
+  float sa = abs(r.x * k.y - r.y * k.x);
+  float sh = sqrt(max(1.0 - k.z * k.z, 0.0));
+  float side = sa * k.z - ca * sh;
+  float w = side;
+  if (side > 0.0 && sa * sh + ca * k.z <= 0.0) { w = length(r); }
+  return max(f, float2(smoothstep(0.0, soft, w)));
+}
+`;
+const DKC_SRC = DKC_HEAD + dk24Body(DKC_CONES);
+export function darknessConeShader() {
+  return DKC_SRC;
+}
+
+// A light's cone as the cone copy's kN: [facing x, facing y, cos(half)] (rules2024.js coneOf's
+// {facing, half}, degrees, facing 0 up the screen and clockwise, as inCone reads it). null for no
+// cone, or a half of 180 degrees or more (the whole circle); "none" for a cone that lights nothing
+// (junk numbers, or no width: inCone counts no point of it).
+export function coneSlot(cone) {
+  if (cone == null) return null;
+  if (typeof cone !== "object") return "none";
+  const f = cone.facing, h = cone.half;
+  if (typeof f !== "number" || typeof h !== "number" || !Number.isFinite(f) || !Number.isFinite(h) || !(h > 0)) return "none";
+  if (h >= 180) return null;
+  const t = (f * Math.PI) / 180;
+  return [Math.sin(t), -Math.cos(t), Math.cos((h * Math.PI) / 180)];
+}
+
+// How far out a light in cone k reaches, in reaches: its flat end's corners are 1 / cos(half) out
+// (1.118 for the 2024 Cone); 1 for a circle, or a half of 90 degrees or more (no flat end).
+function coneFar(k) {
+  return Array.isArray(k) && k[2] > 0 ? 1 / k[2] : 1;
+}
+
+// How far scene point (dx, dy) from a light is outside its cone k ([facing x, facing y, cos half]):
+// <= 0 inside (the light2k() above, in JS).
+function coneOut(dx, dy, k) {
+  const ca = dx * k[0] + dy * k[1];
+  const sa = Math.abs(dx * k[1] - dy * k[0]);
+  const sh = Math.sqrt(Math.max(1 - k[2] * k[2], 0));
+  const side = sa * k[2] - ca * sh;
+  return side > 0 && sa * sh + ca * k[2] <= 0 ? Math.hypot(dx, dy) : side;
+}
+
+// A circle's bright radius from the values (cbN, DK24_PACK to a float3), 0 when missing.
+function brightAt(values, i) {
+  const v = v2(values[`cb${Math.floor(i / DK24_PACK)}`]);
+  const b = v[i - DK24_PACK * Math.floor(i / DK24_PACK)];
+  return typeof b === "number" && Number.isFinite(b) ? b : 0;
+}
+
+// The 2024 shader in JS (the checks, the bench): at q (box pixels) -> {code, grey, mult, alpha}, as
+// darknessLevel(), and `light`: "bright" | "mini" | "dim" | "dark" (what mostly decides it there).
+// The cone copy's too (darknessConeLevel): its values add kN, which the 2024 copy's never have.
+export function darkness2024Level(q, values) {
+  const soft = values.soft || 0;
+  let code = +values.sdef || 0;
+  for (let i = 0; i < DK_REGIONS; i++) {
+    const [ax, ay, ac] = v2(values[`r${i}a`]);
+    const [bx, by] = v2(values[`r${i}b`]);
+    if (!(bx > ax)) {
+      if (i % DK_BLOCK === 0) break;
+      continue;
+    }
+    if (q.x >= ax && q.y >= ay && q.x < bx && q.y < by) code = ac;
+  }
+  const none = (light) => ({ code, grey: 0, mult: 1, alpha: 0, light });
+  if (code < 0.5) return none("bright");
+  const dk = code >= 1.5 ? 1 : 0;
+  let us = 1;
+  for (let i = 0; i < DK_SELVES; i++) {
+    const [x, y, r] = v2(values[`pc${i}`]);
+    if (!(r > 0)) {
+      if (i === 0) break;
+      continue;
+    }
+    us *= sstep(r, r + soft, Math.hypot(q.x - x, q.y - y));
+  }
+  if (us <= 0) return none("mini");
+  let ub = 1, ur = 1;
+  for (let i = 0; i < DV_CIRCLES; i++) {
+    const [x, y, r] = v2(values[`c${i}`]);
+    if (!(r > 0)) {
+      if (i % DV_BLOCK === 0) break;
+      continue;
+    }
+    // (the cone copy: a light in a cone, kN in one of the first DKC_CONES slots, lights nothing
+    // outside it, and inside it its reach is measured along its axis, light2k's flat end; the 2024
+    // copy's values have no kN)
+    const k = i < DKC_CONES ? v2(values[`k${i}`]) : null;
+    const coned = k && k[0] * k[0] + k[1] * k[1] > 0;
+    const d = coned && k[2] > 0 ? Math.max((q.x - x) * k[0] + (q.y - y) * k[1], 0) : Math.hypot(q.x - x, q.y - y);
+    const b = brightAt(values, i);
+    let rb = b;
+    if (b < 0) {
+      if (dk < 0.5) continue;
+      rb = r;
+    }
+    let fb = rb > 0 ? sstep(rb, rb + soft, d) : 1, fr = sstep(r, r + soft, d);
+    if (coned) {
+      const fk = sstep(0, soft, coneOut(q.x - x, q.y - y, k));
+      fb = Math.max(fb, fk);
+      fr = Math.max(fr, fk);
+    }
+    ub *= fb;
+    ur *= fr;
+  }
+  if (ub <= 0) return none("bright");
+  const dvb = +values.dvb || 0;
+  let v = 0;
+  if (dk > 0.5 || dvb > 0.5) {
+    for (let i = 0; i < DV_SEERS; i++) {
+      const [x, y, r] = v2(values[`s${i}`]);
+      if (!(r > 0)) {
+        if (i === 0) break;
+        continue;
+      }
+      v = Math.max(v, 1 - sstep(r, r + soft, Math.hypot(q.x - x, q.y - y)));
+    }
+  }
+  const [lx, ly, lz] = v2(values.lv);
+  const ring = dk ? ub - ur : ub;
+  const dark = dk * ur;
+  const mr = lx + (1 - lx) * dvb * v;
+  const md = lz + (ly - lz) * v;
+  const grey = us * dark;
+  const alpha = Math.min(1, Math.max(0, us * (ring * (1 - mr) + dark * (1 - md))));
+  return { code, grey, mult: 1 - alpha, alpha, light: dark >= ring ? "dark" : "dim" };
+}
+
+// What one screen draws under the 2024 rules: darknessPlan()'s inputs, each light with its bright
+// radius too, and `senses` [{id, x, y, blind, truesight}] (feet: every public seer with one), and
+// opts.rules {dim, darkvision, senses} (fx/rules2024.js effectiveRules; the rest are ignored here).
+//   💡 dim: a light's bright radius is its `bright` (feet; missing: half its reach: an adopted Smoke
+//     torch, a hidden ambient torch, a typed reach), its reach beyond it a dim ring. Off: its whole
+//     reach is bright, as today.
+//   👓 darkvision: dim light within a public seer's darkvision is bright, darkness there is dim
+//     (grey, at the dim level). Off: today's darkvision (grey at lv.y, on dark ground only).
+//   🦇 senses: a blindsight circle is bright everywhere (no sight penalty at all, dim light
+//     included), a truesight circle on dark ground only. Off: none.
+// Returns null (nothing dim or dark anywhere), or darknessPlan()'s shape (+ rules, shader "2024").
+// Culled as darknessPlan does, except that a light inside another goes only when both its bright
+// part and its reach are inside the other's (a truesight circle only inside another truesight
+// circle or a light's bright part); over the slots, the widest reach first.
+export function darkness2024Plan(inputs = {}, opts = {}) {
+  return plan24(inputs, opts, 0);
+}
+
+// What one screen draws while 🔦 and 💡 are both on (the cone copy, darknessConeShader): the 2024
+// plan, and each light's `cone` (fx/darkness.js lightShape: null, or {facing, half} in degrees, as
+// rules2024.js coneOf gives it) while opts.rules has both `cones` and `dim` (effectiveRules). A
+// light in a cone lights only inside it (rules2024.js inCone); one whose cone lights nothing (junk
+// numbers, no width) is left out; a half of 180 degrees or more is the whole circle. The lights in
+// a cone go first, into the first DKC_CONES slots (the ones with a kN); more than that are left
+// out (counted in dropped.circles: a guard only, since fx/lighting.js darkInputs gives it the
+// lights with rules2024.js capCones' cones, never more than that many in a cone). Culled as the
+// 2024 plan, except that a light in a cone never counts as covering another (only its circle
+// could), and its flat end's corners reach 1 / cos(half) of its reach out (coneFar), so it's culled
+// and covered by that wider circle.
+// Returns the 2024 plan's shape, with kN in the values, rules.cones, and shader "cone". With no
+// light in a cone its values are the 2024 plan's, plus kN all 0.
+export function darknessConePlan(inputs = {}, opts = {}) {
+  return plan24(inputs, opts, DKC_CONES);
+}
+
+// Does this screen draw the cone copy? Only while 🔦 and 💡 are both on (the effective switches:
+// rules2024.js effectiveRules gives cones only with dim) and the cone is built (CONES_BUILT).
+export const usesCone = (rules) => !!(CONES_BUILT && rules && rules.cones === true && rules.dim === true);
+
+// The JS twin of the cone copy (the same function: its values carry kN).
+export const darknessConeLevel = (q, values) => darkness2024Level(q, values);
+
+// The 2024 plan (cones 0) and the cone plan (cones DKC_CONES): see above.
+function plan24({ regions = {}, extent = null, lights = [], seers = [], selves = [], senses = [] } = {},
+  { pxPerFt = 1, softFt = DV_SOFT_FT, quant = 1, kind = "other", rules = {} } = {}, cones = 0) {
+  const R = { dim: rules?.dim === true, darkvision: rules?.darkvision === true, senses: rules?.senses === true };
+  if (cones > 0) R.cones = rules?.cones === true && R.dim;
+  const Q = (v) => Math.round(v / quant) * quant;
+  const ok = (...v) => v.every((n) => typeof n === "number" && Number.isFinite(n));
+  const soft = Math.max(0, softFt * pxPerFt);
+  const sdef = CODE_NUM[regions.scene] ?? 0;
+  const overlaps = (a, b) => a.x0 < b.x1 && b.x0 < a.x1 && a.y0 < b.y1 && b.y0 < a.y1;
+  const all = (Array.isArray(regions.rects) ? regions.rects : [])
+    .filter((r) => r && ok(r.x0, r.y0, r.x1, r.y1) && r.x1 > r.x0 && r.y1 > r.y0 && r.code in CODE_NUM);
+  const useful = [];
+  for (const r of all) {
+    if (CODE_NUM[r.code] === sdef && !useful.some((o) => overlaps(o, r))) continue;
+    useful.push(r);
+  }
+  const rects = useful.slice(-DK_REGIONS);
+  let b = null;
+  const grow = (r) => { b = b ? { x0: Math.min(b.x0, r.x0), y0: Math.min(b.y0, r.y0), x1: Math.max(b.x1, r.x1), y1: Math.max(b.y1, r.y1) } : { ...r }; };
+  for (const r of rects) if (r.code !== "lit") grow(r);
+  if (sdef > 0 && extent && ok(extent.x0, extent.y0, extent.x1, extent.y1)) grow(extent);
+  if (!b || !(b.x1 > b.x0) || !(b.y1 > b.y0)) return null;
+  const x0 = Math.floor(b.x0) - 1, y0 = Math.floor(b.y0) - 1, x1 = Math.ceil(b.x1) + 1, y1 = Math.ceil(b.y1) + 1;
+  const boxR = { x0, y0, x1, y1 };
+  const darkAreas = sdef === 2 ? [boxR] : rects.filter((r) => r.code === "dark");
+  const anyAreas = sdef > 0 ? [boxR] : rects.filter((r) => r.code !== "lit");
+  const touches = (x, y, r, areas) => areas.some((a) => x + r > a.x0 && x - r < a.x1 && y + r > a.y0 && y - r < a.y1);
+  // the circles: {x, y, r (its reach, px), b (its bright radius, px; 0 none; -1 truesight), k (its
+  // cone: coneSlot(), or null)}, each a pixel wider (a lit point stays lit however its centre was
+  // rounded; a cone's sides aren't widened: they fade in over `soft`, so a point under half a pixel
+  // past one is lit to within a thousandth)
+  const cand = [];
+  const add = (x, y, r, br, areas, k = null) => { if (touches(x, y, r * coneFar(k) + soft, areas)) cand.push({ x, y, r, b: br, k }); };
+  for (const l of Array.isArray(lights) ? lights : []) {
+    if (!l || !ok(l.x, l.y) || !(+l.reach > 0)) continue;
+    const reach = +l.reach;
+    const r = reach * pxPerFt + quant;
+    let br = r;
+    if (R.dim) {
+      const bf = l.bright == null || !Number.isFinite(+l.bright) ? reach / 2 : Math.max(0, Math.min(+l.bright, reach));
+      br = bf > 0 ? bf * pxPerFt + quant : 0;
+    }
+    const k = R.cones ? coneSlot(l.cone) : null;
+    if (k === "none") continue; // a cone that lights nothing
+    add(Q(l.x), Q(l.y), r, br, anyAreas, k);
+  }
+  if (R.senses) {
+    for (const s of Array.isArray(senses) ? senses : []) {
+      if (!s || !ok(s.x, s.y)) continue;
+      if (+s.blind > 0) {
+        const r = +s.blind * pxPerFt + quant;
+        add(Q(s.x), Q(s.y), r, r, anyAreas);
+      }
+      if (+s.truesight > 0) add(Q(s.x), Q(s.y), +s.truesight * pxPerFt + quant, -1, darkAreas);
+    }
+  }
+  const within = (c, o, rc, ro) => Math.hypot(c.x - o.x, c.y - o.y) + rc * coneFar(c.k) <= ro;
+  const covers = (o, c) => {
+    if (o.k) return false; // (a light in a cone lights only part of its circle)
+    if (o.b < 0) return c.b < 0 && within(c, o, c.r, o.r);
+    if (c.b < 0) return o.b > 0 && within(c, o, c.r, o.b);
+    return within(c, o, c.r, o.r) && (c.b <= 0 || (o.b > 0 && within(c, o, c.b, o.b)));
+  };
+  // (of two the same, the first stays)
+  const circles = cand.filter((c, i) => !cand.some((o, j) => j !== i && covers(o, c) && !(j > i && covers(c, o))));
+  const byReach = (a, c) => c.r - a.r;
+  const used = cones > 0
+    ? [...circles.filter((c) => c.k).sort(byReach).slice(0, cones), ...circles.filter((c) => !c.k).sort(byReach)].slice(0, DV_CIRCLES)
+    : [...circles].sort(byReach).slice(0, DV_CIRCLES);
+  const sc = [];
+  const seerAreas = R.darkvision ? anyAreas : darkAreas;
+  for (const s of Array.isArray(seers) ? seers : []) {
+    if (!s || !ok(s.x, s.y) || !(+s.dark > 0)) continue;
+    const r = +s.dark * pxPerFt;
+    const x = Q(s.x), y = Q(s.y);
+    if (touches(x, y, r + soft, seerAreas)) sc.push({ id: s.id, x, y, r, pc: !!s.pc });
+  }
+  sc.sort((a, c) => (a.pc !== c.pc ? (a.pc ? -1 : 1) : c.r - a.r));
+  const kept = sc.slice(0, DV_SEERS);
+  const own = [];
+  for (const p of Array.isArray(selves) ? selves : []) {
+    if (!p || !ok(p.x, p.y) || !(+p.r > 0)) continue;
+    const c = { id: p.id, x: Q(p.x), y: Q(p.y), r: +p.r + quant };
+    if (touches(c.x, c.y, c.r + soft, anyAreas)) own.push(c);
+  }
+  own.sort((a, c) => (String(a.id) < String(c.id) ? -1 : String(a.id) > String(c.id) ? 1 : 0));
+  const selfKept = own.slice(0, DK_SELVES);
+  const L = levelsFor(kind);
+  const values = { box: [x1 - x0, y1 - y0], soft, lv: [L.dim, R.darkvision ? L.dim : L.dv, L.black], sdef, dvb: R.darkvision ? 1 : 0 };
+  for (let i = 0; i < DK_REGIONS; i++) {
+    const r = rects[i];
+    values[`r${i}a`] = r ? [r.x0 - x0, r.y0 - y0, CODE_NUM[r.code]] : [0, 0, 0];
+    values[`r${i}b`] = r ? [r.x1 - x0, r.y1 - y0] : [0, 0];
+  }
+  for (let i = 0; i < DV_SEERS; i++) {
+    const s = kept[i];
+    values[`s${i}`] = s ? [s.x - x0, s.y - y0, s.r] : [0, 0, 0];
+  }
+  for (let i = 0; i < DV_CIRCLES; i++) {
+    const c = used[i];
+    values[`c${i}`] = c ? [c.x - x0, c.y - y0, c.r] : [0, 0, 0];
+  }
+  for (let j = 0; j < DK24_BRIGHT; j++) {
+    values[`cb${j}`] = Array.from({ length: DK24_PACK }, (_, k) => used[j * DK24_PACK + k]?.b ?? 0);
+  }
+  for (let i = 0; i < DK_SELVES; i++) {
+    const p = selfKept[i];
+    values[`pc${i}`] = p ? [p.x - x0, p.y - y0, p.r] : [0, 0, 0];
+  }
+  for (let i = 0; i < cones; i++) values[`k${i}`] = used[i]?.k ? [...used[i].k] : [0, 0, 0];
+  return {
+    box: { x: x0, y: y0, w: x1 - x0, h: y1 - y0 }, values, regions: rects.length, seers: kept.map((s) => s.id), circles: used.length,
+    selves: selfKept.map((p) => p.id), rules: R, shader: cones > 0 ? "cone" : "2024",
+    dropped: { regions: useful.length - rects.length, seers: sc.length - kept.length, circles: circles.length - used.length,
+               selves: own.length - selfKept.length },
+  };
+}
+
+// Does this screen draw the 2024 darkness (the copy above)? Only while 💡, 👓 or 🦇 is on (the
+// effective switches, fx/rules2024.js effectiveRules); otherwise today's overlay, untouched.
+export const uses2024 = (rules) => !!(rules && (rules.dim === true || rules.darkvision === true || rules.senses === true));

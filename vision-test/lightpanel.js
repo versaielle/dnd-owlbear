@@ -20,12 +20,20 @@
 //                "Remember building" / "Forget building". Each tap writes a whole value from this GM
 //                screen and goes to the 🪵 Live log (this device's background, LOCAL_ASK "fog-log").
 //                Without fog/mapui.js the maps are one flat list, as before the folds
-//   ▸ Lights     ▸ PCs: each PC token in the scene: its sight limit (blank = none: fog, mist), its
-//                darkvision (blank = the sheet's, shown greyed), its light (chips); ▸ NPCs & monsters:
-//                every CHARACTER token that isn't a PC, lit or not, with its light chips (lightui.js
-//                lightingRows npcs); ▸ Objects: everything else with a light (incl. the ones lit by
-//                their name: "auto"), chips + None. None on an NPC with nothing to put out writes
-//                nothing, as the 🔥 Light menu (light.html)
+//   (Scene)      also "2024 rules": the seven switches (💡 🔦 👓 ☁ 🌦 🦇 🧱, RULES_KEY on the scene, all
+//                off until tapped), "All 2024 on" (all seven on in one tap: the game's setup, V2) and
+//                "All 2024 off" (all seven off in one tap; the explored memory is another key, never
+//                touched); "Weather": Clear · Rain · Heavy rain · Snow · Heavy
+//                snow · Fog 300 · Fog 200 · Fog 100 (WEATHER_KEY). Each tap writes the whole value,
+//                nothing when it's already so (docs/vision-layer-2024.md, "The Lighting list (U)")
+//   ▸ Lights     ▸ PCs: each PC token in the scene: what it sees and its senses ("sees 60 ft ·
+//                darkvision 60 ft · blindsight 10 ft · truesight 30 ft · tremorsense 30 ft"), its sight
+//                limit (blank = none: fog, mist), its darkvision, blindsight and truesight (blank = the
+//                sheet's, shown greyed: overrides through fx/lightmeta.js setVision), its light (chips);
+//                ▸ NPCs & monsters: every CHARACTER token that isn't a PC, lit or not, with its light
+//                chips (lightui.js lightingRows npcs); ▸ Objects: everything else with a light (incl. the
+//                ones lit by their name: "auto"), chips + None. None on an NPC with nothing to put out
+//                writes nothing, as the 🔥 Light menu (light.html)
 //   Screens      (⚙ Setup) the screens this GM copy heard (kind, build, lights) and what to do about them
 //   Release      gives every token we manage back to plain Smoke & Spectre (two taps)
 //
@@ -56,14 +64,16 @@
 // with the lights writer's own ctx, in one write (fx/lightwriter.js writeNow): the writer's next
 // pass plans nothing more. Any control here that changes an input takes a scene released to
 // Smoke back (SCENE_LIGHTING_KEY.managed true); "Release lights to Smoke" sets it false.
-import { FOG_KEY, PARTY_KEY, SCENE_LIGHTING_KEY } from "./keys.js?v=52156fe";
-import { SOURCES } from "./fx/lights.js?v=52156fe";
-import { isMap, mapDarkness, readGrid, sceneDarkness } from "./fx/darkness.js?v=52156fe";
-import { writeNow } from "./fx/lightwriter.js?v=52156fe";
-import { cleanParty } from "./gather.js?v=52156fe";
-import { DARKNESS, PROPS_TITLE, RELEASED_SAID, applyMeta, autoKind, carriers, describe, editFor, lightingNow, lightingOf,
-         lightingRows, managed, mapDarkEdit, mapDarkSaid, picksDrawnAgain, picksWaiting, propsLabel, releaseItem, sceneNext,
-         sceneSaid, screenLine, screenWarnings, takenBack, uiCtx } from "./lightui.js?v=52156fe";
+import { FOG_KEY, PARTY_KEY, SCENE_LIGHTING_KEY } from "./keys.js?v=9a30147";
+import { rulesOf } from "./rules2024.js?v=9a30147";
+import { SOURCES } from "./fx/lights.js?v=9a30147";
+import { isMap, mapDarkness, readGrid, sceneDarkness } from "./fx/darkness.js?v=9a30147";
+import { writeNow } from "./fx/lightwriter.js?v=9a30147";
+import { cleanParty } from "./gather.js?v=9a30147";
+import { DARKNESS, PROPS_TITLE, RELEASED_SAID, allOffTap, allOnTap, applyMeta, autoKind, carriers, describe, editFor, lightTitle,
+         lightingNow, lightingOf, lightingRows, managed, mapDarkEdit, mapDarkSaid, pcSensesSaid, picksDrawnAgain, picksWaiting,
+         propsLabel, releaseItem, ruleChips, ruleSaid, ruleTap, sceneNext, sceneSaid, screenLine, screenWarnings, takenBack, uiCtx,
+         weatherChips, weatherNote, weatherSaid, weatherTap } from "./lightui.js?v=9a30147";
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 const COMMON = ["candle", "torch", "lamp", "hooded_lantern", "brazier"].filter((k) => SOURCES[k]);
@@ -75,11 +85,14 @@ const DARK_CHIPS = DARKNESS;
 // that far round the PC (ruling (a): lit ground in line of sight is seen from the dark), so the unlit
 // ground inside it is blacked by our overlay, and what is drawn above the overlay (Stat Bubbles' HP
 // bars, badges, rings) is covered by fog/cover.js on the players' screens and the projector only (fix
-// C, docs/vision-layer-2024.md section 12; never on a GM screen). The tooltip must not promise more
+// C, docs/vision-layer-2024.md section 14; never on a GM screen). The tooltip must not promise more
 // (review of dark-fix, 2026-10-14).
 export const DARK_SEES_TITLE = "On dark ground: how far the fog opens all round it (its darkvision, its own light, or the far edge of a light on its own map)."
   + " Lights on other maps never count. Unlit ground inside that circle is blacked by our overlay, and with 🌫 Our fog on, on the players' screens and the projector"
   + " a creature standing there unseen is covered in black, HP bar and badges too, until a light or darkvision reaches it (your screen still shows it)";
+// A PC row's "sees" tooltip: DARK_SEES_TITLE on 🌑 ground, then the 2024 senses' own (lightui.js
+// pcSensesSaid's title), whichever apply; "" for none.
+export const seesTitleOf = (row, sees) => [row?.where === "dark" ? DARK_SEES_TITLE : "", sees?.title || ""].filter(Boolean).join(". ");
 const short = (k) => (k === "hooded_lantern" ? "Lantern" : k === "brazier" ? "Brazier" : SOURCES[k]?.label || k);
 
 export const LIGHTING_CSS = `
@@ -94,13 +107,15 @@ export const LIGHTING_CSS = `
   #lighting input[type=number] { width: 52px; font: inherit; color: inherit; background: rgba(255,255,255,.12); border: 0;
                                  border-radius: 5px; padding: 2px 4px; }
   #lighting input[type=number]::placeholder { color: rgba(255,255,255,.45); }
-  #lighting .fields { display: flex; gap: 10px; align-items: center; font-size: 11px; margin: 2px 0; }
+  #lighting .fields { display: flex; flex-wrap: wrap; gap: 3px 10px; align-items: center; font-size: 11px; margin: 2px 0; }
   #lighting .fields label { display: inline-flex; gap: 4px; align-items: center; margin: 0; }
   #lighting select { font-size: 11px; padding: 1px 4px; }
   #lighting .chips.fm { gap: 2px; margin: 0 0 2px; }
   #lighting .chips.fm .chip { font-size: 10px; padding: 1px 6px; }
   #lighting .chip:disabled { opacity: .3; cursor: default; background: rgba(255,255,255,.05); }
   #lighting .chip.arm { opacity: 1; border-color: #f08a7b; }
+  #lighting .chip.idle { border-style: dashed; }
+  #lighting .chip.master { border-color: rgba(240,138,123,.55); }
   #lighting .fold-head { display: flex; flex-wrap: wrap; align-items: center; gap: 3px; }
   #lighting .fold-btn { margin: 4px 0 1px; padding: 3px 8px; background: transparent; font-weight: 600; text-align: left; }
   #lighting .fold-btn:hover { background: rgba(255,255,255,.12); }
@@ -505,9 +520,9 @@ export function startLighting(OBR, el, { build = "", ask = null } = {}) {
     : r.override ? `${word(r.override)} (set by you)` : `auto → ${word(r.auto)}`);
   // What a fog tap did: the box's one line, and the 🪵 Live log (this device's background logs it
   // with this screen's name, so every GM screen's log shows it).
-  function note(text, cls = "ok") {
+  function note(text, cls = "ok", kind = "map") {
     say(text, cls);
-    try { if (typeof ask === "function") ask("fog-log", { kind: "map", text }); } catch { /* the log is optional */ }
+    try { if (typeof ask === "function") ask("fog-log", { kind, text }); } catch { /* the log is optional */ }
   }
   async function fogWrite(fn) {
     if (!ready) return say("Open a scene first", "warn");
@@ -599,6 +614,68 @@ export function startLighting(OBR, el, { build = "", ask = null } = {}) {
       + (now ? `now ${modeSaid(now)}` : on ? "stay dimmed while a PC is on them" : "fog over"));
   });
 
+  // ---- the 2024 rules and the weather (scene values; GM only; whatever 🌫 says) ----
+  // A switch chip's tap carries the state the DM asked for (the chip as shown, flipped): read the
+  // scene fresh, write the whole value (lightui.js ruleTap), nothing when it's already so. Said here
+  // and in the 🪵 Live log (when this device's fog runs).
+  async function sceneWrite(plan, said) {
+    if (!ready) return say("Open a scene first", "warn");
+    await load();
+    const t = plan(sceneMeta);
+    if (t.changed) await OBR.scene.setMetadata({ [t.key]: t.value });
+    await load();
+    note(said(t.changed, sceneMeta), "ok", "rules");
+    render();
+  }
+  const setRule = (name, want) => sceneWrite((m) => ruleTap(m, name, want),
+    (changed, after) => ruleSaid(name, want, { changed, after, fogOn: fogIsOn() }));
+  const allRulesOn = () => sceneWrite((m) => allOnTap(m), (changed) => ruleSaid("all", true, { changed, fogOn: fogIsOn() }));
+  const allRulesOff = () => sceneWrite((m) => allOffTap(m), (changed) => ruleSaid("all", false, { changed }));
+  const setWeather = (c) => sceneWrite((m) => weatherTap(m, c), (changed, after) => weatherSaid(c, { changed, after, fogOn: fogIsOn() }));
+
+  // The "2024 rules" and "Weather" rows of the scene section.
+  function rulesRows() {
+    const head = document.createElement("div");
+    head.className = "small dim";
+    head.textContent = "2024 rules";
+    head.title = "Each 2024 rule has its own switch, for every screen in this scene (the projector too). All start off: "
+      + "off looks exactly as before the 2024 rules. \"All 2024 on\" turns all seven on at once (the game's setup, once per scene); "
+      + "\"All 2024 off\" turns all seven off at once and leaves the explored memory alone";
+    const box = document.createElement("div");
+    box.className = "chips";
+    for (const c of ruleChips(sceneMeta)) {
+      const b = chip(c.label, c.on, c.title, () => setRule(c.name, !c.on));
+      if (c.idle) b.className += " idle";
+      box.append(b);
+    }
+    const allOn = chip("All 2024 on", false, "All seven 2024 switches on in one tap (the game's setup, once per scene): dim light, cones, "
+      + "2024 darkvision, obscured shapes, weather, senses and senses through fog, on every screen. Each switch still turns off on its own",
+      () => allRulesOn());
+    allOn.className += " master";
+    box.append(allOn);
+    const off = chip("All 2024 off", false, "All seven 2024 switches off in one tap: lights, darkvision and sight as before the 2024 rules, "
+      + "on every screen. The explored memory and its shade are untouched", () => allRulesOff());
+    off.className += " master";
+    box.append(off);
+    const wh = document.createElement("div");
+    wh.className = "small dim";
+    wh.textContent = "Weather";
+    wh.title = "The scene's weather. Fog limits sight on maps marked 🌳 Outdoor while 🌦 Weather is on; heavy rain, heavy snow "
+      + "and fog count as lightly obscured outdoors for the panel's 👁 badge. Interiors never change";
+    const wbox = document.createElement("div");
+    wbox.className = "chips fm";
+    for (const c of weatherChips(sceneMeta)) wbox.append(chip(c.label, c.on, c.title, () => setWeather(c)));
+    const out = [head, box, wh, wbox];
+    const wn = weatherNote(sceneMeta, { fogOn: fogIsOn() });
+    if (wn) {
+      const p = document.createElement("p");
+      p.className = "small dim";
+      p.textContent = `Weather: ${wn}`;
+      out.push(p);
+    }
+    return out;
+  }
+
   // The folds that hold a map, opened (only the folds: nothing is written).
   function revealMap(id) {
     try {
@@ -642,7 +719,7 @@ export function startLighting(OBR, el, { build = "", ask = null } = {}) {
       return write([row.id], () => ({ light: pc && !row.kind ? null : "none" }));
     }));
     for (const k of COMMON) {
-      box.append(chip(short(k), cur === k, `${SOURCES[k].label}: ${SOURCES[k].bright}/${SOURCES[k].dim} ft`,
+      box.append(chip(short(k), cur === k, lightTitle(k),
         () => write([row.id], () => ({ light: k }))));
     }
     const rest = Object.keys(SOURCES).filter((k) => !COMMON.includes(k));
@@ -969,7 +1046,7 @@ export function startLighting(OBR, el, { build = "", ask = null } = {}) {
       box.className = "chips";
       for (const d of DARK_CHIPS) box.append(chip(`${d.icon} ${d.label}`, here === d.value, d.about, () => setScene({ darkness: d.value })));
       box.append(chip(propsLabel(l.auto), l.auto, PROPS_TITLE, () => setScene({ auto: !l.auto })));
-      el.scene.append(head, box);
+      el.scene.append(head, box, ...rulesRows());
       if (!l.managed) {
         const p = document.createElement("p");
         p.className = "warn small";
@@ -989,14 +1066,16 @@ export function startLighting(OBR, el, { build = "", ask = null } = {}) {
     // PCs
     pcsBox.innerHTML = "";
     if (ready && !pcs.length) hint(pcsBox, "warn", "No PC tokens in this scene. Name a token after its PC, or right-click → 🎲 DND → 🏷 This is…");
+    const rules = rulesOf(sceneMeta);
     for (const p of pcs) {
       const row = document.createElement("div");
       row.className = "row";
       // On 🌑 ground "sees" is how far the fog opens for it (darkvision, its own light, or the far edge of
-      // a light on its own map; fx/lightmeta.js seerReachFt); DARK_SEES_TITLE says what that leaves open.
-      const seesTitle = p.where === "dark" ? ` title="${esc(DARK_SEES_TITLE)}"` : "";
-      row.innerHTML = `<span class="who">${esc(p.name)}</span><span class="tag"${seesTitle}>sees ${p.seesFt >= 1000 ? "all" : `${p.seesFt} ft`}`
-        + `${p.darkFt ? ` · darkvision ${p.darkFt} ft` : ""}</span>`;
+      // a light on its own map; fx/lightmeta.js seerReachFt); DARK_SEES_TITLE says what that leaves open,
+      // before the 2024 senses' own tooltip (pcSensesSaid).
+      const sees = pcSensesSaid(p, rules);
+      const title = seesTitleOf(p, sees);
+      row.innerHTML = `<span class="who">${esc(p.name)}</span><span class="tag"${title ? ` title="${esc(title)}"` : ""}>${esc(sees.text)}</span>`;
       const f = document.createElement("div");
       f.className = "fields";
       const sightL = document.createElement("label");
@@ -1007,7 +1086,16 @@ export function startLighting(OBR, el, { build = "", ask = null } = {}) {
       darkL.append("Darkvision", feetInput(p.dark, p.sheetDark != null ? String(p.sheetDark) : "0",
         p.sheetDark != null ? `Blank = the sheet's ${p.sheetDark} ft` : "Blank = none (the sheet's isn't known here)", false,
         (n) => write([p.id], () => ({ vision: { dark: n } }))));
-      f.append(sightL, darkL);
+      // Blindsight and truesight: the DM's override (blank = the sheet's), stored as a number or an
+      // explicit null (fx/lightmeta.js setVision); drawn only while 🦇 Senses is on.
+      const sheetSaid = (ft) => (ft != null ? `Blank = the sheet's ${ft} ft` : "Blank = none (the sheet's isn't known here)");
+      const blindL = document.createElement("label");
+      blindL.append("Blindsight", feetInput(p.blind, p.sheetBlind != null ? String(p.sheetBlind) : "0",
+        `${sheetSaid(p.sheetBlind)}. Drawn while 🦇 Senses is on`, false, (n) => write([p.id], () => ({ vision: { blind: n } }))));
+      const trueL = document.createElement("label");
+      trueL.append("Truesight", feetInput(p.truesight, p.sheetTruesight != null ? String(p.sheetTruesight) : "0",
+        `${sheetSaid(p.sheetTruesight)}. Drawn while 🦇 Senses is on`, false, (n) => write([p.id], () => ({ vision: { truesight: n } }))));
+      f.append(sightL, darkL, blindL, trueL);
       row.append(f, lightChips(p, { pc: true }));
       pcsBox.append(row);
     }
@@ -1111,8 +1199,8 @@ export function startLighting(OBR, el, { build = "", ask = null } = {}) {
     }
   }
 
-  import("./fog/fog.js?v=52156fe").then((m) => { fogMod = m; render(); }, (e) => { fogErr = String(e?.message || e); renderFog(); });
-  import("./fog/mapui.js?v=52156fe").then((m) => { mapUi = m; render(); }, (e) => console.warn("dnd-npc: 🌫 map controls", e));
+  import("./fog/fog.js?v=9a30147").then((m) => { fogMod = m; render(); }, (e) => { fogErr = String(e?.message || e); renderFog(); });
+  import("./fog/mapui.js?v=9a30147").then((m) => { mapUi = m; render(); }, (e) => console.warn("dnd-npc: 🌫 map controls", e));
   OBR.scene.items.onChange(() => refresh());
   OBR.scene.onMetadataChange?.(() => refresh());
   OBR.scene.onReadyChange?.(() => refresh());

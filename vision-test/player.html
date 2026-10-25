@@ -45,8 +45,8 @@
 // does the rest, so closing this popover never loses a request. ?demo shows canned data
 // without Owlbear (for checking the layout in a plain browser). At the top, "📍 Find my PC":
 // the background puts this screen's view on their PC (views.js).
-import { view } from "./player/view.js?v=52156fe";
-import { CH } from "./aim/consts.js?v=52156fe";
+import { view } from "./player/view.js?v=9a30147";
+import { CH } from "./aim/consts.js?v=9a30147";
 
 const app = document.getElementById("app");
 const params = new URLSearchParams(location.search);
@@ -124,7 +124,7 @@ if (params.has("demo")) {
 } else {
   render();
   try {
-    const { default: OBR } = await import("./obr-sdk.js?v=52156fe");
+    const { default: OBR } = await import("./obr-sdk.js?v=9a30147");
     // audience "all": a local message, but it passes the bus's audience check if the background filters.
     ask = (m) => OBR.broadcast.sendMessage(CH.LOCAL_ASK, { v: 1, audience: "all", ...m }, { destination: "LOCAL" }).catch(() => {});
     close = () => OBR.action.close().catch(() => {});

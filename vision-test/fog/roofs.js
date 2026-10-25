@@ -97,10 +97,10 @@
 //
 // No place names in this file: it is published, and the publish's leak guard holds them back.
 
-import { EXPLORED_KEY, FOG_KEY, INTERIOR_KEY, MAP_INFO_KEY, ROOF_KEY, ROOFS_KEY } from "../keys.js?v=52156fe";
-import { centreOf, mapAt, mapRects } from "../views.js?v=52156fe";
-import { pointInPolygon } from "./los.js?v=52156fe";
-import { readExplored } from "./shapes.js?v=52156fe";
+import { EXPLORED_KEY, FOG_KEY, INTERIOR_KEY, MAP_INFO_KEY, ROOF_KEY, ROOFS_KEY } from "../keys.js?v=9a30147";
+import { centreOf, mapAt, mapRects } from "../views.js?v=9a30147";
+import { pointInPolygon } from "./los.js?v=9a30147";
+import { readExplored } from "./shapes.js?v=9a30147";
 
 export const ROOF_LAYER = "FOG";
 export const ROOF_Z = -0.5; // between the memory's cut (-1) and our sight lights and walls (0)
