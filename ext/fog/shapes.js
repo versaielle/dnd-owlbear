@@ -80,14 +80,14 @@
 // after the clean. Written only when the area grew by more than MIN_GROW of a square. Over
 // EXPLORED_MAX_BYTES: cleaned harder (3, 6, then 12 px); still over, nothing is written (capped).
 
-import { EXPLORED_KEY } from "../keys.js?v=e323d3ba-df9cbf7";
-import { SELF_SIGHT, effectiveLight, visionOf } from "../fx/lightmeta.js?v=e323d3ba-df9cbf7";
-import { lightsOnMap } from "../fx/darkness.js?v=e323d3ba-df9cbf7";
-import { inCone } from "../rules2024.js?v=e323d3ba-df9cbf7";
-import { centreOf, mapAt } from "../views.js?v=e323d3ba-df9cbf7";
-import { edgeWalls, segmentsOf } from "./lines.js?v=e323d3ba-df9cbf7";
-import { sightBlockers, visibilityPolygon } from "./los.js?v=e323d3ba-df9cbf7";
-import { sightReachFt } from "./sight.js?v=e323d3ba-df9cbf7";
+import { EXPLORED_KEY } from "../keys.js?v=5bd9e047-d6bebbb";
+import { SELF_SIGHT, effectiveLight, visionOf } from "../fx/lightmeta.js?v=5bd9e047-d6bebbb";
+import { lightsOnMap } from "../fx/darkness.js?v=5bd9e047-d6bebbb";
+import { inCone } from "../rules2024.js?v=5bd9e047-d6bebbb";
+import { centreOf, mapAt } from "../views.js?v=5bd9e047-d6bebbb";
+import { edgeWalls, segmentsOf } from "./lines.js?v=5bd9e047-d6bebbb";
+import { sightBlockers, visibilityPolygon } from "./los.js?v=5bd9e047-d6bebbb";
+import { sightReachFt } from "./sight.js?v=5bd9e047-d6bebbb";
 
 export const VERSION = 1;
 // Arcs: every chord within this many px of the true circle (about 28 points round a 5 ft circle at 150

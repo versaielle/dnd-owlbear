@@ -37,13 +37,13 @@
 //   seenByPlan(snap, {cache, strict})   -> Map(creature id -> [PC ids, sorted]): every creature
 //                           creaturesOf finds, [] when no PC sees it; strict: throws when degraded
 
-import { CARRIER_KEY } from "../keys.js?v=e323d3ba-df9cbf7";
-import { footprint } from "../fx/place.js?v=e323d3ba-df9cbf7";
-import { visionOf } from "../fx/lightmeta.js?v=e323d3ba-df9cbf7";
-import { inCone } from "../rules2024.js?v=e323d3ba-df9cbf7";
-import { centreOf, mapAt } from "../views.js?v=e323d3ba-df9cbf7";
-import { canSee, pointInPolygon, visibilityPolygon } from "./los.js?v=e323d3ba-df9cbf7";
-import { arcSteps, litLightsOn, pcViews, sightBlockersOf } from "./shapes.js?v=e323d3ba-df9cbf7";
+import { CARRIER_KEY } from "../keys.js?v=5bd9e047-d6bebbb";
+import { footprint } from "../fx/place.js?v=5bd9e047-d6bebbb";
+import { visionOf } from "../fx/lightmeta.js?v=5bd9e047-d6bebbb";
+import { inCone } from "../rules2024.js?v=5bd9e047-d6bebbb";
+import { centreOf, mapAt } from "../views.js?v=5bd9e047-d6bebbb";
+import { canSee, pointInPolygon, visibilityPolygon } from "./los.js?v=5bd9e047-d6bebbb";
+import { arcSteps, litLightsOn, pcViews, sightBlockersOf } from "./shapes.js?v=5bd9e047-d6bebbb";
 
 const LAYERS = ["CHARACTER", "MOUNT"];
 

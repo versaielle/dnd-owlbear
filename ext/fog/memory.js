@@ -61,10 +61,10 @@
 // shade on a GM screen only, for testing; a player's screen and the projector always follow the
 // shade; anything else: the scene's shade). api: {OBR, buildImage, buildShape, buildPath}.
 
-import { EXPLORED_KEY, FOG_LOCAL_KEY, FOG_LOOK_KEY } from "../keys.js?v=e323d3ba-df9cbf7";
-import { exploredFor } from "./maps.js?v=e323d3ba-df9cbf7";
-import { drawnMode } from "./mode.js?v=e323d3ba-df9cbf7";
-import { holeRings } from "./shapes.js?v=e323d3ba-df9cbf7";
+import { EXPLORED_KEY, FOG_LOCAL_KEY, FOG_LOOK_KEY } from "../keys.js?v=5bd9e047-d6bebbb";
+import { exploredFor } from "./maps.js?v=5bd9e047-d6bebbb";
+import { drawnMode } from "./mode.js?v=5bd9e047-d6bebbb";
+import { holeRings } from "./shapes.js?v=5bd9e047-d6bebbb";
 
 export const MEMORY_LAYER = "FOG";
 export const MEMORY_IMAGE_Z = -3; // (a) the map's own picture

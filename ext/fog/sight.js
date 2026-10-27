@@ -38,10 +38,10 @@
 // FOG_LOCAL_KEY {kind: "sight", key, sig, host}) only on its first sync after a clear(), a
 // forget() (the scene closed: Owlbear dropped them) or a failed write; fog.js retries a failure.
 
-import { FOG_LOCAL_KEY } from "../keys.js?v=e323d3ba-df9cbf7";
-import { LIT_SIGHT, SELF_SIGHT, effectiveLight, visionOf } from "../fx/lightmeta.js?v=e323d3ba-df9cbf7";
-import { farLight, lightsFor } from "../fx/darkness.js?v=e323d3ba-df9cbf7";
-import { centreOf, mapAt } from "../views.js?v=e323d3ba-df9cbf7";
+import { FOG_LOCAL_KEY } from "../keys.js?v=5bd9e047-d6bebbb";
+import { LIT_SIGHT, SELF_SIGHT, effectiveLight, visionOf } from "../fx/lightmeta.js?v=5bd9e047-d6bebbb";
+import { farLight, lightsFor } from "../fx/darkness.js?v=5bd9e047-d6bebbb";
+import { centreOf, mapAt } from "../views.js?v=5bd9e047-d6bebbb";
 
 export const SIGHT_Z = 0;
 // A hard edge: Smoke's default for a seer (BSConstants FALLOFFDEFAULT "0"). buildLight's own

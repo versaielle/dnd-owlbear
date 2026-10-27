@@ -13,7 +13,8 @@
 // and one dim pass over every public seer's band, leaving every public light and every seer's
 // own sight in colour (darkvisionPlan, darkvisionShader below).
 
-import { CLOCK, CLOCK_STATIC, HELPERS } from "./shaders.js?v=e323d3ba-df9cbf7";
+import { CLOCK, CLOCK_STATIC, HELPERS } from "./shaders.js?v=5bd9e047-d6bebbb";
+import { FAN_VERTS, LEAK_FT, clearOf, fanOf, wallsNear } from "./occlude.js?v=5bd9e047-d6bebbb";
 
 // D&D light sources: bright and dim reach in feet, and the look that draws them (5e PHB/SRD
 // numbers; the brazier is a house number, like a torch).
@@ -443,26 +444,72 @@ export function ringShader() {
 // pass (blend SATURATION) and a dim pass (blend MULTIPLY; its alpha is how much darker, its colour
 // black, so the map ends up multiplied by `mult`). Per point:
 //   lit: nothing.
-//   dim: outside every light's reach, mult = lv.x (0.8 table, 0.9 GM); no grey.
-//   dark: inside a light's reach, nothing (the flame's colour); else grey, and mult = lv.y (0.55
+//   dim: outside every light's bright light, mult = lv.x (0.8 table, 0.9 GM); no grey.
+//   dark: inside a light's bright light, nothing (the flame's colour); in its dim light (past
+//     its bright, within its reach), mult = lv.x, no grey; else grey, and mult = lv.y (0.55
 //     table, 0.8 GM) within some public seer's darkvision, else lv.z (black: 0 table, 0.35 GM).
 //   a PC's own mini (a "self" disc, its drawn size): nothing, whatever the darkness (the players
 //     always see their own minis; a monster or NPC in the dark stays in the black).
+// A light lights only what it can see: walls stop it (fx/occlude.js: its fan, the part of its
+// reach no wall hides, in a big slot's DK_BIG_V corners or a small one's DK_SMALL_V; a light with
+// no wall in reach is a plain circle, in a plain slot if one is free).
 // Overlapping lights or seers never add up: one grey pass, one dim pass, each the max/min over all.
 // Uniforms, in scene pixels from the box's top-left (Owlbear takes no float4):
 //   box, soft (the fade OUTSIDE a light's reach and past a darkvision's), pass (0 grey, 1 dim),
 //   lv (dim, darkvision, black multipliers), sdef (the scene's code: 0 lit, 1 dim, 2 dark),
 //   rNa (x0, y0, code) rNb (x1, y1): a marked map, bottom first (the last one containing the point
-//   wins); sN (x, y, darkvision radius): a public seer; cN (x, y, reach): a light; pcN (x, y,
-//   radius): a PC's own mini. Empty slots are all 0; every list fills its slots in order.
+//   wins); sN (x, y, darkvision radius): a public seer; cN (x, y, reach): a light, bN its bright
+//   radius (below 0: none), and in a big or small slot mN (how far from it anything it lights is,
+//   its fan's furthest corner; how far all round it no wall comes, so all of it is lit) and fN_K
+//   its fan's corners (from the light, anticlockwise; the closing one, the first again, isn't
+//   sent; all 0: no walls); pcN (x, y, radius): a PC's own mini. Empty slots are all 0; every list
+//   (and each kind of light slot) fills its slots in order (a fan's spare corners repeat its first).
 export const DK_REGIONS = 12;
 export const DK_SELVES = 8; // PCs' own minis kept clear (a party is 6 or so)
 const DK_BLOCK = 4;
+// Light slots: `big` ones with room for a fan of DK_BIG_V corners (a cave's or a hall's), `small`
+// ones for DK_SMALL_V (a room's: most lamps), `plain` ones for a light with no wall in reach. A
+// size (DK_SIZES) says how many of each. Uniform room: a shader with more than the screen's GPU
+// takes draws a black square (WebGL2 promises 224 rows of 4 floats; the first size takes about
+// 204), so fx/lighting.js picks a smaller size where the GPU says it has less room (darkSize).
+export const DK_BIG_V = FAN_VERTS;
+export const DK_SMALL_V = 8;
+const DK_LIGHT_BLOCK = 4; // lights tested together (each kind's slots fill in order)
+const FAN_BLOCK = 4; // fan triangles tested together (a fan's spare corners repeat its first)
+export const DK_SIZES = [{ big: 8, small: 16, plain: 8 }, { big: 4, small: 8, plain: 8 }];
+// A size's light slots, in uniform order: [{kind, from, n, verts}] (verts 0: plain).
+export function dkSlots(size = DK_SIZES[0]) {
+  const s = { big: size?.big ?? DK_SIZES[0].big, small: size?.small ?? DK_SIZES[0].small, plain: size?.plain ?? DK_SIZES[0].plain };
+  return [{ kind: "big", from: 0, n: s.big, verts: DK_BIG_V },
+    { kind: "small", from: s.big, n: s.small, verts: DK_SMALL_V },
+    { kind: "plain", from: s.big + s.small, n: s.plain, verts: 0 }];
+}
+// The uniform rows a darkness shader of that size takes (GLSL ES packing: a float3 a row, two
+// float2s a row, a float in a float3's spare place, else a row), with 8 rows for Skia's own. A
+// fan slot's float2s: its corners but the closing one, and mN.
+export function darkRows(size = DK_SIZES[0]) {
+  const k = dkSlots(size), all = k[0].n + k[1].n + k[2].n;
+  const f3 = 1 + DK_REGIONS + DV_SEERS + DK_SELVES + all;
+  const f2 = 2 + DK_REGIONS + k[0].n * k[0].verts + k[1].n * k[1].verts;
+  const floats = 3 + all;
+  return f3 + Math.ceil(f2 / 2) + Math.max(0, floats - f3) + 8;
+}
+// The biggest size whose rows fit in `rows` (the GPU's MAX_FRAGMENT_UNIFORM_VECTORS; unknown: the
+// first), else the smallest.
+export function darkSize(rows) {
+  if (!(rows > 0)) return DK_SIZES[0];
+  return DK_SIZES.find((s) => darkRows(s) <= rows) || DK_SIZES[DK_SIZES.length - 1];
+}
 export const DK_LEVELS = { gm: { dim: 0.9, dv: 0.8, black: 0.35 }, other: { dim: 0.8, dv: 0.55, black: 0 } };
 export const levelsFor = (kind) => (kind === "gm" ? DK_LEVELS.gm : DK_LEVELS.other);
 export const CODE_NUM = { lit: 0, dim: 1, dark: 2 };
 
-const DK_HEAD = `uniform float2 size;
+const lightHead = ({ from, n, verts }) => Array.from({ length: n }, (_, j) => {
+  const i = from + j;
+  return `uniform float3 c${i};\nuniform float b${i};\n` + (verts ? `uniform float2 m${i};\n` : "")
+    + Array.from({ length: Math.max(0, verts - 1) }, (_, k) => `uniform float2 f${i}_${k};\n`).join("");
+}).join("");
+const dkHead = (slots) => `uniform float2 size;
 uniform float2 box;
 uniform float soft;
 uniform float pass;
@@ -470,22 +517,75 @@ uniform float3 lv;
 uniform float sdef;
 ` + Array.from({ length: DK_REGIONS }, (_, i) => `uniform float3 r${i}a;\nuniform float2 r${i}b;\n`).join("")
   + Array.from({ length: DV_SEERS }, (_, i) => `uniform float3 s${i};\n`).join("")
-  + Array.from({ length: DV_CIRCLES }, (_, i) => `uniform float3 c${i};\n`).join("")
+  + slots.map(lightHead).join("")
   + Array.from({ length: DK_SELVES }, (_, i) => `uniform float3 pc${i};\n`).join("");
 
-// n slots, `per` at a time, each block only when its first slot is in use (slots fill in order).
-function slotBlocks(n, per, used, stmt) {
+// n slots from `from`, `per` at a time, each block only when its first slot is in use (slots fill
+// in order: a test of uniforms alone, the same for every pixel, so cheap to skip), and its slots
+// only where `guard` holds (a test per pixel, kept apart from that one).
+function slotBlocks(n, per, used, stmt, from = 0, guard = null) {
   let s = "", close = "";
-  for (let j = 0; j < n; j += per) {
-    const pad = "  ".repeat(1 + j / per);
+  for (let j = from; j < from + n; j += per) {
+    const pad = "  ".repeat(1 + (j - from) / per);
     s += `${pad}if (${used(j)}) {\n`;
-    for (let i = j; i < Math.min(j + per, n); i++) s += `${pad}  ${stmt(i)}\n`;
+    const p = guard ? `${pad}    ` : `${pad}  `;
+    if (guard) s += `${pad}  if (${guard}) {\n`;
+    for (let i = j; i < Math.min(j + per, from + n); i++) s += `${p}${stmt(i)}\n`;
+    if (guard) s += `${pad}  }\n`;
     close = `${pad}}\n` + close;
   }
   return s + close;
 }
 
-const DK_BODY = `float inside(float2 q, float3 a, float2 b) {
+// Light i's fan: w = 1 inside one of its triangles (light, corner k, corner k + 1), 0 outside
+// them all, FAN_BLOCK triangles at a time, each block only when its first triangle has two
+// corners (the spare ones all repeat the first corner: a light with no walls has none, w stays 1).
+// sK is which side of the line from the light through corner K the pixel is on, worked out once
+// for both triangles that share it (so no pixel falls between them). The last corner is the
+// first again (not a uniform of its own). A pixel is between the two lines of one triangle (two
+// on a shared line), so the rest of tri() runs only there: tri() is 0 wherever that test fails.
+function fanBlocks(i, verts, pad) {
+  const last = verts - 1;
+  const f = (k) => `f${i}_${k === last ? 0 : k}`, sv = (k) => `s${k === last ? 0 : k}`;
+  let s = "", close = "";
+  for (let j = 0; j < last; j += FAN_BLOCK) {
+    const p = pad + "  ".repeat(j / FAN_BLOCK);
+    s += `${p}if (${f(j)}.x != ${f(j + 1)}.x || ${f(j)}.y != ${f(j + 1)}.y) {\n`;
+    if (j === 0) s += `${p}  w = 0.0;\n${p}  float dw = d / max(0.25 * soft, 0.5);\n${p}  float s0 = turn(${f(0)}, r);\n`;
+    for (let k = j; k < Math.min(j + FAN_BLOCK, last); k++) {
+      if (k + 1 < last) s += `${p}  float s${k + 1} = turn(${f(k + 1)}, r);\n`;
+      s += `${p}  if (${sv(k)} >= 0.0 && ${sv(k + 1)} <= 0.0) { w = max(w, tri(${sv(k)}, -${sv(k + 1)}, ${f(k)}, ${f(k + 1)}, dw)); }\n`;
+    }
+    close = `${p}}\n` + close;
+  }
+  return s + close;
+}
+
+// Light i: nothing past its fan's furthest corner (mN.x, so a light in a small room costs only
+// the room); there, what its fan leaves lit, to its reach (u) and to its bright radius (ub). Nearer
+// the light than any wall (mN.y: most of a room) it's all lit, with no fan to test.
+const lightCode = (i, verts) => `{
+      float2 r = q - c${i}.xy;
+      float d = length(r);
+      if (d < m${i}.x) {
+        float w = 1.0;
+        if (d >= m${i}.y) {
+${fanBlocks(i, verts, "          ")}        }
+        u *= 1.0 - w * (1.0 - smoothstep(c${i}.z, c${i}.z + soft, d));
+        ub *= 1.0 - w * (1.0 - smoothstep(b${i}, b${i} + soft, d));
+      }
+    }`;
+// A plain slot's light: no walls in its reach (an empty slot in a block in use: nothing).
+const plainCode = (i) => `if (c${i}.z > 0.0) { float d = length(q - c${i}.xy); u *= smoothstep(c${i}.z, c${i}.z + soft, d); ub *= smoothstep(b${i}, b${i} + soft, d); }`;
+
+// turn: which side of the line from the light through corner a the pixel r is on (> 0: past it,
+// anticlockwise). tri: inside the triangle (light, a, b): past a's line (sa >= 0), short of b's
+// (sb >= 0), and short of the wall's line between them (sa + sb <= k = a x b), softened over the
+// last 0.25 ft or so either side of that line (dw = how far the pixel is / that width; outside
+// the triangle's two sides it's 0 at once: the next triangle takes over there). A triangle
+// with no area (k under 0.001: a fan's spare corners, two the same) lights nothing, not even its
+// own line.
+const DK_FNS = `float inside(float2 q, float3 a, float2 b) {
   return step(a.x, q.x) * step(a.y, q.y) * (1.0 - step(b.x, q.x)) * (1.0 - step(b.y, q.y));
 }
 float unlit(float2 q, float3 c) {
@@ -496,15 +596,27 @@ float sees(float2 q, float3 s) {
   if (s.z <= 0.0) { return 0.0; }
   return 1.0 - smoothstep(s.z, s.z + soft, length(q - s.xy));
 }
-half4 main(float2 coord) {
+float turn(float2 a, float2 r) {
+  return a.x * r.y - a.y * r.x;
+}
+float tri(float sa, float sb, float2 a, float2 b, float dw) {
+  float k = a.x * b.y - a.y * b.x;
+  return step(0.0, sa) * step(0.0, sb) * step(0.001, k) * clamp(0.5 + dw * (k - sa - sb) / max(k, 0.001), 0.0, 1.0);
+}
+`;
+
+const dkMain = (slots) => `half4 main(float2 coord) {
   float2 q = coord * (box / max(size, float2(1.0)));
   float code = sdef;
 ` + slotBlocks(DK_REGIONS, DK_BLOCK, (j) => `r${j}b.x > r${j}a.x`, (i) => `code = mix(code, r${i}a.z, inside(q, r${i}a, r${i}b));`)
   + `  if (code < 0.5) { return half4(0.0); }
+  // u: unlit by every light (outside its reach), ub: outside every light's bright light (ub >= u:
+  // once a light's bright has it at 0, no other light can change the pixel, so the rest are skipped)
   float u = 1.0;
-` + slotBlocks(DV_CIRCLES, DV_BLOCK, (j) => `c${j}.z > 0.0`, (i) => `u *= unlit(q, c${i});`)
-  + slotBlocks(DK_SELVES, DK_SELVES, (j) => `pc${j}.z > 0.0`, (i) => `u *= unlit(q, pc${i});`)
-  + `  if (u <= 0.0) { return half4(0.0); }
+  float ub = 1.0;
+` + slots.map((k) => slotBlocks(k.n, DK_LIGHT_BLOCK, (j) => `c${j}.z > 0.0`, (i) => (k.verts ? lightCode(i, k.verts) : plainCode(i)), k.from, "ub > 0.0")).join("")
+  + slotBlocks(DK_SELVES, DK_SELVES, (j) => `pc${j}.z > 0.0`, (i) => `{ float o = unlit(q, pc${i}); u *= o; ub *= o; }`)
+  + `  if (ub <= 0.0) { return half4(0.0); }
   float g = 0.0;
   float m = lv.x;
   if (code > 1.5) {
@@ -514,18 +626,47 @@ half4 main(float2 coord) {
     m = mix(lv.z, lv.y, v);
   }
   if (pass < 0.5) { return half4(half3(0.5 * g), half(g)); }
-  return half4(half3(0.0), half(clamp(u * (1.0 - m), 0.0, 1.0)));
+  // past every light: m; in a light's dim light (u < 1): the dim level; in its bright light: none
+  return half4(half3(0.0), half(clamp(ub * (u * (1.0 - m) + (1.0 - u) * (1.0 - lv.x)), 0.0, 1.0)));
 }
 `;
-const DK_SRC = DK_HEAD + DK_BODY;
-export function darknessShader() {
-  return DK_SRC;
+const dkSrc = new Map();
+// The overlay's shader for a size (DK_SIZES: how many lights of each kind it has room for).
+export function darknessShader(size = DK_SIZES[0]) {
+  const slots = dkSlots(size);
+  const key = slots.map((k) => k.n).join("x");
+  if (!dkSrc.has(key)) dkSrc.set(key, dkHead(slots) + DK_FNS + dkMain(slots));
+  return dkSrc.get(key);
 }
 // Every screen's overlay (fx/lighting.js), and what the compile gate builds as "darkvision".
 export const darkvisionShader = darknessShader;
 
+// The shader's fan test in JS: how lit a pixel r = (rx, ry) from its light (d = its distance) is
+// by the fan with corners fs ([[x, y] ...], as the fN_K uniforms): 1 with no walls (the first two
+// corners the same), else the most of any triangle's, block by block as the shader goes.
+const step0 = (x) => (x >= 0 ? 1 : 0);
+const turnJs = (a, rx, ry) => a[0] * ry - a[1] * rx;
+function triJs(sa, sb, a, b, dw) {
+  const k = a[0] * b[1] - a[1] * b[0];
+  return step0(sa) * step0(sb) * (k >= 0.001 ? 1 : 0) * Math.min(1, Math.max(0, 0.5 + (dw * (k - sa - sb)) / Math.max(k, 0.001)));
+}
+export function fanLit(rx, ry, d, fs, soft) {
+  const differ = (k) => fs[k][0] !== fs[k + 1][0] || fs[k][1] !== fs[k + 1][1];
+  if (fs.length < 2 || !differ(0)) return 1;
+  const dw = d / Math.max(0.25 * soft, 0.5);
+  let w = 0, sp = turnJs(fs[0], rx, ry);
+  for (let k = 0; k + 1 < fs.length; k++) {
+    if (k % FAN_BLOCK === 0 && !differ(k)) break;
+    const sn = turnJs(fs[k + 1], rx, ry);
+    w = Math.max(w, triJs(sp, -sn, fs[k], fs[k + 1], dw));
+    sp = sn;
+  }
+  return w;
+}
+
 // The shader in JS (the checks, the bench): at q (box pixels) -> {code, grey (0..1), mult (what
-// the map is multiplied by), alpha (the dim pass's alpha = 1 - mult)}.
+// the map is multiplied by), alpha (the dim pass's alpha = 1 - mult)}. Any size (DK_SIZES): it
+// reads the slots `values` has.
 export function darknessLevel(q, values) {
   const soft = values.soft || 0;
   let code = +values.sdef || 0;
@@ -540,14 +681,20 @@ export function darknessLevel(q, values) {
   }
   const none = { code, grey: 0, mult: 1, alpha: 0 };
   if (code < 0.5) return none;
-  let u = 1;
-  for (let i = 0; i < DV_CIRCLES; i++) {
+  let u = 1, ub = 1;
+  for (let i = 0; values[`c${i}`] !== undefined; i++) {
     const [x, y, r] = v2(values[`c${i}`]);
-    if (!(r > 0)) {
-      if (i % DV_BLOCK === 0) break;
-      continue;
-    }
-    u *= sstep(r, r + soft, Math.hypot(q.x - x, q.y - y));
+    if (!(r > 0)) continue;
+    const rx = q.x - x, ry = q.y - y, d = Math.hypot(rx, ry);
+    const m = values[`m${i}`] !== undefined ? v2(values[`m${i}`]) : null;
+    if (m && !(d < m[0])) continue;
+    const fs = [];
+    for (let k = 0; values[`f${i}_${k}`] !== undefined; k++) fs.push(v2(values[`f${i}_${k}`]));
+    if (fs.length) fs.push(fs[0]);
+    const w = m && d < m[1] ? 1 : fanLit(rx, ry, d, fs, soft);
+    const b = +values[`b${i}`] || 0;
+    u *= 1 - w * (1 - sstep(r, r + soft, d));
+    ub *= 1 - w * (1 - sstep(b, b + soft, d));
   }
   for (let i = 0; i < DK_SELVES; i++) {
     const [x, y, r] = v2(values[`pc${i}`]);
@@ -555,9 +702,11 @@ export function darknessLevel(q, values) {
       if (i === 0) break;
       continue;
     }
-    u *= sstep(r, r + soft, Math.hypot(q.x - x, q.y - y));
+    const o = sstep(r, r + soft, Math.hypot(q.x - x, q.y - y));
+    u *= o;
+    ub *= o;
   }
-  if (u <= 0) return none;
+  if (ub <= 0) return none;
   const [ld, lv, lb] = v2(values.lv);
   let g = 0, m = ld;
   if (code > 1.5) {
@@ -573,24 +722,29 @@ export function darknessLevel(q, values) {
     g = u;
     m = lb + (lv - lb) * v;
   }
-  const alpha = Math.min(1, Math.max(0, u * (1 - m)));
+  const alpha = Math.min(1, Math.max(0, ub * (u * (1 - m) + (1 - u) * (1 - ld))));
   return { code, grey: g, mult: 1 - alpha, alpha };
 }
 
 // What one screen draws, from fx/darkness.js's regions and the lights and seers that count there:
 //   regions {scene: "lit"|"dim"|"dark", rects: [{x0, y0, x1, y1, code}]} (scene px, bottom first)
 //   extent  {x0, y0, x1, y1} | null: what a dim/dark SCENE's overlay covers (every map; else the tokens)
-//   lights  [{id, x, y, reach}]  (reach in feet): every light that colours the dark on this screen
+//   lights  [{id, x, y, reach, bright?}] (feet): every light that colours the dark on this screen;
+//           bright: how far its bright light goes (0: none, as Dancing Lights; left out: all of it)
 //   seers   [{id, x, y, dark, pc}] (dark in feet): every public seer with darkvision
 //   selves  [{id, x, y, r}]   (r in scene px): every PC's own mini at its drawn size, kept clear
-// opts {pxPerFt, softFt, quant, kind}. Returns null (nothing dim or dark anywhere), or
-//   {box: {x, y, w, h}, values (every uniform but pass), regions, seers: [ids], circles,
-//    selves: [ids], dropped: {regions, seers, circles, selves}}.
+//   walls   [[x1, y1, x2, y2]] (scene px, fx/lighting.js lightWalls): what stops the lights
+// opts {pxPerFt, softFt, quant, kind, size (DK_SIZES: the shader's), fans (a Map kept between
+// calls: the lights' fans, worked out again only when a light or the walls near it move)}.
+// Returns null (nothing dim or dark anywhere), or
+//   {box: {x, y, w, h}, values (every uniform but pass), regions, seers: [ids], circles, walled
+//    (how many of them stop at walls), selves: [ids], dropped: {regions, seers, circles, selves,
+//    walls (lights near walls drawn as plain circles: their view didn't fit the corners)}}.
 // Culled: a marked map that changes nothing (the scene's own code with nothing marked under it),
 // lights that touch no dim/dark area (or sit inside another light), seers whose darkvision
 // touches no dark area. Over the slots: the topmost maps; the PCs first, then the widest
 // darkvision; the widest lights.
-export function darknessPlan({ regions = {}, extent = null, lights = [], seers = [], selves = [] } = {}, { pxPerFt = 1, softFt = DV_SOFT_FT, quant = 1, kind = "other" } = {}) {
+export function darknessPlan({ regions = {}, extent = null, lights = [], seers = [], selves = [], walls = [] } = {}, { pxPerFt = 1, softFt = DV_SOFT_FT, quant = 1, kind = "other", size = DK_SIZES[0], fans = null } = {}) {
   const Q = (v) => Math.round(v / quant) * quant;
   const ok = (...v) => v.every((n) => typeof n === "number" && Number.isFinite(n));
   const soft = Math.max(0, softFt * pxPerFt);
@@ -617,16 +771,66 @@ export function darknessPlan({ regions = {}, extent = null, lights = [], seers =
   const darkAreas = sdef === 2 ? [boxR] : rects.filter((r) => r.code === "dark");
   const anyAreas = sdef > 0 ? [boxR] : rects.filter((r) => r.code !== "lit");
   const touches = (x, y, r, areas) => areas.some((a) => x + r > a.x0 && x - r < a.x1 && y + r > a.y0 && y - r < a.y1);
-  // lights: a pixel wider (a lit point stays lit however its centre was rounded)
+  // lights: a pixel wider (a lit point stays lit however its centre was rounded); b: its bright
+  // light's radius (below 0: none), w: the walls within its reach (fx/occlude.js wallsNear)
   const cand = [];
   for (const l of lights) {
     if (!l || !ok(l.x, l.y) || !(+l.reach > 0)) continue;
     const c = { x: Q(l.x), y: Q(l.y), r: +l.reach * pxPerFt + quant };
-    if (touches(c.x, c.y, c.r + soft, anyAreas)) cand.push(c);
+    if (!touches(c.x, c.y, c.r + soft, anyAreas)) continue;
+    const br = l.bright == null || !(+l.bright >= 0) ? +l.reach : Math.min(+l.bright, +l.reach);
+    c.b = br > 0 ? br * pxPerFt + quant : -(soft + 1);
+    c.w = wallsNear(c.x, c.y, c.r + soft, walls);
+    cand.push(c);
   }
-  const circles = cand.filter((c, i) => !cand.some((o, j) => j !== i
-    && Math.hypot(c.x - o.x, c.y - o.y) + c.r <= o.r && (o.r > c.r || Math.hypot(c.x - o.x, c.y - o.y) > 0 || j < i)));
-  const used = [...circles].sort((a, c) => c.r - a.r).slice(0, DV_CIRCLES);
+  // one inside another goes when the other lights all of it as brightly: with walls about, only
+  // when they share a centre (else a wall can hide it from the other)
+  const within = (c, o, d) => d + c.r <= o.r && (c.b <= 0 || d + c.b <= o.b) && (d === 0 || (!c.w.near.length && !o.w.near.length));
+  const circles = cand.filter((c, i) => !cand.some((o, j) => {
+    if (j === i) return false;
+    const d = Math.hypot(c.x - o.x, c.y - o.y);
+    return within(c, o, d) && (o.r > c.r || o.b > c.b || d > 0 || j < i);
+  }));
+  // into the slots, the widest first: a light near walls gets its fan (what it lights once walls
+  // stop it, fx/occlude.js) in a small slot if it fits, else a big one, else cut to a small one's
+  // corners; no slot for its fan: left out. One with no wall near takes any free slot (a plain one
+  // first). One whose view won't fit even a big fan is drawn as a plain circle (dropped.walls).
+  const slots = dkSlots(size), [BIG, SMALL, PLAIN] = slots;
+  const into = { big: [], small: [], plain: [] };
+  const free = (k) => into[k.kind].length < k.n;
+  const fanAt = (c, verts) => {
+    const R = c.r + soft, key = `${c.x}|${c.y}|${R}|${verts}|${c.w.key}`;
+    let f = fans?.get(key);
+    if (f === undefined) {
+      f = fanOf(c.w.near, R, { verts, leak: LEAK_FT * pxPerFt }) || null;
+      if (fans) {
+        if (fans.size >= 512) fans.clear();
+        fans.set(key, f);
+      }
+    }
+    return f;
+  };
+  let walled = 0, unfit = 0;
+  const used = [];
+  for (const c of [...circles].sort((a, o) => o.r - a.r)) {
+    let to = null;
+    const fb = c.w.near.length ? fanAt(c, BIG.verts) : null;
+    if (fb) {
+      if (fb.pts.length <= SMALL.verts && free(SMALL)) to = SMALL;
+      else if (free(BIG)) to = BIG;
+      else if (free(SMALL) && (c.fan = fanAt(c, SMALL.verts))) to = SMALL;
+      if (to) {
+        c.fan ||= fb;
+        walled++;
+      }
+    } else {
+      if (c.w.near.length) unfit++;
+      to = [PLAIN, SMALL, BIG].find(free) || null;
+    }
+    if (!to) continue;
+    into[to.kind].push(c);
+    used.push(c);
+  }
   // seers with darkvision that reaches a dark area
   const sc = [];
   for (const s of seers) {
@@ -658,9 +862,21 @@ export function darknessPlan({ regions = {}, extent = null, lights = [], seers =
     const s = kept[i];
     values[`s${i}`] = s ? [s.x - x0, s.y - y0, s.r] : [0, 0, 0];
   }
-  for (let i = 0; i < DV_CIRCLES; i++) {
-    const c = used[i];
-    values[`c${i}`] = c ? [c.x - x0, c.y - y0, c.r] : [0, 0, 0];
+  // m: nothing past m.x is lit by the light (its fan's furthest corner, and the wall's soft edge),
+  // all of it within m.y (short of its nearest wall by twice that edge: the fan would light it all
+  // there too); a fan's spare corners repeat its first (a plain circle's are all 0: no triangle)
+  const edge = Math.max(0.25 * soft, 0.5);
+  for (const k of slots) {
+    for (let j = 0; j < k.n; j++) {
+      const i = k.from + j, c = into[k.kind][j];
+      values[`c${i}`] = c ? [c.x - x0, c.y - y0, c.r] : [0, 0, 0];
+      values[`b${i}`] = c ? c.b : 0;
+      if (!k.verts) continue;
+      const far = c ? (c.fan ? Math.min(c.fan.reach + edge, c.r + soft) : c.r + soft) + quant : 0;
+      values[`m${i}`] = [far, c?.fan ? Math.min(far, Math.max(0, clearOf(c.w.near) - 2 * edge)) : far];
+      const pts = c?.fan?.pts;
+      for (let v = 0; v + 1 < k.verts; v++) values[`f${i}_${v}`] = pts ? [...(pts[v] ?? pts[0])] : [0, 0];
+    }
   }
   for (let i = 0; i < DK_SELVES; i++) {
     const p = selfKept[i];
@@ -668,9 +884,9 @@ export function darknessPlan({ regions = {}, extent = null, lights = [], seers =
   }
   return {
     box: { x: x0, y: y0, w: x1 - x0, h: y1 - y0 }, values, regions: rects.length, seers: kept.map((s) => s.id), circles: used.length,
-    selves: selfKept.map((p) => p.id),
+    walled, selves: selfKept.map((p) => p.id),
     dropped: { regions: useful.length - rects.length, seers: sc.length - kept.length, circles: circles.length - used.length,
-               selves: own.length - selfKept.length },
+               selves: own.length - selfKept.length, walls: unfit },
   };
 }
 

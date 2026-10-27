@@ -63,15 +63,16 @@
 // Their uniforms are worked out again on EVERY item change, at once (cheap arithmetic, one
 // local update): a carried torch's colour moves with the drag; the flames and walls wait for the
 // scene to settle.
-import { CARRIER_KEY, LIGHT_FX_KEY, PARTY_SENSES_KEY, SCENE_LIGHTING_KEY } from "../keys.js?v=e323d3ba-df9cbf7";
-import { DV_DARK_BLEND, DV_GREY, DV_SOFT_FT, FLAME_BLEND, WALL_SLOTS, darknessPlan, darkvisionShader, dimFor,
-  flameShader, flameUniforms } from "./lights.js?v=e323d3ba-df9cbf7";
-import { ambientReach, darkRegions, isAmbientLight, mapsExtent, sceneDarkness } from "./darkness.js?v=e323d3ba-df9cbf7";
-import { DEFAULT_LIGHTING, effectiveLight, lightingOf, rangeDefaultOf, visionOf } from "./lightmeta.js?v=e323d3ba-df9cbf7";
-import { nameKey, pcName, tokenLabel } from "./pcs.js?v=e323d3ba-df9cbf7";
-import { finite, footprint, gridOf } from "./place.js?v=e323d3ba-df9cbf7";
-import { readLine, toWorld } from "../fog/lineread.js?v=e323d3ba-df9cbf7";
-import { customUniforms, fillUniforms } from "./shaders.js?v=e323d3ba-df9cbf7";
+import { CARRIER_KEY, LIGHT_FX_KEY, PARTY_SENSES_KEY, SCENE_LIGHTING_KEY } from "../keys.js?v=5bd9e047-d6bebbb";
+import { DV_DARK_BLEND, DV_GREY, DV_SOFT_FT, FLAME_BLEND, WALL_SLOTS, darknessPlan, darknessShader, dimFor,
+  flameShader, flameUniforms } from "./lights.js?v=5bd9e047-d6bebbb";
+import { DK_REGIONS, DK_SELVES, DV_SEERS, SOURCES, darkSize, dkSlots } from "./lights.js?v=5bd9e047-d6bebbb";
+import { ambientReach, darkRegions, isAmbientLight, mapsExtent, sceneDarkness } from "./darkness.js?v=5bd9e047-d6bebbb";
+import { DEFAULT_LIGHTING, effectiveLight, lightingOf, rangeDefaultOf, visionOf } from "./lightmeta.js?v=5bd9e047-d6bebbb";
+import { nameKey, pcName, tokenLabel } from "./pcs.js?v=5bd9e047-d6bebbb";
+import { finite, footprint, gridOf } from "./place.js?v=5bd9e047-d6bebbb";
+import { readLine, toWorld } from "../fog/lineread.js?v=5bd9e047-d6bebbb";
+import { customUniforms, fillUniforms } from "./shaders.js?v=5bd9e047-d6bebbb";
 
 export const MAX_FLAMES = 12; // flames per screen: each full one makes Owlbear redraw every frame
 export const LIGHT_Z = 1; // on ATTACHMENT: above the tokens, under rings and badges (auto z-indexes are timestamps)
@@ -227,9 +228,10 @@ export function extentOf(items, grid) {
 
 // The overlay's inputs on one screen (scene pixels, feet), for fx/lights.js darknessPlan():
 //   regions (fx/darkness.js darkRegions), extent, lights: every light this screen shows (`show`:
-//   its R1; a GM's shows all) and every ambient light of the DM's (its Smoke range), never a
-//   carrier child (its NPC's own light counts); seers: every PUBLIC seer with darkvision (the same
-//   on every screen); selves: every PC's own mini (selfDisc), which the darkness never covers.
+//   its R1; a GM's shows all; with its bright light, brightOf) and every ambient light of the DM's
+//   (its Smoke range, all bright), never a carrier child (its NPC's own light counts); seers: every
+//   PUBLIC seer with darkvision (the same on every screen); selves: every PC's own mini (selfDisc),
+//   which the darkness never covers; walls: what stops the lights (lightWalls).
 //   opts: {sceneMeta, lighting, grid {dpi, ftPerCell}, vctx (visionOf's ctx), pub (publicChain's),
 //   show(item, byId)}.
 // A scene released to Smoke (SCENE_LIGHTING_KEY managed false): null (Smoke draws its own there).
@@ -255,12 +257,19 @@ export function darkInputs(items, { sceneMeta = {}, lighting, grid, vctx, pub, s
       continue;
     }
     const l = effectiveLight(item, lighting);
-    if (l && l.reach > 0 && (show ? show(item, byId) : publicChain(item, byId, pub))) lights.push({ ...at, reach: l.reach });
+    if (l && l.reach > 0 && (show ? show(item, byId) : publicChain(item, byId, pub))) lights.push({ ...at, reach: l.reach, bright: brightOf(l) });
     if (!publicChain(item, byId, pub)) continue;
     const v = visionOf(item, vctx);
     if (v?.seer && +v.dark > 0) seers.push({ ...at, dark: +v.dark, pc: !!v.pc });
   }
-  return { regions: darkRegions(list, sceneMeta, grid), extent: extentOf(list, grid), seers, lights, selves };
+  return { regions: darkRegions(list, sceneMeta, grid), extent: extentOf(list, grid), seers, lights, selves, walls: lightWalls(list) };
+}
+
+// How far a light's bright light goes (feet): its kind's share of its reach (a torch half, a lamp
+// a third, Dancing Lights none); a kind we don't know: all of it.
+function brightOf(l) {
+  const s = SOURCES[l?.kind];
+  return s && s.bright + s.dim > 0 ? (l.reach * s.bright) / (s.bright + s.dim) : undefined;
 }
 
 // A token's mini as drawn, in scene px: {x, y, r}, its image's centre and half its smaller side
@@ -276,6 +285,21 @@ export function selfDisc(item, dpi = 150) {
     : (dpi / 2) * Math.min(finite(sx) ? sx : 1, finite(sy) ? sy : 1);
   const c = fp || p;
   return finite(c.x, c.y, r) && r > 0 ? { x: c.x, y: c.y, r } : null;
+}
+
+// The darkness shader's size this screen's GPU has room for (fx/lights.js darkSize), from a
+// throwaway WebGL context's fragment uniform rows; nothing to ask (node, the checks): the first.
+function gpuDarkSize() {
+  try {
+    const c = globalThis.document?.createElement?.("canvas");
+    const gl = c && (c.getContext("webgl2") || c.getContext("webgl"));
+    if (!gl) return darkSize(0);
+    const rows = gl.getParameter(gl.MAX_FRAGMENT_UNIFORM_VECTORS);
+    gl.getExtension("WEBGL_lose_context")?.loseContext();
+    return darkSize(rows);
+  } catch {
+    return darkSize(0);
+  }
 }
 
 function defaultClock() {
@@ -308,7 +332,7 @@ export function createLights(api = {}, ctx = {}) {
   let full = null;
   const loading = (async () => {
     if (api.OBR && typeof api.buildEffect === "function") return api;
-    const sdk = await import("../obr-sdk.js?v=e323d3ba-df9cbf7");
+    const sdk = await import("../obr-sdk.js?v=5bd9e047-d6bebbb");
     return { OBR: sdk.default, buildEffect: sdk.buildEffect, MathM: sdk.MathM, ...api };
   })().then((a) => {
     full = a;
@@ -379,7 +403,7 @@ export function createLights(api = {}, ctx = {}) {
   const flames = new Map();
   // the darkvision passes: part ("grey" | "dim") -> {id, geo, usig}
   const dv = new Map();
-  let dvInfo = { seers: 0, circles: 0, regions: 0, selves: 0, dropped: { regions: 0, seers: 0, circles: 0, selves: 0 } };
+  let dvInfo = { seers: 0, circles: 0, walled: 0, regions: 0, selves: 0, dropped: { regions: 0, seers: 0, circles: 0, selves: 0, walls: 0 } };
   let dvSaid = "";
   const wallsSaid = new Set(); // flames whose walls past WALL_SLOTS were logged already
   // The items this screen showed at the last scene change it looked at (null: none yet, or a
@@ -448,8 +472,14 @@ export function createLights(api = {}, ctx = {}) {
       .build();
   }
 
-  const DV = darkvisionShader();
+  const DK_SIZE = gpuDarkSize();
+  const DV = darknessShader(DK_SIZE);
   const DV_DECL = customUniforms(DV);
+  const DK_ROOM = (() => {
+    const [b, s, p] = dkSlots(DK_SIZE).map((k) => k.n);
+    return `${DK_REGIONS} marked maps, ${DV_SEERS} darkvisions, ${b + s + p} lights (${b + s} near walls) and ${DK_SELVES} PC minis`;
+  })();
+  const fanCache = new Map(); // the lights' fans (fx/lights.js darknessPlan), kept while nothing near them moves
   const DV_PARTS = { grey: { blend: DV_GREY.blend, pass: 0 }, dim: { blend: DV_DARK_BLEND, pass: 1 } };
 
   function dvItem(a, part, plan, uniforms) {
@@ -470,18 +500,19 @@ export function createLights(api = {}, ctx = {}) {
 
   // What darkness this screen draws now (docs/lights-darkness-spec.md): null, or {plan, uniforms:
   // {grey, dim}}. Released to Smoke: nothing of ours (Smoke's own ring; the flames stay).
-  const noDv = () => ({ seers: 0, circles: 0, regions: 0, selves: 0, dropped: { regions: 0, seers: 0, circles: 0, selves: 0 } });
+  const noDv = () => ({ seers: 0, circles: 0, walled: 0, regions: 0, selves: 0, dropped: { regions: 0, seers: 0, circles: 0, selves: 0, walls: 0 } });
   function dvWant(all) {
     const inp = darkInputs(all, { sceneMeta, lighting, grid: G, vctx, pub, show: shows });
-    const plan = inp && darknessPlan(inp, { pxPerFt: G.pxPerFt, softFt: DV_SOFT_FT, quant: 1, kind: kind() });
-    dvInfo = plan ? { seers: plan.seers.length, circles: plan.circles, regions: plan.regions, selves: plan.selves.length, dropped: plan.dropped } : noDv();
+    const plan = inp && darknessPlan(inp, { pxPerFt: G.pxPerFt, softFt: DV_SOFT_FT, quant: 1, kind: kind(), size: DK_SIZE, fans: fanCache });
+    dvInfo = plan ? { seers: plan.seers.length, circles: plan.circles, walled: plan.walled, regions: plan.regions, selves: plan.selves.length, dropped: plan.dropped } : noDv();
     const d = dvInfo.dropped;
-    const said = `${d.regions}|${d.seers}|${d.circles}|${d.selves}`;
+    const said = `${d.regions}|${d.seers}|${d.circles}|${d.selves}|${d.walls}`;
     if (said !== dvSaid) {
       dvSaid = said;
       if (d.regions || d.seers || d.circles || d.selves) {
-        log(`lights: the darkness has room for 12 marked maps, 8 darkvisions, 32 lights and 8 PC minis; left out here: ${d.regions} maps, ${d.seers} darkvisions, ${d.circles} lights, ${d.selves} PC minis`);
+        log(`lights: the darkness has room for ${DK_ROOM}; left out here: ${d.regions} maps, ${d.seers} darkvisions, ${d.circles} lights, ${d.selves} PC minis`);
       }
+      if (d.walls) log(`lights: ${d.walls} light(s) near walls drawn as plain circles here: what they see has too many corners`);
     }
     if (!plan) return null;
     const uniforms = {};
