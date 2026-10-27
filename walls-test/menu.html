@@ -27,13 +27,13 @@
 // Also "🧭 Bring PCs here" (kind=bring): All PCs, or one PC, in one tap; tick several for "Bring these".
 // And "📍 Go to PC" (kind=goto): one tap pans the DM's view to that PC's token (also from the J key,
 // in its own popover).
-import OBR from "./obr-sdk.js?v=9ef4c868";
-import { isRoom } from "./areas.js?v=9ef4c868";
-import { bringPcs, findPcs, noPcsText, partyNames, rememberParty } from "./gather.js?v=9ef4c868";
-import { goToPc, pcLabel, scenePcs } from "./goto.js?v=9ef4c868";
-import { PLACE_KEY, WHO_KEY } from "./keys.js?v=9ef4c868";
-import { ask } from "./bus.js?v=9ef4c868";
-import { showTabs } from "./tabs.js?v=9ef4c868";
+import OBR from "./obr-sdk.js?v=18a1b707";
+import { isRoom } from "./areas.js?v=18a1b707";
+import { bringPcs, findPcs, noPcsText, partyNames, rememberParty } from "./gather.js?v=18a1b707";
+import { goToPc, pcLabel, scenePcs } from "./goto.js?v=18a1b707";
+import { PLACE_KEY, WHO_KEY } from "./keys.js?v=18a1b707";
+import { ask } from "./bus.js?v=18a1b707";
+import { showTabs } from "./tabs.js?v=18a1b707";
 
 const kind = new URLSearchParams(location.search).get("kind");
 // The popover this list is in: 🎲 DND's (its `pop`), else the J key's.

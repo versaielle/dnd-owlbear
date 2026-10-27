@@ -71,17 +71,17 @@
 // A painted lamp (🏘 Set up interiors) counts only at rank 0 or 1: on a map no PC stands on it draws
 // no flame and no colour circle (each flame redraws every frame on every screen, and the lamps sit
 // under roofs and fog there); every other light keeps rank 2.
-import { CARRIER_KEY, INTERIOR_KEY, LIGHT_FX_KEY, PARTY_SENSES_KEY, SCENE_LIGHTING_KEY } from "../keys.js?v=9ef4c868";
+import { CARRIER_KEY, INTERIOR_KEY, LIGHT_FX_KEY, PARTY_SENSES_KEY, SCENE_LIGHTING_KEY } from "../keys.js?v=18a1b707";
 import { DV_DARK_BLEND, DV_GREY, DV_SOFT_FT, FLAME_BLEND, WALL_SLOTS, darknessPlan, darknessShader, dimFor,
-  flameShader, flameUniforms } from "./lights.js?v=9ef4c868";
-import { DK_REGIONS, DK_SELVES, DV_SEERS, SOURCES, darkSize, dkSlots } from "./lights.js?v=9ef4c868";
-import { ambientReach, darkRegions, isAmbientLight, mapsExtent, sceneDarkness } from "./darkness.js?v=9ef4c868";
-import { DEFAULT_LIGHTING, effectiveLight, lightingOf, rangeDefaultOf, visionOf } from "./lightmeta.js?v=9ef4c868";
-import { nameKey, pcName, tokenLabel } from "./pcs.js?v=9ef4c868";
-import { finite, footprint, gridOf } from "./place.js?v=9ef4c868";
-import { readLine, toWorld } from "../fog/lineread.js?v=9ef4c868";
-import { customUniforms, fillUniforms } from "./shaders.js?v=9ef4c868";
-import { centreOf, mapAt, mapRects } from "../views.js?v=9ef4c868";
+  flameShader, flameUniforms } from "./lights.js?v=18a1b707";
+import { DK_REGIONS, DK_SELVES, DV_SEERS, SOURCES, darkSize, dkSlots } from "./lights.js?v=18a1b707";
+import { ambientReach, darkRegions, isAmbientLight, mapsExtent, sceneDarkness } from "./darkness.js?v=18a1b707";
+import { DEFAULT_LIGHTING, effectiveLight, lightingOf, rangeDefaultOf, visionOf } from "./lightmeta.js?v=18a1b707";
+import { nameKey, pcName, tokenLabel } from "./pcs.js?v=18a1b707";
+import { finite, footprint, gridOf } from "./place.js?v=18a1b707";
+import { readLine, toWorld } from "../fog/lineread.js?v=18a1b707";
+import { customUniforms, fillUniforms } from "./shaders.js?v=18a1b707";
+import { centreOf, mapAt, mapRects } from "../views.js?v=18a1b707";
 
 export const MAX_FLAMES = 12; // flames per screen: each full one makes Owlbear redraw every frame
 export const LIGHT_Z = 1; // on ATTACHMENT: above the tokens, under rings and badges (auto z-indexes are timestamps)
@@ -392,7 +392,7 @@ export function createLights(api = {}, ctx = {}) {
   let full = null;
   const loading = (async () => {
     if (api.OBR && typeof api.buildEffect === "function") return api;
-    const sdk = await import("../obr-sdk.js?v=9ef4c868");
+    const sdk = await import("../obr-sdk.js?v=18a1b707");
     return { OBR: sdk.default, buildEffect: sdk.buildEffect, MathM: sdk.MathM, ...api };
   })().then((a) => {
     full = a;
@@ -647,21 +647,26 @@ export function createLights(api = {}, ctx = {}) {
         noteDropped(order.slice(MAX_FLAMES));
         // Overlapping lights never add up: each flame knows the others drawn here whose reach
         // overlaps its own, and draws only where it's the strongest (fx/lights.js), so every pixel
-        // has one light and one flicker. Their places in steps of WALL_MOVE squares (a carried
-        // torch rewrites its neighbours' uniforms as it goes, like its walls).
+        // has one light and one flicker. Each sees the others exactly where they are: two flames
+        // hand over on one line only if each has the other's own place (seen a few px off, both
+        // drew a strip there, a thin gold line in the bright light, or neither). nkey has their
+        // places in steps of WALL_MOVE squares, so a carried torch rewrites its neighbours'
+        // uniforms only every step as it goes, like its walls (one set down, unsnapped, less than
+        // a step from where they were last written keeps a seam up to a step wide till it next moves).
         const drawn = [...want.values()];
         const step = Math.max(WALL_MOVE * G.dpi, 1);
         for (const w of drawn) {
-          const nb = [];
+          const nb = [], keys = [];
           for (const o of drawn) {
             if (o === w) continue;
-            const dx = Math.round((o.item.position.x - w.item.position.x) / step) * step;
-            const dy = Math.round((o.item.position.y - w.item.position.y) / step) * step;
+            const dx = o.item.position.x - w.item.position.x;
+            const dy = o.item.position.y - w.item.position.y;
             if (Math.hypot(dx, dy) >= (w.S + o.S) / 2) continue;
             nb.push({ dx: dx / G.pxPerFt, dy: dy / G.pxPerFt, kind: o.light.kind, id: o.item.id });
+            keys.push(`${o.item.id}:${o.light.kind}:${Math.round(dx / step)},${Math.round(dy / step)}`);
           }
           w.neighbours = nb;
-          w.nkey = nb.map((n) => `${n.id}:${n.kind}:${Math.round(n.dx * 10)},${Math.round(n.dy * 10)}`).sort().join(";");
+          w.nkey = keys.sort().join(";");
         }
         // ...and each stops at the walls within its reach
         const segs = drawn.length ? lightWalls(all) : [];

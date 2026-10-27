@@ -34,7 +34,7 @@
 //   ☀ lit / 🌒 dim  interior, remembered          dim
 //   ☀ lit / 🌒 dim  outdoor                       dim   (B4 gave ☀ outdoor "lit": decision 69)
 
-import { codeOf } from "../fx/darkness.js?v=9ef4c868";
+import { codeOf } from "../fx/darkness.js?v=18a1b707";
 
 export const MODES = ["fog", "dim", "lit", "clear"];
 

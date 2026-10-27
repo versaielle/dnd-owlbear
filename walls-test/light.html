@@ -42,16 +42,16 @@
 // Below the chips it says what it did ("Ana carries a torch (40 ft)") and what's missing
 // (no table screen heard, a screen on an older build), from the screens this GM copy has heard.
 // A light from a spell cast on the panel is kept apart: shown, never changed here.
-import OBR from "./obr-sdk.js?v=9ef4c868";
-import { CH, isLocalOrigin, on, send } from "./bus.js?v=9ef4c868";
-import { LIGHT_KEY, PARTY_KEY } from "./keys.js?v=9ef4c868";
-import { SOURCES } from "./fx/lights.js?v=9ef4c868";
-import * as LM from "./fx/lightmeta.js?v=9ef4c868";
-import { readGrid } from "./fx/darkness.js?v=9ef4c868";
-import { writeNow } from "./fx/lightwriter.js?v=9ef4c868";
-import { cleanParty } from "./gather.js?v=9ef4c868";
-import { autoKind, describe, editFor, effectiveLight, lightName, reachOf, screenWarnings, uiCtx } from "./lightui.js?v=9ef4c868";
-import { clickedIds, showTabs } from "./tabs.js?v=9ef4c868";
+import OBR from "./obr-sdk.js?v=18a1b707";
+import { CH, isLocalOrigin, on, send } from "./bus.js?v=18a1b707";
+import { LIGHT_KEY, PARTY_KEY } from "./keys.js?v=18a1b707";
+import { SOURCES } from "./fx/lights.js?v=18a1b707";
+import * as LM from "./fx/lightmeta.js?v=18a1b707";
+import { readGrid } from "./fx/darkness.js?v=18a1b707";
+import { writeNow } from "./fx/lightwriter.js?v=18a1b707";
+import { cleanParty } from "./gather.js?v=18a1b707";
+import { autoKind, describe, editFor, effectiveLight, lightName, reachOf, screenWarnings, uiCtx } from "./lightui.js?v=18a1b707";
+import { clickedIds, showTabs } from "./tabs.js?v=18a1b707";
 
 const HOST = isLocalOrigin(location.origin) ? "local" : "pages";
 const clicked = clickedIds(location.search); // the 🎲 DND popover's items; [] elsewhere

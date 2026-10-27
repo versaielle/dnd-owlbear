@@ -14,7 +14,7 @@
 //
 // Pure: no SDK import, so the node checks import it (check_menus.mjs).
 
-import { INTERIOR_KEY, PLACE_KEY } from "./keys.js?v=9ef4c868";
+import { INTERIOR_KEY, PLACE_KEY } from "./keys.js?v=18a1b707";
 
 export const DND_MENU_ID = "dnd-npc/dnd"; // the Pages copy's entry
 // The copy the panel on this PC serves has its own id (Owlbear's ids are room-wide): when it steps

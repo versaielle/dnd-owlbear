@@ -38,9 +38,9 @@
 // knowledge of a lock (knownLocked) lives with the lock: a new lock starts unknown, and a door that
 // isn't locked knows none.
 
-import { WALL_KEY } from "../keys.js?v=9ef4c868";
-import { centreOf, mapAt, mapRects } from "../views.js?v=9ef4c868";
-import { KINDS, SMOKE_LINE, knownOf, ourState, readLine as readBare, smokeState, toWorld, worldPoints } from "./lineread.js?v=9ef4c868";
+import { WALL_KEY } from "../keys.js?v=18a1b707";
+import { centreOf, mapAt, mapRects } from "../views.js?v=18a1b707";
+import { KINDS, SMOKE_LINE, knownOf, ourState, readLine as readBare, smokeState, toWorld, worldPoints } from "./lineread.js?v=18a1b707";
 
 // The map-free part lives in fog/lineread.js (a leaf: gather.js and fx/lighting.js import it
 // without views.js); every part of the vision layer reads it from here.

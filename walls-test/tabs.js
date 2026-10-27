@@ -5,7 +5,7 @@
 // It remembers the last tab used with the same set of tabs (this screen's localStorage, which may be
 // missing or refuse: then the first tab offered opens).
 // No SDK import: the pages pass their OBR, and the node checks import this (check_menus.mjs).
-import { DND_POPOVER_ID, TABS, heightOf, lastTabKey, pickTab, readParams, tabPage, tabSearch } from "./dndmenu.js?v=9ef4c868";
+import { DND_POPOVER_ID, TABS, heightOf, lastTabKey, pickTab, readParams, tabPage, tabSearch } from "./dndmenu.js?v=18a1b707";
 
 // The items the DM right-clicked (the page's `ids`), else [] (the page then uses the selection).
 export const clickedIds = (search) => readParams(search).ids;

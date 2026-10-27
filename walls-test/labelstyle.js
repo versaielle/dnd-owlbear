@@ -27,10 +27,10 @@
 // run on the "DND NPC (this PC)" copy only (background.js mapSetup), like the rest of 🏘 Map setup.
 // The pure parts (copyPlan, undoPlan, applyCopy, applyUndo, the texts) are checked offline by
 // check_labelstyle.mjs.
-import OBR from "./obr-sdk.js?v=9ef4c868";
-import { directBase } from "./bus.js?v=9ef4c868";
-import { bounds, describe, listed, loadInteriors, normName } from "./interiors.js?v=9ef4c868";
-import { LABEL_STYLE_KEY, MARK_PREFIX } from "./keys.js?v=9ef4c868";
+import OBR from "./obr-sdk.js?v=18a1b707";
+import { directBase } from "./bus.js?v=18a1b707";
+import { bounds, describe, listed, loadInteriors, normName } from "./interiors.js?v=18a1b707";
+import { LABEL_STYLE_KEY, MARK_PREFIX } from "./keys.js?v=18a1b707";
 
 export const STYLE_FIELDS = ["fillColor", "fillOpacity", "strokeColor", "strokeOpacity", "strokeWidth", "fontFamily"];
 export const UNDO_DEPTH = 5;

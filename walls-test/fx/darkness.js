@@ -22,10 +22,10 @@
 //                                    pxPerFt, maps (views.js mapRects, topmost first), dpi}
 // `grid`: {dpi, ftPerCell} (or a dpi number); missing = Owlbear's default 150 dpi, 5 ft.
 
-import { CARRIER_KEY, MAP_DARKNESS_KEY, SCENE_LIGHTING_KEY, SMOKE } from "../keys.js?v=9ef4c868";
-import * as LM from "./lightmeta.js?v=9ef4c868";
-import { finite, footprint, gridOf } from "./place.js?v=9ef4c868";
-import { centreOf, mapAt, mapRects } from "../views.js?v=9ef4c868";
+import { CARRIER_KEY, MAP_DARKNESS_KEY, SCENE_LIGHTING_KEY, SMOKE } from "../keys.js?v=18a1b707";
+import * as LM from "./lightmeta.js?v=18a1b707";
+import { finite, footprint, gridOf } from "./place.js?v=18a1b707";
+import { centreOf, mapAt, mapRects } from "../views.js?v=18a1b707";
 
 export const CODES = ["lit", "dim", "dark"];
 export const codeOf = (v) => (CODES.includes(v) ? v : null);

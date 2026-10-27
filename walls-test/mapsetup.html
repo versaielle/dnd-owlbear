@@ -21,9 +21,9 @@
 // (on a text label: 🎨 Copy label style and ↩ Undo label style, labelstyle.js). A tap asks
 // this copy's background to run it (CH.LOCAL_ASK, need "map-setup", host "local"): the job runs
 // there, exactly as before, with the same notices, so closing this popover doesn't stop it.
-import OBR from "./obr-sdk.js?v=9ef4c868";
-import { CH, send } from "./bus.js?v=9ef4c868";
-import { MAP_SETUP_JOBS, MAP_SETUP_NEED, MAP_SETUP_POPOVER_ID } from "./dndmenu.js?v=9ef4c868";
+import OBR from "./obr-sdk.js?v=18a1b707";
+import { CH, send } from "./bus.js?v=18a1b707";
+import { MAP_SETUP_JOBS, MAP_SETUP_NEED, MAP_SETUP_POPOVER_ID } from "./dndmenu.js?v=18a1b707";
 
 const params = new URLSearchParams(location.search);
 const id = (params.get("ids") || "").split(",").filter(Boolean)[0] || "";

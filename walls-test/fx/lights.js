@@ -13,9 +13,9 @@
 // and one dim pass over every public seer's band, leaving every public light and every seer's
 // own sight in colour (darkvisionPlan, darkvisionShader below).
 
-import { CLOCK, CLOCK_STATIC, HELPERS } from "./shaders.js?v=9ef4c868";
-import { FAN_VERTS, LEAK_FT, clearOf, fanOf, wallsNear } from "./occlude.js?v=9ef4c868";
-import { SOURCES } from "./sources.js?v=9ef4c868";
+import { CLOCK, CLOCK_STATIC, HELPERS } from "./shaders.js?v=18a1b707";
+import { FAN_VERTS, LEAK_FT, clearOf, fanOf, wallsNear } from "./occlude.js?v=18a1b707";
+import { SOURCES } from "./sources.js?v=18a1b707";
 
 // D&D light sources (fx/sources.js: the kinds, their reaches and labels; it imports nothing).
 export { SOURCES };
