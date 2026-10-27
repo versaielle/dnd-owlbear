@@ -63,16 +63,25 @@
 // Their uniforms are worked out again on EVERY item change, at once (cheap arithmetic, one
 // local update): a carried torch's colour moves with the drag; the flames and walls wait for the
 // scene to settle.
-import { CARRIER_KEY, LIGHT_FX_KEY, PARTY_SENSES_KEY, SCENE_LIGHTING_KEY } from "../keys.js?v=5bd9e047-d6bebbb";
+//
+// Over the caps (MAX_FLAMES flames, fx/lights.js dkSlots' light slots) the PCs' own lights go
+// first, then the lights on a map a PC stands on, then the rest (lightRanks, worked out once per
+// update for both): a town of 43 lamps never takes the party's own map's lamps away. Within a rank
+// the flames go by a key of each light's own (tieKey), never by the order Owlbear lists the items.
+// A painted lamp (🏘 Set up interiors) counts only at rank 0 or 1: on a map no PC stands on it draws
+// no flame and no colour circle (each flame redraws every frame on every screen, and the lamps sit
+// under roofs and fog there); every other light keeps rank 2.
+import { CARRIER_KEY, INTERIOR_KEY, LIGHT_FX_KEY, PARTY_SENSES_KEY, SCENE_LIGHTING_KEY } from "../keys.js?v=a4e86997-d1d2510";
 import { DV_DARK_BLEND, DV_GREY, DV_SOFT_FT, FLAME_BLEND, WALL_SLOTS, darknessPlan, darknessShader, dimFor,
-  flameShader, flameUniforms } from "./lights.js?v=5bd9e047-d6bebbb";
-import { DK_REGIONS, DK_SELVES, DV_SEERS, SOURCES, darkSize, dkSlots } from "./lights.js?v=5bd9e047-d6bebbb";
-import { ambientReach, darkRegions, isAmbientLight, mapsExtent, sceneDarkness } from "./darkness.js?v=5bd9e047-d6bebbb";
-import { DEFAULT_LIGHTING, effectiveLight, lightingOf, rangeDefaultOf, visionOf } from "./lightmeta.js?v=5bd9e047-d6bebbb";
-import { nameKey, pcName, tokenLabel } from "./pcs.js?v=5bd9e047-d6bebbb";
-import { finite, footprint, gridOf } from "./place.js?v=5bd9e047-d6bebbb";
-import { readLine, toWorld } from "../fog/lineread.js?v=5bd9e047-d6bebbb";
-import { customUniforms, fillUniforms } from "./shaders.js?v=5bd9e047-d6bebbb";
+  flameShader, flameUniforms } from "./lights.js?v=a4e86997-d1d2510";
+import { DK_REGIONS, DK_SELVES, DV_SEERS, SOURCES, darkSize, dkSlots } from "./lights.js?v=a4e86997-d1d2510";
+import { ambientReach, darkRegions, isAmbientLight, mapsExtent, sceneDarkness } from "./darkness.js?v=a4e86997-d1d2510";
+import { DEFAULT_LIGHTING, effectiveLight, lightingOf, rangeDefaultOf, visionOf } from "./lightmeta.js?v=a4e86997-d1d2510";
+import { nameKey, pcName, tokenLabel } from "./pcs.js?v=a4e86997-d1d2510";
+import { finite, footprint, gridOf } from "./place.js?v=a4e86997-d1d2510";
+import { readLine, toWorld } from "../fog/lineread.js?v=a4e86997-d1d2510";
+import { customUniforms, fillUniforms } from "./shaders.js?v=a4e86997-d1d2510";
+import { centreOf, mapAt, mapRects } from "../views.js?v=a4e86997-d1d2510";
 
 export const MAX_FLAMES = 12; // flames per screen: each full one makes Owlbear redraw every frame
 export const LIGHT_Z = 1; // on ATTACHMENT: above the tokens, under rings and badges (auto z-indexes are timestamps)
@@ -211,6 +220,45 @@ export function publicChain(item, byId, { isPc, isPublic } = {}) {
   return false;
 }
 
+// ---- which lights go first under the caps ----
+
+// The rank each light takes before the caps (MAX_FLAMES flames here, DV_CIRCLES colour circles in
+// fx/lights.js darknessPlan): 0 a PC's own light, 1 a light on a map a PC stands on, 2 the rest.
+// A PC's map: the topmost map image under its middle, hidden PCs too (fog/lines.js occupiedMaps'
+// test, read through views.js as fog/roofs.js does: this file keeps off the fog code,
+// check_fog_lines.mjs); a light's map: the topmost one under its item's middle (fx/darkness.js
+// darknessCtx's mapId). Pure, and made once per update: it returns rankOf(item, pc = isPc(item)),
+// one look through the map rectangles per light that isn't a PC's (none while no PC is on a map),
+// the same whatever order the items come in. opts: {isPc(item), dpi, rects (views.js mapRects),
+// occupied (a Set of map ids: fog/lines.js occupiedMaps)}; the last two are worked out when missing.
+export function lightRanks(items, { isPc = () => false, dpi = 150, rects = null, occupied = null } = {}) {
+  const list = Array.isArray(items) ? items : [];
+  const pcOf = (i) => { try { return !!isPc(i); } catch { return false; } };
+  const maps = rects || mapRects(list, dpi);
+  let on = occupied instanceof Set ? occupied : Array.isArray(occupied) ? new Set(occupied) : null;
+  if (!on) {
+    on = new Set();
+    for (const i of list) {
+      if (!pcOf(i)) continue;
+      const id = mapAt(centreOf(i, dpi), maps);
+      if (id) on.add(id);
+    }
+  }
+  return (item, pc = pcOf(item)) => (pc ? 0 : on.size && on.has(mapAt(centreOf(item, dpi), maps)) ? 1 : 2);
+}
+
+// A lamp 🏘 Set up interiors made on a painted lamp, candle or fire (interiors.js: INTERIOR_KEY {kind: "light"}).
+export const paintedLamp = (item) => item?.metadata?.[INTERIOR_KEY]?.kind === "light";
+
+// A light's place within its rank under the flame cap, the same whatever order the scene lists its items in: a
+// painted lamp's "<map>/<key>" (interiors.js INTERIOR_KEY: the same after a 🏘 re-run, which makes new ids), else
+// its id.
+export function tieKey(item) {
+  const t = item?.metadata?.[INTERIOR_KEY];
+  return paintedLamp(item) && typeof t.map === "string" && typeof t.key === "string" ? `${t.map}/${t.key}` : String(item?.id ?? "");
+}
+const byKey = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
+
 // Where a dim or dark SCENE's overlay goes: every map, else 120 ft around every token.
 export function extentOf(items, grid) {
   const maps = mapsExtent(items, grid);
@@ -229,13 +277,14 @@ export function extentOf(items, grid) {
 // The overlay's inputs on one screen (scene pixels, feet), for fx/lights.js darknessPlan():
 //   regions (fx/darkness.js darkRegions), extent, lights: every light this screen shows (`show`:
 //   its R1; a GM's shows all; with its bright light, brightOf) and every ambient light of the DM's
-//   (its Smoke range, all bright), never a carrier child (its NPC's own light counts); seers: every
-//   PUBLIC seer with darkvision (the same on every screen); selves: every PC's own mini (selfDisc),
-//   which the darkness never covers; walls: what stops the lights (lightWalls).
+//   (its Smoke range, all bright), never a carrier child (its NPC's own light counts), each with
+//   its rank (lightRanks; a painted lamp only at rank 0 or 1, on a map a PC stands on); seers:
+//   every PUBLIC seer with darkvision (the same on every screen); selves: every PC's own mini
+//   (selfDisc), which the darkness never covers; walls: what stops the lights (lightWalls).
 //   opts: {sceneMeta, lighting, grid {dpi, ftPerCell}, vctx (visionOf's ctx), pub (publicChain's),
-//   show(item, byId)}.
+//   show(item, byId), rank (lightRanks' rankOf for this update; else worked out here)}.
 // A scene released to Smoke (SCENE_LIGHTING_KEY managed false): null (Smoke draws its own there).
-export function darkInputs(items, { sceneMeta = {}, lighting, grid, vctx, pub, show } = {}) {
+export function darkInputs(items, { sceneMeta = {}, lighting, grid, vctx, pub, show, rank } = {}) {
   if (lightingOf(lighting ?? sceneMeta?.[SCENE_LIGHTING_KEY]).managed === false) return null;
   const byId = new Map();
   for (const i of items || []) if (i?.id != null) byId.set(i.id, i);
@@ -243,21 +292,32 @@ export function darkInputs(items, { sceneMeta = {}, lighting, grid, vctx, pub, s
   const seers = [], lights = [], selves = [];
   const dpi = gridOf(grid?.dpi, grid?.ftPerCell).dpi;
   const pcOf = (i) => { try { return !!pub?.isPc?.(i); } catch { return false; } };
+  const rankOf = typeof rank === "function" ? rank : lightRanks(list, { isPc: pcOf, dpi });
+  // a light's rank, or null for a painted lamp on a map no PC stands on (it colours nothing)
+  const ranked = (item, pc) => {
+    const r = rankOf(item, pc);
+    return r > 1 && paintedLamp(item) ? null : r;
+  };
   for (const item of list) {
     if (isCarrier(item) || !finite(item.position?.x, item.position?.y)) continue;
     const at = { id: item.id, x: item.position.x, y: item.position.y };
+    const pc = pcOf(item);
     // a PC's own mini (not a ring or a badge hanging from it): the players always see it
-    if (pcOf(item) && !(item.attachedTo != null && pcOf(byId.get(item.attachedTo)))) {
+    if (pc && !(item.attachedTo != null && pcOf(byId.get(item.attachedTo)))) {
       const d = selfDisc(item, dpi);
       if (d) selves.push({ id: item.id, ...d });
     }
     if (isAmbientLight(item, { lighting, byId, isPc: pub?.isPc, isSecret: (i) => !publicChain(i, byId, pub) })) {
       const reach = ambientReach(item, lighting);
-      if (reach) lights.push({ ...at, reach });
+      const r = reach ? ranked(item, pc) : null;
+      if (r != null) lights.push({ ...at, reach, rank: r });
       continue;
     }
     const l = effectiveLight(item, lighting);
-    if (l && l.reach > 0 && (show ? show(item, byId) : publicChain(item, byId, pub))) lights.push({ ...at, reach: l.reach, bright: brightOf(l) });
+    if (l && l.reach > 0 && (show ? show(item, byId) : publicChain(item, byId, pub))) {
+      const r = ranked(item, pc);
+      if (r != null) lights.push({ ...at, reach: l.reach, bright: brightOf(l), rank: r });
+    }
     if (!publicChain(item, byId, pub)) continue;
     const v = visionOf(item, vctx);
     if (v?.seer && +v.dark > 0) seers.push({ ...at, dark: +v.dark, pc: !!v.pc });
@@ -332,7 +392,7 @@ export function createLights(api = {}, ctx = {}) {
   let full = null;
   const loading = (async () => {
     if (api.OBR && typeof api.buildEffect === "function") return api;
-    const sdk = await import("../obr-sdk.js?v=5bd9e047-d6bebbb");
+    const sdk = await import("../obr-sdk.js?v=a4e86997-d1d2510");
     return { OBR: sdk.default, buildEffect: sdk.buildEffect, MathM: sdk.MathM, ...api };
   })().then((a) => {
     full = a;
@@ -501,8 +561,8 @@ export function createLights(api = {}, ctx = {}) {
   // What darkness this screen draws now (docs/lights-darkness-spec.md): null, or {plan, uniforms:
   // {grey, dim}}. Released to Smoke: nothing of ours (Smoke's own ring; the flames stay).
   const noDv = () => ({ seers: 0, circles: 0, walled: 0, regions: 0, selves: 0, dropped: { regions: 0, seers: 0, circles: 0, selves: 0, walls: 0 } });
-  function dvWant(all) {
-    const inp = darkInputs(all, { sceneMeta, lighting, grid: G, vctx, pub, show: shows });
+  function dvWant(all, rank) {
+    const inp = darkInputs(all, { sceneMeta, lighting, grid: G, vctx, pub, show: shows, rank });
     const plan = inp && darknessPlan(inp, { pxPerFt: G.pxPerFt, softFt: DV_SOFT_FT, quant: 1, kind: kind(), size: DK_SIZE, fans: fanCache });
     dvInfo = plan ? { seers: plan.seers.length, circles: plan.circles, walled: plan.walled, regions: plan.regions, selves: plan.selves.length, dropped: plan.dropped } : noDv();
     const d = dvInfo.dropped;
@@ -544,6 +604,8 @@ export function createLights(api = {}, ctx = {}) {
         gridStale = false;
       }
     }
+    // which light goes first under both caps, worked out once for this update
+    const rankOf = live ? lightRanks(all, { isPc, dpi: G.dpi }) : null;
     // what of ours is still there (a flame goes with its item when the item is deleted)
     const local = await OBR.scene.local.getItems((i) => i?.metadata?.[LIGHT_FX_KEY]?.host === host);
     const here = new Set(local.map((i) => i.id));
@@ -559,19 +621,24 @@ export function createLights(api = {}, ctx = {}) {
       else upd.set(id, [f]);
     };
 
-    // ---- flames: every light this screen may see, the PCs' first, at most MAX_FLAMES ----
+    // ---- flames: every light this screen may see, the PCs' first, then their maps', at most MAX_FLAMES ----
     if (!darkOnly) {
       const shown = [];
       const want = new Map(); // source id -> {item, light, S, sig, walls, wkey, neighbours, nkey}
       if (draw) {
-        all.forEach((item, n) => {
-          if (isCarrier(item) || !finite(item?.position?.x, item?.position?.y)) return;
+        for (const item of all) {
+          if (isCarrier(item) || !finite(item?.position?.x, item?.position?.y)) continue;
           const light = effectiveLight(item, lighting);
-          if (!light || !(light.reach > 0)) return;
-          if (!shows(item, byId)) return;
-          shown.push({ item, light, pc: isPc(item), n });
-        });
-        const order = [...shown].sort((x, y) => (x.pc === y.pc ? x.n - y.n : x.pc ? -1 : 1));
+          if (!light || !(light.reach > 0)) continue;
+          if (!shows(item, byId)) continue;
+          const pc = isPc(item);
+          const rank = rankOf(item, pc);
+          if (rank > 1 && paintedLamp(item)) continue; // a painted lamp on a map no PC stands on: no flame
+          shown.push({ item, light, pc, rank, tie: tieKey(item) });
+        }
+        // by rank (lightRanks), then by tieKey (two copies of one lamp: by id): a PC walking about its map changes
+        // nothing, and neither does the scene's order
+        const order = [...shown].sort((x, y) => x.rank - y.rank || byKey(x.tie, y.tie) || byKey(String(x.item.id), String(y.item.id)));
         for (const c of order.slice(0, MAX_FLAMES)) {
           const S = Math.min(c.light.reach * 2 * G.pxPerFt, MAX_PX);
           if (!finite(S) || S <= 0) continue;
@@ -580,21 +647,26 @@ export function createLights(api = {}, ctx = {}) {
         noteDropped(order.slice(MAX_FLAMES));
         // Overlapping lights never add up: each flame knows the others drawn here whose reach
         // overlaps its own, and draws only where it's the strongest (fx/lights.js), so every pixel
-        // has one light and one flicker. Their places in steps of WALL_MOVE squares (a carried
-        // torch rewrites its neighbours' uniforms as it goes, like its walls).
+        // has one light and one flicker. Each sees the others exactly where they are: two flames
+        // hand over on one line only if each has the other's own place (seen a few px off, both
+        // drew a strip there, a thin gold line in the bright light, or neither). nkey has their
+        // places in steps of WALL_MOVE squares, so a carried torch rewrites its neighbours'
+        // uniforms only every step as it goes, like its walls (one set down, unsnapped, less than
+        // a step from where they were last written keeps a seam up to a step wide till it next moves).
         const drawn = [...want.values()];
         const step = Math.max(WALL_MOVE * G.dpi, 1);
         for (const w of drawn) {
-          const nb = [];
+          const nb = [], keys = [];
           for (const o of drawn) {
             if (o === w) continue;
-            const dx = Math.round((o.item.position.x - w.item.position.x) / step) * step;
-            const dy = Math.round((o.item.position.y - w.item.position.y) / step) * step;
+            const dx = o.item.position.x - w.item.position.x;
+            const dy = o.item.position.y - w.item.position.y;
             if (Math.hypot(dx, dy) >= (w.S + o.S) / 2) continue;
             nb.push({ dx: dx / G.pxPerFt, dy: dy / G.pxPerFt, kind: o.light.kind, id: o.item.id });
+            keys.push(`${o.item.id}:${o.light.kind}:${Math.round(dx / step)},${Math.round(dy / step)}`);
           }
           w.neighbours = nb;
-          w.nkey = nb.map((n) => `${n.id}:${n.kind}:${Math.round(n.dx * 10)},${Math.round(n.dy * 10)}`).sort().join(";");
+          w.nkey = keys.sort().join(";");
         }
         // ...and each stops at the walls within its reach
         const segs = drawn.length ? lightWalls(all) : [];
@@ -655,7 +727,7 @@ export function createLights(api = {}, ctx = {}) {
     }
 
     // ---- darkvision: whatever the flame tier ----
-    const dw = live ? dvWant(all) : null;
+    const dw = live ? dvWant(all, rankOf) : null;
     for (const part of Object.keys(DV_PARTS)) {
       const rec = dv.get(part);
       if (!dw) {

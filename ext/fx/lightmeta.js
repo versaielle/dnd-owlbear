@@ -41,9 +41,9 @@
 // The deletes below (migrate, adoptInto, planItem, release) all work on COPIES (`clone`), which
 // reach a draft only through writeLightPart (or lightui.js applyMeta, which writes the same nulls).
 
-import { BUBBLES_NAME_KEY, CARRIER_KEY, LIGHT_BASE_KEY, LIGHT_KEY, SMOKE, SPELL_LIGHT_KEY, VISION_KEY } from "../keys.js?v=5bd9e047-d6bebbb";
-import { SOURCES } from "./lights.js?v=5bd9e047-d6bebbb";
-import { farLight, lightsFor, regionAt } from "./darkness.js?v=5bd9e047-d6bebbb";
+import { BUBBLES_NAME_KEY, CARRIER_KEY, INTERIOR_KEY, LIGHT_BASE_KEY, LIGHT_KEY, SMOKE, SPELL_LIGHT_KEY, VISION_KEY } from "../keys.js?v=a4e86997-d1d2510";
+import { SOURCES } from "./lights.js?v=a4e86997-d1d2510";
+import { farLight, lightsFor, regionAt } from "./darkness.js?v=a4e86997-d1d2510";
 
 const K = (name) => `${SMOKE}/${name}`;
 // The Smoke keys we write (and so may have to remove), by their short names.
@@ -52,6 +52,7 @@ export const LIGHT_KINDS = Object.keys(SOURCES);
 export const LIT_SIGHT = 1000; // a lit scene: everyone sees everything in colour
 export const SELF_SIGHT = 5; // 🌑 with no light or darkvision: Smoke still uncovers the PC's own square
 export const DEFAULT_RANGE = 30; // Smoke's own default sight (no scene default set)
+export const RANGE_STEP = 30; // smokeFor: a seer's range set by a far light, rounded UP to whole steps
 // (unmarked = ☀ lit, as fx/darkness.js sceneDarkness: the DM marks caves and cellars 🌑)
 export const DEFAULT_LIGHTING = Object.freeze({ darkness: "lit", auto: true, managed: true });
 // Smoke's vision layers (ItemFilters:2): only these ever get Smoke keys from us.
@@ -114,9 +115,14 @@ function fileOf(url) {
 }
 
 // The light a prop gives by its name, label or picture (a "Sconce", "brazier.webp"), or null.
-// Only images on the prop layers (PROP, MOUNT, ATTACHMENT): never a token, a map or a drawing.
+// Only on the prop layers (PROP, MOUNT, ATTACHMENT): never a token, a map or a drawing. First, a
+// painted lamp 🏘 Set up interiors made (interiors.js: a see-through SHAPE, INTERIOR_KEY {kind:
+// "light", light: <SOURCES kind>}) gives its own kind, whatever its name; otherwise only images.
 export function autoKind(item) {
-  if (!item || !PROP_LAYERS.includes(item.layer) || (item.type && item.type !== "IMAGE")) return null;
+  if (!item || !PROP_LAYERS.includes(item.layer)) return null;
+  const painted = item.metadata?.[INTERIOR_KEY];
+  if (isObj(painted) && painted.kind === "light" && known(painted.light)) return painted.light;
+  if (item.type && item.type !== "IMAGE") return null;
   if (item.metadata?.[CARRIER_KEY]) return null;
   const text = [item.metadata?.[BUBBLES_NAME_KEY], item.text?.plainText, item.name, fileOf(item.image?.url)]
     .filter((s) => typeof s === "string" && s).join(" ").toLowerCase();
@@ -235,15 +241,18 @@ export function visionOf(item, ctx = {}) {
 // public light ON ITS OWN MAP (ctx.lights through fx/darkness.js lightsFor: a light on another map is
 // behind that map's edge wall, so it never counts), at most LIT_SIGHT. Our overlay blacks out the
 // dark gap in between. Never under SELF_SIGHT there: Smoke's fog would hide the PC's own mini, which
-// our overlay leaves clear. smokeFor's visionRange for a seer and the 🔥 Lighting list's "sees" (fog/
-// sight.js sightReachFt is the same number for a PC). `v`: visionOf(item, ctx), when the caller has it.
-export function seerReachFt(item, ctx = {}, v = null) {
+// our overlay leaves clear. The 🔥 Lighting list's "sees" (fog/sight.js sightReachFt is the same
+// number for a PC), and with `step` smokeFor's visionRange for a seer: a far light's part rounded UP
+// to whole `step` feet. `v`: visionOf(item, ctx), when the caller has it.
+export function seerReachFt(item, ctx = {}, v = null, step = 0) {
   const c = ctx || {};
   const vv = v || visionOf(item, c);
   if (vv.where !== "dark") return vv.sight;
   const light = safe(() => effectiveLight(item, c.lighting));
   const reach = light && light.reach > 0 ? light.reach : 0;
-  return Math.min(LIT_SIGHT, Math.max(SELF_SIGHT, vv.dark, reach, farLight(item, lightsFor(item, c), c.pxPerFt)));
+  const near = Math.max(SELF_SIGHT, vv.dark, reach);
+  const far = farLight(item, lightsFor(item, c), c.pxPerFt);
+  return Math.min(LIT_SIGHT, far > near && step > 0 ? Math.ceil(far / step) * step : Math.max(near, far));
 }
 
 // The Smoke keys this token should have (short names); a key left out = absent (taken off, as a
@@ -258,8 +267,11 @@ export function smokeFor(item, ctx = {}) {
   const light = effectiveLight(item, ctx.lighting);
   const reach = light ? light.reach : 0;
   // A seer: seerReachFt (its line of sight on ☀/🌒; on 🌑 its darkvision, its own light or the far
-  // edge of the farthest public light on its own map).
-  if (v.seer) return { hasVision: true, visionRange: String(seerReachFt(item, ctx, v)), visionDark: "0" };
+  // edge of the farthest public light on its own map, that last rounded UP to whole RANGE_STEP feet,
+  // so a PC walking about a lit 🌑 map rewrites the scene when the far edge crosses a step, not on
+  // every move: lesson batch-scene-writes). Only Smoke reads it, and sees no less: our fog (fog/
+  // sight.js) and the 🔥 list's "sees" work the exact number out themselves.
+  if (v.seer) return { hasVision: true, visionRange: String(seerReachFt(item, ctx, v, RANGE_STEP)), visionDark: "0" };
   if (light && item.layer !== "CHARACTER") return { hasVision: true, isTorch: true, visionRange: String(reach), visionDark: "0" };
   return {};
 }
@@ -574,7 +586,8 @@ export function lightChanges(meta, change, opts) {
 // attachment is hidden with its parent unless its disableAttachmentBehavior has "VISIBLE"); a PC
 // never is. `parentOf(id)`: the scene item with that id (undefined when it's gone: Owlbear
 // deletes attachments with their parent, so nothing hides it then); `isPc(id)`. Attached deeper
-// than 8 (or in a loop): secret, to be safe.
+// than 8 (or in a loop): secret, to be safe. (🏘 Set up interiors' painted lamps keep only LOCKED
+// as their own, so a lamp on a hidden map is secret here.)
 export function isSecret(item, { parentOf = () => undefined, isPc = () => false } = {}) {
   let i = item;
   for (let n = 0; n < 8; n++) {

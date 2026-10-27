@@ -18,18 +18,18 @@
 // and a player's view follows their PC after a portal trip. Those load with import() and may fail
 // on their own: the map jobs, rings and HP keep working without them.
 import OBR, { buildCurve, buildEffect, buildImage, buildLabel, buildLight, buildPath, buildShape, buildText, buildWall, Math2,
-  MathM } from "./obr-sdk.js?v=5bd9e047-d6bebbb";
-import { contains, isRoom, size } from "./areas.js?v=5bd9e047-d6bebbb";
-import { checkPortals, describe, panelLog, setUpInteriors } from "./interiors.js?v=5bd9e047-d6bebbb";
-import { copyLabelStyle, undoLabelStyle } from "./labelstyle.js?v=5bd9e047-d6bebbb";
-import { cleanParty, placeTownsfolk, rememberParty } from "./gather.js?v=5bd9e047-d6bebbb";
-import { isPcToken, nameKey, pcName } from "./fx/pcs.js?v=5bd9e047-d6bebbb";
-import { BADGE_KEY, BADGE_URL, BUBBLES_KEY, BUBBLES_NAME_KEY, COND_KEY, CONDITIONS, DOWN_COLOR, FOE_COLOR, FOG_LOG_LOCAL_CH, GRIMOIRE_KEY, MARK_PREFIX, PARTY_KEY, PARTY_SENSES_KEY, PLACE_KEY, RING_KEY, TARGET_COLOR, WHO_KEY, hiddenAbove, onTokenLayer, targetRingColor } from "./keys.js?v=5bd9e047-d6bebbb";
+  MathM } from "./obr-sdk.js?v=a4e86997-d1d2510";
+import { contains, isRoom, size } from "./areas.js?v=a4e86997-d1d2510";
+import { checkPortals, describe, panelLog, setUpInteriors } from "./interiors.js?v=a4e86997-d1d2510";
+import { copyLabelStyle, undoLabelStyle } from "./labelstyle.js?v=a4e86997-d1d2510";
+import { cleanParty, placeTownsfolk, rememberParty } from "./gather.js?v=a4e86997-d1d2510";
+import { isPcToken, nameKey, pcName } from "./fx/pcs.js?v=a4e86997-d1d2510";
+import { BADGE_KEY, BADGE_URL, BUBBLES_KEY, BUBBLES_NAME_KEY, COND_KEY, CONDITIONS, DOWN_COLOR, FOE_COLOR, FOG_LOG_LOCAL_CH, GRIMOIRE_KEY, MARK_PREFIX, PARTY_KEY, PARTY_SENSES_KEY, PLACE_KEY, RING_KEY, TARGET_COLOR, WHO_KEY, hiddenAbove, onTokenLayer, targetRingColor } from "./keys.js?v=a4e86997-d1d2510";
 import { CH, DEFAULT_SETTINGS, LS, buildOf, forMe, here, isLocalOrigin, kindOf, lsGet, on as busOn, send as busSend,
-  setConnection, setSceneWrite, startSceneReader, tierOf } from "./bus.js?v=5bd9e047-d6bebbb";
+  setConnection, setSceneWrite, startSceneReader, tierOf } from "./bus.js?v=a4e86997-d1d2510";
 import { DND_FILTER, DND_LABEL, DND_MENU_ID, DND_POPOVER_ID, DND_WIDTH, LOCAL_DND_MENU_ID, MAP_SETUP_FILTERS, MAP_SETUP_HEIGHT,
   MAP_SETUP_LABEL, MAP_SETUP_MENU_ID, MAP_SETUP_NEED, MAP_SETUP_POPOVER_ID, MAP_SETUP_WIDTH, TOP_LEFT, dndQuery, heightOf,
-  popoverAnchor, sectionsFor, setupJobsFor, setupQuery } from "./dndmenu.js?v=5bd9e047-d6bebbb";
+  popoverAnchor, sectionsFor, setupJobsFor, setupQuery } from "./dndmenu.js?v=a4e86997-d1d2510";
 
 const HEARTBEAT_MS = 10000;
 // While the last report had a creature some PC sees (seen_by, V1), the map is reported at least this
@@ -735,19 +735,19 @@ const JOBS = {
 // The parts that load on their own (R4): a broken one is left out and the rest carry on.
 // Literal paths, so the publisher can stamp each with the build.
 const MODULES = {
-  bridge: () => import("./bridge.js?v=5bd9e047-d6bebbb"),
-  fx: () => import("./fx/engine.js?v=5bd9e047-d6bebbb"),
-  samples: () => import("./fx/samples.js?v=5bd9e047-d6bebbb"),
-  aim: () => import("./aim/tool.js?v=5bd9e047-d6bebbb"),
-  geometry: () => import("./aim/geometry.js?v=5bd9e047-d6bebbb"),
-  rings: () => import("./aim/rings.js?v=5bd9e047-d6bebbb"),
-  player: () => import("./player/state.js?v=5bd9e047-d6bebbb"),
-  lights: () => import("./fx/lighting.js?v=5bd9e047-d6bebbb"),
-  lightjobs: () => import("./fx/lightjobs.js?v=5bd9e047-d6bebbb"),
-  lightwriter: () => import("./fx/lightwriter.js?v=5bd9e047-d6bebbb"),
-  views: () => import("./views.js?v=5bd9e047-d6bebbb"),
-  fog: () => import("./fog/fog.js?v=5bd9e047-d6bebbb"),
-  inview: () => import("./fog/inview.js?v=5bd9e047-d6bebbb"), // the map report's seen_by (summary(), GM copies only)
+  bridge: () => import("./bridge.js?v=a4e86997-d1d2510"),
+  fx: () => import("./fx/engine.js?v=a4e86997-d1d2510"),
+  samples: () => import("./fx/samples.js?v=a4e86997-d1d2510"),
+  aim: () => import("./aim/tool.js?v=a4e86997-d1d2510"),
+  geometry: () => import("./aim/geometry.js?v=a4e86997-d1d2510"),
+  rings: () => import("./aim/rings.js?v=a4e86997-d1d2510"),
+  player: () => import("./player/state.js?v=a4e86997-d1d2510"),
+  lights: () => import("./fx/lighting.js?v=a4e86997-d1d2510"),
+  lightjobs: () => import("./fx/lightjobs.js?v=a4e86997-d1d2510"),
+  lightwriter: () => import("./fx/lightwriter.js?v=a4e86997-d1d2510"),
+  views: () => import("./views.js?v=a4e86997-d1d2510"),
+  fog: () => import("./fog/fog.js?v=a4e86997-d1d2510"),
+  inview: () => import("./fog/inview.js?v=a4e86997-d1d2510"), // the map report's seen_by (summary(), GM copies only)
 };
 
 const HELLO_MS = 30000; // each screen says hello this often, so the panel's screens list stays fresh

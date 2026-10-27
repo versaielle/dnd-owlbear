@@ -51,13 +51,13 @@
 // The automatic threshold (2 visits plus 10 active minutes, spec section 7) comes after Thursday;
 // it will write the same MEMORY_KEY setRemembered writes, so nothing here changes.
 
-import { EXPLORED_KEY, FOG_LOOK_KEY, MAP_FOG_KEY, MEMORY_KEY, SEEN_KEY } from "../keys.js?v=5bd9e047-d6bebbb";
-import { mapRects } from "../views.js?v=5bd9e047-d6bebbb";
-import { count } from "./bitset.js?v=5bd9e047-d6bebbb";
-import { FOG_MODES, MAP_KINDS, buildingOf, emptySeen, exploredFor, mapFogOf, mapGrid, mapStates, paintedKind, seenOf } from "./maps.js?v=5bd9e047-d6bebbb";
-import { DEFAULT_SHADE, SHADES, shadeOf } from "./memory.js?v=5bd9e047-d6bebbb";
-import { drawnMode } from "./mode.js?v=5bd9e047-d6bebbb";
-import { emptyExplored } from "./shapes.js?v=5bd9e047-d6bebbb";
+import { EXPLORED_KEY, FOG_LOOK_KEY, MAP_FOG_KEY, MEMORY_KEY, SEEN_KEY } from "../keys.js?v=a4e86997-d1d2510";
+import { mapRects } from "../views.js?v=a4e86997-d1d2510";
+import { count } from "./bitset.js?v=a4e86997-d1d2510";
+import { FOG_MODES, MAP_KINDS, buildingOf, emptySeen, exploredFor, mapFogOf, mapGrid, mapStates, paintedKind, seenOf } from "./maps.js?v=a4e86997-d1d2510";
+import { DEFAULT_SHADE, SHADES, shadeOf } from "./memory.js?v=a4e86997-d1d2510";
+import { drawnMode } from "./mode.js?v=a4e86997-d1d2510";
+import { emptyExplored } from "./shapes.js?v=a4e86997-d1d2510";
 
 export { DEFAULT_SHADE, SHADES, mapRects, shadeOf };
 export const FORGET_ARM_MS = 5000;

@@ -13,22 +13,12 @@
 // and one dim pass over every public seer's band, leaving every public light and every seer's
 // own sight in colour (darkvisionPlan, darkvisionShader below).
 
-import { CLOCK, CLOCK_STATIC, HELPERS } from "./shaders.js?v=5bd9e047-d6bebbb";
-import { FAN_VERTS, LEAK_FT, clearOf, fanOf, wallsNear } from "./occlude.js?v=5bd9e047-d6bebbb";
+import { CLOCK, CLOCK_STATIC, HELPERS } from "./shaders.js?v=a4e86997-d1d2510";
+import { FAN_VERTS, LEAK_FT, clearOf, fanOf, wallsNear } from "./occlude.js?v=a4e86997-d1d2510";
+import { SOURCES } from "./sources.js?v=a4e86997-d1d2510";
 
-// D&D light sources: bright and dim reach in feet, and the look that draws them (5e PHB/SRD
-// numbers; the brazier is a house number, like a torch).
-export const SOURCES = {
-  candle:          { label: "Candle",            bright: 5,  dim: 5,  look: "candle" },
-  torch:           { label: "Torch",             bright: 20, dim: 20, look: "torch" },
-  lamp:            { label: "Lamp",              bright: 15, dim: 30, look: "lantern" },
-  hooded_lantern:  { label: "Hooded lantern",    bright: 30, dim: 30, look: "lantern" },
-  brazier:         { label: "Campfire / brazier", bright: 20, dim: 20, look: "brazier" },
-  light:           { label: "Light (cantrip)",   bright: 20, dim: 20, look: "magic" },
-  continual_flame: { label: "Continual Flame",   bright: 20, dim: 20, look: "torch" },
-  dancing_lights:  { label: "Dancing Lights",    bright: 0,  dim: 10, look: "magic" },
-  produce_flame:   { label: "Produce Flame",     bright: 20, dim: 20, look: "torch" },
-};
+// D&D light sources (fx/sources.js: the kinds, their reaches and labels; it imports nothing).
+export { SOURCES };
 
 // How each look moves. colA is the light's colour, colB the flame's hot core.
 //   amp    how hard it flickers (0 steady .. 0.15 restless)
@@ -729,8 +719,10 @@ export function darknessLevel(q, values) {
 // What one screen draws, from fx/darkness.js's regions and the lights and seers that count there:
 //   regions {scene: "lit"|"dim"|"dark", rects: [{x0, y0, x1, y1, code}]} (scene px, bottom first)
 //   extent  {x0, y0, x1, y1} | null: what a dim/dark SCENE's overlay covers (every map; else the tokens)
-//   lights  [{id, x, y, reach, bright?}] (feet): every light that colours the dark on this screen;
-//           bright: how far its bright light goes (0: none, as Dancing Lights; left out: all of it)
+//   lights  [{id, x, y, reach, bright?, rank}] (feet): every light that colours the dark on this
+//           screen; bright: how far its bright light goes (0: none, as Dancing Lights; left out: all
+//           of it); rank (fx/lighting.js lightRanks): 0 a PC's own light, 1 one on a map a PC stands
+//           on, 2 (or none) the rest
 //   seers   [{id, x, y, dark, pc}] (dark in feet): every public seer with darkvision
 //   selves  [{id, x, y, r}]   (r in scene px): every PC's own mini at its drawn size, kept clear
 //   walls   [[x1, y1, x2, y2]] (scene px, fx/lighting.js lightWalls): what stops the lights
@@ -741,9 +733,11 @@ export function darknessLevel(q, values) {
 //    (how many of them stop at walls), selves: [ids], dropped: {regions, seers, circles, selves,
 //    walls (lights near walls drawn as plain circles: their view didn't fit the corners)}}.
 // Culled: a marked map that changes nothing (the scene's own code with nothing marked under it),
-// lights that touch no dim/dark area (or sit inside another light), seers whose darkvision
-// touches no dark area. Over the slots: the topmost maps; the PCs first, then the widest
-// darkvision; the widest lights.
+// lights that touch no dim/dark area (or sit inside another light, which then takes the better
+// rank of the two), seers whose darkvision touches no dark area. Over the slots: the topmost maps;
+// the PCs first, then the widest darkvision; the lights by rank, the widest first within one, then
+// by id (like the PCs' minis: the same ones whatever order the scene lists its items in, and none
+// swapped as a torch is carried past another).
 export function darknessPlan({ regions = {}, extent = null, lights = [], seers = [], selves = [], walls = [] } = {}, { pxPerFt = 1, softFt = DV_SOFT_FT, quant = 1, kind = "other", size = DK_SIZES[0], fans = null } = {}) {
   const Q = (v) => Math.round(v / quant) * quant;
   const ok = (...v) => v.every((n) => typeof n === "number" && Number.isFinite(n));
@@ -776,7 +770,7 @@ export function darknessPlan({ regions = {}, extent = null, lights = [], seers =
   const cand = [];
   for (const l of lights) {
     if (!l || !ok(l.x, l.y) || !(+l.reach > 0)) continue;
-    const c = { x: Q(l.x), y: Q(l.y), r: +l.reach * pxPerFt + quant };
+    const c = { id: String(l.id ?? ""), x: Q(l.x), y: Q(l.y), r: +l.reach * pxPerFt + quant, rank: ok(l.rank) ? l.rank : 2 };
     if (!touches(c.x, c.y, c.r + soft, anyAreas)) continue;
     const br = l.bright == null || !(+l.bright >= 0) ? +l.reach : Math.min(+l.bright, +l.reach);
     c.b = br > 0 ? br * pxPerFt + quant : -(soft + 1);
@@ -786,15 +780,20 @@ export function darknessPlan({ regions = {}, extent = null, lights = [], seers =
   // one inside another goes when the other lights all of it as brightly: with walls about, only
   // when they share a centre (else a wall can hide it from the other)
   const within = (c, o, d) => d + c.r <= o.r && (c.b <= 0 || d + c.b <= o.b) && (d === 0 || (!c.w.near.length && !o.w.near.length));
+  const byId = (a, c) => (a.id < c.id ? -1 : a.id > c.id ? 1 : 0);
+  // (of two lights in the very same circle, the one with the lower id stays)
   const circles = cand.filter((c, i) => !cand.some((o, j) => {
     if (j === i) return false;
     const d = Math.hypot(c.x - o.x, c.y - o.y);
-    return within(c, o, d) && (o.r > c.r || o.b > c.b || d > 0 || j < i);
+    return within(c, o, d) && (o.r > c.r || o.b > c.b || d > 0 || (byId(o, c) || j - i) < 0);
   }));
-  // into the slots, the widest first: a light near walls gets its fan (what it lights once walls
-  // stop it, fx/occlude.js) in a small slot if it fits, else a big one, else cut to a small one's
-  // corners; no slot for its fan: left out. One with no wall near takes any free slot (a plain one
-  // first). One whose view won't fit even a big fan is drawn as a plain circle (dropped.walls).
+  // a light left out inside another hands it its rank (a PC's torch inside a street lamp's light)
+  for (const c of circles) for (const o of cand) if (o.rank < c.rank && within(o, c, Math.hypot(o.x - c.x, o.y - c.y))) c.rank = o.rank;
+  // into the slots by rank, the widest first within one, then by id: a light near walls gets its
+  // fan (what it lights once walls stop it, fx/occlude.js) in a small slot if it fits, else a big
+  // one, else cut to a small one's corners; no slot for its fan: left out. One with no wall near
+  // takes any free slot (a plain one first). One whose view won't fit even a big fan is drawn as a
+  // plain circle (dropped.walls).
   const slots = dkSlots(size), [BIG, SMALL, PLAIN] = slots;
   const into = { big: [], small: [], plain: [] };
   const free = (k) => into[k.kind].length < k.n;
@@ -812,7 +811,7 @@ export function darknessPlan({ regions = {}, extent = null, lights = [], seers =
   };
   let walled = 0, unfit = 0;
   const used = [];
-  for (const c of [...circles].sort((a, o) => o.r - a.r)) {
+  for (const c of [...circles].sort((a, o) => a.rank - o.rank || o.r - a.r || byId(a, o))) {
     let to = null;
     const fb = c.w.near.length ? fanAt(c, BIG.verts) : null;
     if (fb) {

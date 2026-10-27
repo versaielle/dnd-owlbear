@@ -58,17 +58,17 @@
 // kind). api: {OBR}; the checks may pass clip (the library, already loaded) or loadClip() (a promise
 // of it).
 
-import { EXPLORED_KEY, RULES_KEY, SEEN_KEY } from "../keys.js?v=5bd9e047-d6bebbb";
-import { visionOf } from "../fx/lightmeta.js?v=5bd9e047-d6bebbb";
-import { centreOf, mapRects } from "../views.js?v=5bd9e047-d6bebbb";
-import { createBits, decode, encode, getBit, setBits } from "./bitset.js?v=5bd9e047-d6bebbb";
-import { seenCells, visibilityPolygon } from "./los.js?v=5bd9e047-d6bebbb";
-import { seenOf } from "./maps.js?v=5bd9e047-d6bebbb";
+import { EXPLORED_KEY, RULES_KEY, SEEN_KEY } from "../keys.js?v=a4e86997-d1d2510";
+import { visionOf } from "../fx/lightmeta.js?v=a4e86997-d1d2510";
+import { centreOf, mapRects } from "../views.js?v=a4e86997-d1d2510";
+import { createBits, decode, encode, getBit, setBits } from "./bitset.js?v=a4e86997-d1d2510";
+import { seenCells, visibilityPolygon } from "./los.js?v=a4e86997-d1d2510";
+import { seenOf } from "./maps.js?v=a4e86997-d1d2510";
 import { EXPLORED_CALL_MAX_BYTES, areaOf, clipOk, darkReachFt, decodeRings, litLights, litLightsOn, mergeExplored, pcViews, readValue,
-  rectSize, seenShapes, sightBlockersOf, uniteRings } from "./shapes.js?v=5bd9e047-d6bebbb";
-import { sightReachFt } from "./sight.js?v=5bd9e047-d6bebbb";
+  rectSize, seenShapes, sightBlockersOf, uniteRings } from "./shapes.js?v=a4e86997-d1d2510";
+import { sightReachFt } from "./sight.js?v=a4e86997-d1d2510";
 
-export { darkReachFt } from "./shapes.js?v=5bd9e047-d6bebbb";
+export { darkReachFt } from "./shapes.js?v=a4e86997-d1d2510";
 
 export const SEEN_EVERY_MS = 1000;
 export const SEEN_WRITE_MS = 5000;
@@ -195,7 +195,7 @@ export function createSeen(api = {}, ctx = {}) {
   const log = (text) => { try { ctx.log?.(text, "seen"); } catch { /* nowhere to say it */ } };
   const answerer = () => !!safe(() => ctx.isAnswerer?.(), false);
   const clock = () => (typeof performance !== "undefined" && performance?.now ? performance.now() : Date.now());
-  const loadClip = typeof api.loadClip === "function" ? api.loadClip : () => import("./clipper.js?v=5bd9e047-d6bebbb").then((m) => m.default);
+  const loadClip = typeof api.loadClip === "function" ? api.loadClip : () => import("./clipper.js?v=a4e86997-d1d2510").then((m) => m.default);
 
   let epoch = 0; // a clear()/forget() moves it on: anything in flight from before is dropped
   let alive = false; // a sync ran since the last clear()

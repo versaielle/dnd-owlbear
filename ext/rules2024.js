@@ -42,7 +42,7 @@
 //
 // Written values are always whole, with every field present; nothing here deletes a key.
 
-import { OBSCURE_KEY, RULES_KEY, WEATHER_KEY, ZONE_KEY } from "./keys.js?v=5bd9e047-d6bebbb";
+import { OBSCURE_KEY, RULES_KEY, WEATHER_KEY, ZONE_KEY } from "./keys.js?v=a4e86997-d1d2510";
 
 const isObj = (x) => !!x && typeof x === "object" && !Array.isArray(x);
 const finite = (...xs) => xs.every((x) => typeof x === "number" && Number.isFinite(x));

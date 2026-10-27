@@ -7,8 +7,11 @@
 //   walls    Smoke & Spectre vision lines, doors and windows (POINTER layer), and one closed
 //            line round the town map's edge, so nothing walks off it
 //   portals  the "Portals" extension: town spot <-> building entry, stairs <-> stairs
+//   lights   one see-through circle (PROP layer) on each painted lamp, candle or fire (a map's
+//            `lights`), which lights itself (fx/lightmeta.js autoKind reads its INTERIOR_KEY)
 // Everything it makes is attached to its map image (so it moves with it) and tagged with
-// INTERIOR_KEY, so a re-run deletes it all and starts over.
+// INTERIOR_KEY, so a re-run deletes it all and starts over. A lamp the DM put out (or gave a reach
+// of his own) is put out again on the new lamp at the same spot (lightStates, carryLights).
 // Buildings in a scene group (interiors.json's town.scenes: Chapter 3's sites, in a "Chapter 3"
 // scene) are left out of the town's run: 🏘 on one of their maps lays out that group's maps in its
 // own scene, with no town (scenePlan), and replaces only that group's marks. A group's map may take
@@ -25,9 +28,10 @@
 // imports gather.js, which imports this) but never fetches anything there. What 🧭 Bring PCs here
 // needs of it (each map's entry, stairs and furniture: numbers, no names) is written on the map
 // images themselves (MAP_INFO_KEY, mapInfo()), so 🧭 works on every copy.
-import OBR, { buildCurve, buildShape } from "./obr-sdk.js?v=5bd9e047-d6bebbb";
-import { directBase } from "./bus.js?v=5bd9e047-d6bebbb";
-import { INTERIOR_KEY, MAP_INFO_KEY, PLACE_KEY } from "./keys.js?v=5bd9e047-d6bebbb";
+import OBR, { buildCurve, buildShape } from "./obr-sdk.js?v=a4e86997-d1d2510";
+import { directBase } from "./bus.js?v=a4e86997-d1d2510";
+import { INTERIOR_KEY, LIGHT_KEY, MAP_INFO_KEY, PLACE_KEY, VISION_KEY } from "./keys.js?v=a4e86997-d1d2510";
+import { SOURCES } from "./fx/sources.js?v=a4e86997-d1d2510";
 
 const GAP_FLOORS = 2, GAP_ROWS = 3, GAP_TOWN = 6, GAP_COLUMNS = 6, GAP_SITES = 6; // in squares
 // Owlbear rate-limits requests ("RateLimitHit: Too many requests" with 20-item batches, live
@@ -42,6 +46,13 @@ const PORTAL_COLOR = "#9b6bff";
 const WALL_NAMES = { wall: "Vision Line (Line)", door: "Vision Line (Door)", window: "Vision Line (Window)" };
 // All of it stays hidden and locked even when the DM shows, hides or unlocks the map image.
 const KEEP_OWN = ["VISIBLE", "LOCKED"];
+// ...but a lamp is shown, and hides with its map (a hidden map hides its lamps, and fx/lightmeta.js
+// isSecret climbs to the map): only its lock is its own.
+const LIGHT_OWN = ["LOCKED"];
+const LIGHT_COLOR = "#ffb347";
+// Short names for the 🔥 list ("The Inn - Ground floor · Fire"); a kind not here uses its SOURCES label.
+const LIGHT_NAMES = { hooded_lantern: "Lantern", brazier: "Fire" };
+const LIGHT_SQUARES = 0.25; // a lamp's circle across, in squares: small, so it doesn't take the room's right-click
 
 const pt = (p) => (Array.isArray(p) ? { x: p[0], y: p[1] } : p);
 
@@ -210,6 +221,95 @@ function oneWay(a, b) {
   return [a, b];
 }
 
+// ---- painted lights ----
+
+const knownLight = (kind) => typeof kind === "string" && Object.prototype.hasOwnProperty.call(SOURCES, kind);
+
+// A map's painted lights (interiors.json's map.lights: [{kind, at: [x, y]}], `at` in the same image pixels as its
+// props' boxes; an older file has none), each with its key "<x>,<y>" (whole pixels), a second at the same spot
+// "...#2", a third "#3", in the file's order: [{kind, at, key}]. One of no SOURCES kind, or with no spot, is left out.
+// The key is how a re-run finds the lamp it replaces (carryLights): art that moves a lamp gives a new key; a lamp
+// re-authored as another kind (a sconce made light="lamp") keeps its spot's, so one the DM put out stays out.
+export function mapLights(map) {
+  const seen = new Map();
+  const out = [];
+  for (const l of Array.isArray(map?.lights) ? map.lights : []) {
+    if (!l || !knownLight(l.kind) || !Array.isArray(l.at) || l.at.length !== 2 || !l.at.every(Number.isFinite)) continue;
+    const base = `${Math.round(l.at[0])},${Math.round(l.at[1])}`;
+    const n = (seen.get(base) || 0) + 1;
+    seen.set(base, n);
+    out.push({ kind: l.kind, at: l.at, key: n === 1 ? base : `${base}#${n}` });
+  }
+  return out;
+}
+
+function lightItem(id, light, centre, diameter, map, image) {
+  // A painted lamp: a circle you can't see, centred on its flame (a CIRCLE's position is its centre), on PROP under
+  // the fog. Visible, so its light shows; it lights itself by its INTERIOR_KEY (fx/lightmeta.js autoKind), never by
+  // its name. Its own disableAttachmentBehavior (LOCKED only): it hides with its map.
+  return {
+    type: "SHAPE", shapeType: "CIRCLE", id, name: `${map.name} · ${LIGHT_NAMES[light.kind] || SOURCES[light.kind]?.label || light.kind}`, layer: "PROP",
+    position: centre, rotation: 0, scale: { x: 1, y: 1 }, width: diameter, height: diameter,
+    visible: true, locked: true, attachedTo: image.id, disableAttachmentBehavior: [...LIGHT_OWN],
+    metadata: { [INTERIOR_KEY]: { map: map.name, kind: "light", light: light.kind, key: light.key } },
+    style: { fillColor: LIGHT_COLOR, fillOpacity: 0, strokeColor: LIGHT_COLOR, strokeOpacity: 0, strokeWidth: 2, strokeDash: [] },
+  };
+}
+
+// JSON with every object's keys in order (fx/lightmeta.js stable's rule), so equal states compare equal.
+function canon(x) {
+  if (Array.isArray(x)) return `[${x.map(canon).join(",")}]`;
+  if (x && typeof x === "object") {
+    return `{${Object.keys(x).sort().filter((k) => x[k] !== undefined).map((k) => `${JSON.stringify(k)}:${canon(x[k])}`).join(",")}}`;
+  }
+  return JSON.stringify(x) ?? "null";
+}
+const copy = (x) => JSON.parse(JSON.stringify(x));
+const stateKey = (map, key) => JSON.stringify([map, key]);
+
+// What a re-run keeps of the old lamps (read off the old marks before they're deleted), by (map, key): the DM's own
+// light (LIGHT_KEY, when not null: {kind: "none"} = he put it out) and his overrides (VISION_KEY.dm, when not null or
+// empty: a reach of his own). Nothing else: never VISION_KEY.out (the Smoke keys we wrote on the OLD item: on the new one,
+// which has none yet, fx/lightmeta.js adoptInto would read them as Smoke's Disable Torchlight and put the lamp out),
+// never SPELL_LIGHT_KEY or Smoke's own keys. The same items in any order give the same: of two old lamps with one
+// (map, key) (a copy), a put-out one wins (a lamp lit by mistake could show a dark room; one out by mistake the DM
+// lights again), else the state that sorts first.
+export function lightStates(items) {
+  const rank = (s) => `${s.light?.kind === "none" ? 0 : 1}${canon(s)}`;
+  const out = new Map();
+  for (const i of Array.isArray(items) ? items : []) {
+    const meta = i?.metadata;
+    const tag = meta?.[INTERIOR_KEY];
+    if (tag?.kind !== "light" || typeof tag.map !== "string" || typeof tag.key !== "string") continue;
+    const s = {};
+    if (meta[LIGHT_KEY] != null) s.light = copy(meta[LIGHT_KEY]);
+    const dm = meta[VISION_KEY]?.dm;
+    // (an empty one says nothing: the writer's {} on a lamp nobody touched, so that lamp starts as a new one)
+    if (dm != null && typeof dm === "object" && !Array.isArray(dm) && Object.keys(dm).length) s.dm = copy(dm);
+    if (!Object.keys(s).length) continue;
+    const k = stateKey(tag.map, tag.key);
+    if (!out.has(k) || rank(s) < rank(out.get(k))) out.set(k, s);
+  }
+  return out;
+}
+
+// Those states written on the new lamps with the same map and key (a plan's groups; mutated). A lamp the art moved
+// (a new key) starts fresh. How many lamps got one.
+export function carryLights(groups, states) {
+  let n = 0;
+  for (const g of groups || []) {
+    for (const i of g) {
+      const tag = i?.metadata?.[INTERIOR_KEY];
+      const s = tag?.kind === "light" ? states?.get(stateKey(tag.map, tag.key)) : null;
+      if (!s) continue;
+      if (s.light) i.metadata[LIGHT_KEY] = copy(s.light);
+      if (s.dm) i.metadata[VISION_KEY] = { dm: copy(s.dm), out: {} };
+      n++;
+    }
+  }
+  return n;
+}
+
 // What 🧭 Bring PCs here needs of a map (or of the town), kept on its image (MAP_INFO_KEY):
 // {v: 1, w, entry, stairs, props}, in the file's image pixels, rounded, only the props that block.
 // Numbers only, no names. Kept under MAP_INFO_MAX bytes of JSON by leaving out the smallest props
@@ -273,7 +373,8 @@ function place(maps, found, at, pps, sceneDpi) {
   return { placed, updates };
 }
 
-// Every placed map's rooms, walls, doors and windows.
+// Every placed map's rooms, walls, doors, windows and painted lights (each light a group of its own: they go in the
+// same addItems batches as the rest).
 function markUp(placed, groups, counts, sceneDpi, newId) {
   for (const { map, image, here } of placed.values()) {
     for (const room of map.rooms || []) {
@@ -287,6 +388,11 @@ function markUp(placed, groups, counts, sceneDpi, newId) {
         groups.push([wallItem(newId(), kind, line.map(here), map, image)]);
         counts[n]++;
       }
+    }
+    // A quarter of a square across: 1 square is sceneDpi on the scene (the file's px_per_square, through `here`).
+    for (const light of mapLights(map)) {
+      groups.push([lightItem(newId(), light, here(light.at), LIGHT_SQUARES * sceneDpi, map, image)]);
+      counts.lights++;
     }
   }
 }
@@ -334,7 +440,7 @@ export function plan(json, town, images, sceneDpi, newId) {
   const found = matchImages(maps, images, town.id);
   const at = layout(listed(json), pps, bounds(town, sceneDpi), sceneDpi);
   const { placed, updates } = place(maps, found, at, pps, sceneDpi);
-  const counts = { maps: placed.size, town: 0, townWall: 0, rooms: 0, walls: 0, doors: 0, windows: 0, portals: 0 };
+  const counts = { maps: placed.size, town: 0, townWall: 0, rooms: 0, walls: 0, doors: 0, windows: 0, portals: 0, lights: 0 };
   const groups = [], notes = [];
   // The town map is an area too: one room over the whole image. Not clickable (disableHit), so
   // a right-click on the town still finds the map image under it.
@@ -477,7 +583,7 @@ export function scenePlan(json, group, clicked, images, sceneDpi, newId) {
     const u = updates.find((x) => x.id === found.get(name).id);
     if (u && !(z(found.get(name)) > z(old))) u.zIndex = z(old) + 1;
   }
-  const counts = { maps: placed.size, town: 0, townWall: 0, rooms: 0, walls: 0, doors: 0, windows: 0, portals: 0 };
+  const counts = { maps: placed.size, town: 0, townWall: 0, rooms: 0, walls: 0, doors: 0, windows: 0, portals: 0, lights: 0 };
   const groups = [];
   markUp(placed, groups, counts, sceneDpi, newId);
   stairs(placed, groups, counts, sceneDpi, newId);
@@ -582,11 +688,13 @@ export function batches(groups, n) {
 }
 
 export function summaryText({ counts: c, missing, notes, scene, replaced, wayIn = [] }) {
+  // Painted lights only when there are some: a map set with none reads word for word as before them.
+  const lights = c.lights ? `, ${c.lights} light${c.lights === 1 ? "" : "s"}` : "";
   if (scene) {
     // A scene group's run (scenePlan): no town, and its missing maps belong in this scene. The maps it takes the place
     // of (replaced.gone) are named, and each way in it was handed (wayIn: replacedMarks' handOver).
     let s = `🏘 ${scene}: ${c.maps} map${c.maps === 1 ? "" : "s"} laid out, ${c.rooms} rooms, ${c.walls} walls, ${c.doors} doors`
-      + `${c.windows ? `, ${c.windows} windows` : ""}${c.portals ? `, ${c.portals} portals` : ""}`;
+      + `${c.windows ? `, ${c.windows} windows` : ""}${c.portals ? `, ${c.portals} portals` : ""}${lights}`;
     const gone = replaced?.gone || [];
     if (gone.length) {
       s += `. ${gone.length} old map${gone.length === 1 ? "" : "s"} hidden, ${gone.length === 1 ? "its" : "their"} marks taken off: `
@@ -598,19 +706,20 @@ export function summaryText({ counts: c, missing, notes, scene, replaced, wayIn 
   }
   const town = c.town ? `the town area${c.townWall ? " and its wall" : ""} + ` : c.townWall ? "the town wall + " : "";
   let s = `🏘 ${c.maps} maps laid out, ${town}${c.rooms} rooms, ${c.walls} walls, ${c.doors} doors`
-    + `${c.windows ? `, ${c.windows} windows` : ""}, ${c.portals} portals`;
+    + `${c.windows ? `, ${c.windows} windows` : ""}, ${c.portals} portals${lights}`;
   if (missing.length) s += `. Not in the scene yet: ${missing.join(", ")}`;
   if (notes.length) s += `. Also: ${notes.join("; ")}`;
   return s;
 }
 
-function toItem(p) {
+// A planned mark as an Owlbear item. Its own attachment rule when it has one (a lamp's), else KEEP_OWN.
+export function toItem(p) {
   const b = p.type === "CURVE"
     ? buildCurve().points(p.points)
     : buildShape().shapeType(p.shapeType).width(p.width).height(p.height);
   return b.id(p.id).name(p.name).layer(p.layer).position(p.position).rotation(p.rotation)
     .style(p.style).attachedTo(p.attachedTo).visible(p.visible).locked(p.locked)
-    .disableHit(!!p.disableHit).disableAttachmentBehavior(KEEP_OWN).metadata(p.metadata).build();
+    .disableHit(!!p.disableHit).disableAttachmentBehavior(p.disableAttachmentBehavior || KEEP_OWN).metadata(p.metadata).build();
 }
 
 // Owlbear's errors arrive as {error: Error-like}, whose fields JSON.stringify doesn't show.
@@ -746,7 +855,14 @@ export async function setUpInteriors(townId, { O = OBR, load = loadInteriors, pa
   const marks = await O.scene.items.getItems((i) => i.metadata?.[INTERIOR_KEY] || i.metadata?.[PORTAL_KEY] !== undefined);
   const swap = group ? replacedMarks(marks, json, group, p.replaced) : { remove: [], handOver: [] };
   const old = [...oldMarks(marks, json, group), ...swap.remove];
-  if (old.length) await step("removing the old marks", () => O.scene.items.deleteItems(old.map((i) => i.id)));
+  // A lamp the DM put out stays out (and one he gave a reach keeps it): read off the old lamps before they go. (The
+  // lamps of the old maps a group's maps take the place of carry nothing: their map names are those maps'.)
+  carryLights(p.groups, lightStates(old));
+  // The old lamps go last, once every new mark is in: a run that fails part way leaves them in the scene, still put
+  // out, for the next run to carry (of a lamp and its copy, a put-out one wins: lightStates).
+  const lamp = (i) => i.metadata?.[INTERIOR_KEY]?.kind === "light";
+  const rest = old.filter((i) => !lamp(i)), lamps = old.filter(lamp);
+  if (rest.length) await step("removing the old marks", () => O.scene.items.deleteItems(rest.map((i) => i.id)));
   // Every map goes (back) to its spot: one the DM has moved by hand since is moved back too.
   // Each gets what 🧭 Bring PCs here needs (MAP_INFO_KEY), and so does the town (no entry, no
   // props), so a bring on any copy finds everything on the images. (A scene group has no town:
@@ -799,5 +915,6 @@ export async function setUpInteriors(townId, { O = OBR, load = loadInteriors, pa
     await step(`adding the marks for ${what}`, () => O.scene.items.addItems(items));
     await sleep(pause);
   }
+  if (lamps.length) await step("removing the old lamps", () => O.scene.items.deleteItems(lamps.map((i) => i.id)));
   O.notification.show(summaryText({ ...p, wayIn: swap.handOver }), p.missing.length || p.notes.length ? "WARNING" : "SUCCESS");
 }

@@ -79,12 +79,12 @@
 // Syncs and clears run one at a time, so a clear can't slip in while a sync's add is on its way.
 // Every request, answer, write and error is a line in the 🪵 Live log (ctx.log(text, kind)).
 
-import { FOG_DOOR_CH, FOG_DOOR_REPLY_CH, FOG_HELLO_CH, FOG_LOCAL_KEY, WALL_KEY } from "../keys.js?v=5bd9e047-d6bebbb";
-import { forMe, here, newId, on, send } from "../bus.js?v=5bd9e047-d6bebbb";
-import { centreOf } from "../views.js?v=5bd9e047-d6bebbb";
-import { canSee, sightBlockers } from "./los.js?v=5bd9e047-d6bebbb";
-import { SMOKE_LINE, doorAfter, doorEdit, edgeWalls, midpointAlong, nearestOnLine, readLine, segmentsOf } from "./lines.js?v=5bd9e047-d6bebbb";
-import { LINE_PICKED, clickedHandle, clickedLine } from "./doorclick.js?v=5bd9e047-d6bebbb";
+import { FOG_DOOR_CH, FOG_DOOR_REPLY_CH, FOG_HELLO_CH, FOG_LOCAL_KEY, WALL_KEY } from "../keys.js?v=a4e86997-d1d2510";
+import { forMe, here, newId, on, send } from "../bus.js?v=a4e86997-d1d2510";
+import { centreOf } from "../views.js?v=a4e86997-d1d2510";
+import { canSee, sightBlockers } from "./los.js?v=a4e86997-d1d2510";
+import { SMOKE_LINE, doorAfter, doorEdit, edgeWalls, midpointAlong, nearestOnLine, readLine, segmentsOf } from "./lines.js?v=a4e86997-d1d2510";
+import { LINE_PICKED, clickedHandle, clickedLine } from "./doorclick.js?v=a4e86997-d1d2510";
 
 export const DOOR_REACH_FT = 5; // from the PC's middle to the nearest point of the door line
 export const REPLY_WAIT_MS = 4000; // no answer by then: "No DM screen answered"

@@ -105,12 +105,12 @@
 // back on the next sync (fog.js retries the pass); fog.js's own sweep removes our items
 // (FOG_LOCAL_KEY {kind: "cover", host}) whenever the switch goes off or the page starts.
 
-import { FOG_LOCAL_KEY } from "../keys.js?v=5bd9e047-d6bebbb";
-import { DV_SOFT_FT } from "../fx/lights.js?v=5bd9e047-d6bebbb";
-import { centreOf } from "../views.js?v=5bd9e047-d6bebbb";
-import { arcSteps, clipOk, litLights } from "./shapes.js?v=5bd9e047-d6bebbb";
-import { seenInputSig } from "./seen.js?v=5bd9e047-d6bebbb";
-import { creaturesOf, darkMapIds, dvFtOf, footOf, seenTest } from "./inview.js?v=5bd9e047-d6bebbb";
+import { FOG_LOCAL_KEY } from "../keys.js?v=a4e86997-d1d2510";
+import { DV_SOFT_FT } from "../fx/lights.js?v=a4e86997-d1d2510";
+import { centreOf } from "../views.js?v=a4e86997-d1d2510";
+import { arcSteps, clipOk, litLights } from "./shapes.js?v=a4e86997-d1d2510";
+import { seenInputSig } from "./seen.js?v=a4e86997-d1d2510";
+import { creaturesOf, darkMapIds, dvFtOf, footOf, seenTest } from "./inview.js?v=a4e86997-d1d2510";
 
 export { darkMapIds }; // (fog/inview.js's: the 🌑 maps)
 
@@ -447,7 +447,7 @@ export function createCover(api = {}, ctx = {}) {
   // ---- the polygon library: loaded the first time a dark map has a creature, never on a GM screen ----
   let clip = clipOk(api.clip) ? api.clip : null;
   let clipLoading = null, clipFailedAt = -Infinity, clipSaid = null;
-  const loadClip = typeof api.loadClip === "function" ? api.loadClip : () => import("./clipper.js?v=5bd9e047-d6bebbb").then((m) => m.default);
+  const loadClip = typeof api.loadClip === "function" ? api.loadClip : () => import("./clipper.js?v=a4e86997-d1d2510").then((m) => m.default);
   function ensureClip() {
     if (clip || clipLoading || now() - clipFailedAt < CLIP_RETRY_MS) return;
     const job = Promise.resolve().then(() => loadClip());
