@@ -89,23 +89,23 @@
 // the answerer watch, at most every SMOKE_CHECK_MS (one OBR.scene.local.getItems), never on a
 // player's screen. Smoke's leftover shared data (its sceneId, a token's hasVision) never counts.
 
-import { FOG_KEY, FOG_LOCAL_KEY, FOG_LOOK_KEY, PARTY_KEY, PARTY_SENSES_KEY, ROOFS_KEY, RULES_KEY, SCENE_LIGHTING_KEY, SMOKE, WEATHER_KEY } from "../keys.js?v=669ec13";
-import { planCtx } from "../fx/lightwriter.js?v=669ec13";
-import { readGrid } from "../fx/darkness.js?v=669ec13";
-import { mapRects } from "../views.js?v=669ec13";
-import { doorEdit, drift, occupiedMaps, readLines } from "./lines.js?v=669ec13";
-import { mapStates } from "./maps.js?v=669ec13";
-import { createSight } from "./sight.js?v=669ec13";
-import { createWalls } from "./walls.js?v=669ec13";
-import { ANSWERER_SETTLE_MS, createDoors } from "./doors.js?v=669ec13";
-import { createSeen } from "./seen.js?v=669ec13";
-import { createMemory } from "./memory.js?v=669ec13";
-import { createCover } from "./cover.js?v=669ec13";
-import { createRoofs, parkAll, parseRoofName, roofsOn, roofsWords, writeRoofs } from "./roofs.js?v=669ec13";
-import { createLiveLog, lineText } from "./livelog.js?v=669ec13";
+import { FOG_KEY, FOG_LOCAL_KEY, FOG_LOOK_KEY, PARTY_KEY, PARTY_SENSES_KEY, ROOFS_KEY, RULES_KEY, SCENE_LIGHTING_KEY, SMOKE, WEATHER_KEY } from "../keys.js?v=e323d3ba-df9cbf7";
+import { planCtx } from "../fx/lightwriter.js?v=e323d3ba-df9cbf7";
+import { readGrid } from "../fx/darkness.js?v=e323d3ba-df9cbf7";
+import { mapRects } from "../views.js?v=e323d3ba-df9cbf7";
+import { doorEdit, drift, occupiedMaps, readLines } from "./lines.js?v=e323d3ba-df9cbf7";
+import { mapStates } from "./maps.js?v=e323d3ba-df9cbf7";
+import { createSight } from "./sight.js?v=e323d3ba-df9cbf7";
+import { createWalls } from "./walls.js?v=e323d3ba-df9cbf7";
+import { ANSWERER_SETTLE_MS, createDoors } from "./doors.js?v=e323d3ba-df9cbf7";
+import { createSeen } from "./seen.js?v=e323d3ba-df9cbf7";
+import { createMemory } from "./memory.js?v=e323d3ba-df9cbf7";
+import { createCover } from "./cover.js?v=e323d3ba-df9cbf7";
+import { createRoofs, parkAll, parseRoofName, roofsOn, roofsWords, writeRoofs } from "./roofs.js?v=e323d3ba-df9cbf7";
+import { createLiveLog, lineText } from "./livelog.js?v=e323d3ba-df9cbf7";
 
 export { lineText }; // a live-log line as text (background.js sends them to the GM box)
-export { cleanRoofs, roofOriginals, roofsOn, roofsWords, writeRoofs } from "./roofs.js?v=669ec13"; // 🛖 Roofs' switch (lightpanel.js: its chip, its fallback, its "🌫 is off" line)
+export { cleanRoofs, roofOriginals, roofsOn, roofsWords, writeRoofs } from "./roofs.js?v=e323d3ba-df9cbf7"; // 🛖 Roofs' switch (lightpanel.js: its chip, its fallback, its "🌫 is off" line)
 
 export const SETTLE_MS = 150; // item changes settle this long before a pass
 export const MAX_WAIT_MS = 750; // ...but a long drag still gets a pass this often

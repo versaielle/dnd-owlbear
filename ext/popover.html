@@ -136,11 +136,11 @@
 // draws and aims. Both boxes hear every LOCAL message, so this box tags what it asks with its own
 // copy's host and only shows the answers from its own copy. While this copy only relays (relay_only),
 // its box shows the status line, ✅ Check and ⚙ Setup, and says everything else is in the other box.
-import OBR from "./obr-sdk.js?v=669ec13";
-import { CH, LS, QUALITIES, ask, isLocalOrigin, lsGet, lsSet, on, send } from "./bus.js?v=669ec13";
-import { goToPc, pcLabel, scenePcs } from "./goto.js?v=669ec13";
-import { noPcsText } from "./gather.js?v=669ec13";
-import { FOG_LOG_LOCAL_CH, PROJECTOR_KEY } from "./keys.js?v=669ec13";
+import OBR from "./obr-sdk.js?v=e323d3ba-df9cbf7";
+import { CH, LS, QUALITIES, ask, isLocalOrigin, lsGet, lsSet, on, send } from "./bus.js?v=e323d3ba-df9cbf7";
+import { goToPc, pcLabel, scenePcs } from "./goto.js?v=e323d3ba-df9cbf7";
+import { noPcsText } from "./gather.js?v=e323d3ba-df9cbf7";
+import { FOG_LOG_LOCAL_CH, PROJECTOR_KEY } from "./keys.js?v=e323d3ba-df9cbf7";
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
@@ -245,7 +245,7 @@ function render(s) {
   // This copy's part on this tab, and the controls that only matter where it draws.
   $("copy-note").textContent = s.relay_only
     ? "Effects, aiming, 📍 Go to PC, 🧭 Bring PCs here and the right-click 🎲 DND come from the “DND NPC” copy: use its box for those. "
-      + "Right-click a map → 🏘 Map setup (Set up interiors, Place townsfolk, Check portals) comes from this copy (it needs this PC's interiors.json)."
+      + "Right-click a map → 🏘 Map setup (Set up interiors, Place tokens, Check portals) comes from this copy (it needs this PC's interiors.json)."
     : local ? "Served by the DND panel on this PC: on the Dell's GM tab this copy is the bridge (automatic)."
     : "On the Dell, the “DND NPC (this PC)” copy (served by the panel) is the bridge; this copy draws and aims.";
   $("device").style.display = s.relay_only ? "none" : "";
@@ -372,7 +372,7 @@ OBR.onReady(async () => {
     else logWaiting = m;
   });
   // 📺 Projector: loaded on its own too.
-  import("./views.js?v=669ec13").then((m) => {
+  import("./views.js?v=e323d3ba-df9cbf7").then((m) => {
     views = m;
     projectorBox();
   }).catch((e) => {
@@ -380,7 +380,7 @@ OBR.onReady(async () => {
     $("pj-view").hidden = true;
   });
   // 🔥 Light: loaded on its own, so the rest of this box works whatever happens to it.
-  import("./lightpanel.js?v=669ec13").then((m) => {
+  import("./lightpanel.js?v=e323d3ba-df9cbf7").then((m) => {
     const css = document.createElement("style");
     css.textContent = m.LIGHTING_CSS;
     document.head.append(css);

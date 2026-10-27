@@ -15,8 +15,8 @@
 // No SDK import: every Owlbear call goes through `api`, so check_views.mjs runs it against a fake
 // room and a fake clock. background.js starts the parts each screen needs; the GM box
 // (popover.html), the right-click menu and the toolbar button aim.
-import { PROJECTOR_KEY } from "./keys.js?v=669ec13";
-import { footprint } from "./fx/place.js?v=669ec13";
+import { PROJECTOR_KEY } from "./keys.js?v=e323d3ba-df9cbf7";
+import { footprint } from "./fx/place.js?v=e323d3ba-df9cbf7";
 
 export const POLL_MS = 250; // the table screen looks at its view this often
 const SETTLE_MS = 200; // after setting the view: looked at again once it has settled

@@ -80,14 +80,14 @@
 // after the clean. Written only when the area grew by more than MIN_GROW of a square. Over
 // EXPLORED_MAX_BYTES: cleaned harder (3, 6, then 12 px); still over, nothing is written (capped).
 
-import { EXPLORED_KEY } from "../keys.js?v=669ec13";
-import { SELF_SIGHT, effectiveLight, visionOf } from "../fx/lightmeta.js?v=669ec13";
-import { lightsOnMap } from "../fx/darkness.js?v=669ec13";
-import { inCone } from "../rules2024.js?v=669ec13";
-import { centreOf, mapAt } from "../views.js?v=669ec13";
-import { edgeWalls, segmentsOf } from "./lines.js?v=669ec13";
-import { sightBlockers, visibilityPolygon } from "./los.js?v=669ec13";
-import { sightReachFt } from "./sight.js?v=669ec13";
+import { EXPLORED_KEY } from "../keys.js?v=e323d3ba-df9cbf7";
+import { SELF_SIGHT, effectiveLight, visionOf } from "../fx/lightmeta.js?v=e323d3ba-df9cbf7";
+import { lightsOnMap } from "../fx/darkness.js?v=e323d3ba-df9cbf7";
+import { inCone } from "../rules2024.js?v=e323d3ba-df9cbf7";
+import { centreOf, mapAt } from "../views.js?v=e323d3ba-df9cbf7";
+import { edgeWalls, segmentsOf } from "./lines.js?v=e323d3ba-df9cbf7";
+import { sightBlockers, visibilityPolygon } from "./los.js?v=e323d3ba-df9cbf7";
+import { sightReachFt } from "./sight.js?v=e323d3ba-df9cbf7";
 
 export const VERSION = 1;
 // Arcs: every chord within this many px of the true circle (about 28 points round a 5 ft circle at 150
@@ -313,13 +313,15 @@ export function holeRings(rings, rect) {
 
 // ---- where each PC stands (shared with fog/seen.js cellsSeen) ----
 
-const safe = (f, dflt = null) => { try { return f(); } catch { return dflt; } };
+// onError(e), when given, is told of each throw safe() swallows (the fallback is taken all the same).
+const safe = (f, dflt = null, onError = null) => { try { return f(); } catch (e) { try { onError?.(e); } catch { /* a broken onError never changes the fallback */ } return dflt; } };
 
 // STAND-IN (F1 moves it to fog/sight.js in Phase 2): 🌑, how far a PC sees by itself, feet:
-// max(SELF_SIGHT, its darkvision, its own light's reach). fog/seen.js re-exports it.
-export function darkReachFt(item, vctx = {}) {
-  const v = safe(() => visionOf(item, vctx || {}), null);
-  const light = safe(() => effectiveLight(item, vctx?.lighting));
+// max(SELF_SIGHT, its darkvision, its own light's reach). fog/seen.js re-exports it. onError(e): told
+// when visionOf or effectiveLight throws (that part then counts 0, as it always did).
+export function darkReachFt(item, vctx = {}, onError = null) {
+  const v = safe(() => visionOf(item, vctx || {}), null, onError);
+  const light = safe(() => effectiveLight(item, vctx?.lighting), null, onError);
   const own = light && finite(light.reach) && light.reach > 0 ? light.reach : 0;
   const dark = v && finite(v.dark) && v.dark > 0 ? v.dark : 0;
   return Math.max(SELF_SIGHT, dark, own);
@@ -349,7 +351,9 @@ export const litLightsOn = (snap, mapId) => lightsOnMap(litLights(snap?.vctx), m
 // One record per PC (snap.pcs, each once) that sees anything: {id, mapId, map (snap.maps' entry), c
 // (its centre, scene px), ft and reachPx (sightReachFt), dark: {ft: darkReachFt} | null (null unless it
 // stands in 🌑)}. A PC whose centre is on no map (or on a map without a grid) sees nothing here.
-export function pcViews(snap) {
+// onError(e): told when working out a PC's reach throws (visionOf, its light, the lights near it);
+// the old fallback is taken all the same (no reach: the PC sees nothing here; no light: it counts 0).
+export function pcViews(snap, onError = null) {
   const out = [];
   const pcs = Array.isArray(snap?.pcs) ? snap.pcs : [];
   if (!pcs.length) return out;
@@ -365,11 +369,11 @@ export function pcViews(snap) {
     const mapId = mapAt(c, snap.rects);
     const map = mapId != null ? byMap.get(mapId) : null;
     if (!map || !map.grid) continue;
-    const ft = safe(() => sightReachFt(pc, snap.vctx || {}), 0);
+    const ft = safe(() => sightReachFt(pc, snap.vctx || {}, onError), 0, onError);
     const reachPx = finite(ft) && ft > 0 ? ft * pxPerFt : 0;
     if (!(reachPx > 0)) continue;
-    const where = safe(() => visionOf(pc, snap.vctx || {}).where, null);
-    const dark = where === "dark" ? { ft: darkReachFt(pc, snap.vctx || {}) } : null;
+    const where = safe(() => visionOf(pc, snap.vctx || {}).where, null, onError);
+    const dark = where === "dark" ? { ft: darkReachFt(pc, snap.vctx || {}, onError) } : null;
     out.push({ id: pc.id, mapId, map, c, ft, reachPx, dark });
   }
   return out;

@@ -38,10 +38,10 @@
 // FOG_LOCAL_KEY {kind: "sight", key, sig, host}) only on its first sync after a clear(), a
 // forget() (the scene closed: Owlbear dropped them) or a failed write; fog.js retries a failure.
 
-import { FOG_LOCAL_KEY } from "../keys.js?v=669ec13";
-import { LIT_SIGHT, SELF_SIGHT, effectiveLight, visionOf } from "../fx/lightmeta.js?v=669ec13";
-import { farLight, lightsFor } from "../fx/darkness.js?v=669ec13";
-import { centreOf, mapAt } from "../views.js?v=669ec13";
+import { FOG_LOCAL_KEY } from "../keys.js?v=e323d3ba-df9cbf7";
+import { LIT_SIGHT, SELF_SIGHT, effectiveLight, visionOf } from "../fx/lightmeta.js?v=e323d3ba-df9cbf7";
+import { farLight, lightsFor } from "../fx/darkness.js?v=e323d3ba-df9cbf7";
+import { centreOf, mapAt } from "../views.js?v=e323d3ba-df9cbf7";
 
 export const SIGHT_Z = 0;
 // A hard edge: Smoke's default for a seer (BSConstants FALLOFFDEFAULT "0"). buildLight's own
@@ -55,7 +55,7 @@ const DETACHED = ["VISIBLE", "SCALE"];
 
 const finite = (...xs) => xs.every((x) => typeof x === "number" && Number.isFinite(x));
 const r2 = (x) => Math.round(x * 100) / 100 + 0;
-const safe = (f, dflt = null) => { try { return f(); } catch { return dflt; } };
+const safe = (f, dflt = null, onError = null) => { try { return f(); } catch (e) { try { onError?.(e); } catch { /* a broken onError never changes the fallback */ } return dflt; } };
 
 // ---- the plan (pure) ----
 
@@ -64,11 +64,12 @@ const safe = (f, dflt = null) => { try { return f(); } catch { return dflt; } };
 // farthest public light ON ITS OWN MAP (fx/darkness.js lightsFor: a light on another map is behind
 // that map's edge wall, so it never counts), at least SELF_SIGHT, at most LIT_SIGHT. vctx:
 // fx/lightwriter.js planCtx (the darkness regions, the lights with their maps, the map rectangles,
-// pxPerFt, senses, lighting).
-export function sightReachFt(item, vctx = {}) {
+// pxPerFt, senses, lighting). onError(e): told when its own light throws (it then counts 0, as it
+// always did); visionOf and the public lights throw to the caller.
+export function sightReachFt(item, vctx = {}, onError = null) {
   const v = visionOf(item, vctx || {});
   if (v.where !== "dark") return v.sight;
-  const light = safe(() => effectiveLight(item, vctx?.lighting));
+  const light = safe(() => effectiveLight(item, vctx?.lighting), null, onError);
   const reach = light && light.reach > 0 ? light.reach : 0;
   return Math.min(LIT_SIGHT, Math.max(SELF_SIGHT, v.dark, reach, farLight(item, lightsFor(item, vctx || {}), vctx?.pxPerFt)));
 }

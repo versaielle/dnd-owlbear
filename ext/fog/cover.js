@@ -29,6 +29,8 @@
 //          darkvision or the reach of a public light ON THE SAME MAP (fog/shapes.js litLightsOn; a cone
 //          only with the middle in the cone) that has line of sight to the middle itself (lights don't
 //          shine through walls): what our overlay paints in colour or grey there, it shows
+//          (the test itself lives in fog/inview.js seenTest since V1, shared with the map report's
+//          seen_by; on a 🌑 map it is this rule word for word)
 //   COVERED   every other one, nearest a PC first (those on a map with no PC last), at most MAX_COVERS:
 //          under the fog a cover can't be
 //          seen, so it is already in place when a door opens, a PC steps or a sight light grows, and
@@ -103,15 +105,14 @@
 // back on the next sync (fog.js retries the pass); fog.js's own sweep removes our items
 // (FOG_LOCAL_KEY {kind: "cover", host}) whenever the switch goes off or the page starts.
 
-import { CARRIER_KEY, FOG_LOCAL_KEY } from "../keys.js?v=669ec13";
-import { footprint } from "../fx/place.js?v=669ec13";
-import { visionOf } from "../fx/lightmeta.js?v=669ec13";
-import { DV_SOFT_FT } from "../fx/lights.js?v=669ec13";
-import { inCone } from "../rules2024.js?v=669ec13";
-import { centreOf, mapAt } from "../views.js?v=669ec13";
-import { canSee, pointInPolygon, visibilityPolygon } from "./los.js?v=669ec13";
-import { arcSteps, clipOk, litLights, litLightsOn, pcViews, sightBlockersOf } from "./shapes.js?v=669ec13";
-import { seenInputSig } from "./seen.js?v=669ec13";
+import { FOG_LOCAL_KEY } from "../keys.js?v=e323d3ba-df9cbf7";
+import { DV_SOFT_FT } from "../fx/lights.js?v=e323d3ba-df9cbf7";
+import { centreOf } from "../views.js?v=e323d3ba-df9cbf7";
+import { arcSteps, clipOk, litLights } from "./shapes.js?v=e323d3ba-df9cbf7";
+import { seenInputSig } from "./seen.js?v=e323d3ba-df9cbf7";
+import { creaturesOf, darkMapIds, dvFtOf, footOf, seenTest } from "./inview.js?v=e323d3ba-df9cbf7";
+
+export { darkMapIds }; // (fog/inview.js's: the 🌑 maps)
 
 export const COVER_LAYER = "RULER";
 export const COVER_Z = 0; // under Owlbear's own rulers (auto z: timestamps)
@@ -137,7 +138,6 @@ const SCALE = 10; // the library works in whole numbers: tenths of a pixel
 const KIND = "cover";
 const NAME = "dnd-npc cover";
 const MOVE = 0, LINE = 1, CLOSE = 5; // Path commands (as fog/memory.js)
-const LAYERS = ["CHARACTER", "MOUNT"];
 // The cover follows its creature: on a drag at once, hidden and shown with it, gone with it; never
 // turned or scaled by Owlbear (the next pass gives it the token's new box), never copied.
 const DETACHED = ["ROTATION", "SCALE", "COPY"];
@@ -153,15 +153,9 @@ const safe = (f, dflt = null) => { try { return f(); } catch { return dflt; } };
 
 export function coverBox(item, dpi) {
   const D = finite(dpi) && dpi > 0 ? dpi : 150;
-  let fp = safe(() => footprint(item, D));
-  if (!fp) {
-    const p = item?.position;
-    if (!p || !finite(p.x, p.y)) return null;
-    const sx = Math.abs(finite(item?.scale?.x) ? item.scale.x : 1) || 1, sy = Math.abs(finite(item?.scale?.y) ? item.scale.y : 1) || 1;
-    fp = { x: p.x, y: p.y, w: D * sx, h: D * sy };
-  }
+  const fp = footOf(item, D); // (null: no place, or no size)
+  if (!fp) return null;
   const s = Math.min(fp.w, fp.h);
-  if (!(s > 0)) return null;
   const side = Math.max(COVER_SIDE * s, COVER_SIDE_MIN * D);
   const top = Math.max(COVER_TOP * s, COVER_TOP_MIN * D);
   const below = Math.max(COVER_BELOW * s, COVER_BELOW_MIN * D);
@@ -175,11 +169,6 @@ const andBox = (a, b) => {
   const o = { x0: Math.max(a.x0, b.x0), y0: Math.max(a.y0, b.y0), x1: Math.min(a.x1, b.x1), y1: Math.min(a.y1, b.y1) };
   return o.x1 > o.x0 && o.y1 > o.y0 ? o : null;
 };
-function boundsOf(pts) {
-  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
-  for (const p of pts) { if (p.x < x0) x0 = p.x; if (p.x > x1) x1 = p.x; if (p.y < y0) y0 = p.y; if (p.y > y1) y1 = p.y; }
-  return { x0, y0, x1, y1 };
-}
 
 // A polygon clipped to box b (Sutherland-Hodgman against the box, which is convex): the part inside
 // it, [] when none. A star-shaped polygon whose inside falls apart in the box comes back as one ring
@@ -242,24 +231,16 @@ const MIN_RING_AREA = 2 * SCALE * SCALE; // a ring under 2 square px is dropped 
 // ---- who stands where (pure) ----
 
 const mapsOf = (snap) => (Array.isArray(snap?.maps) ? snap.maps : []);
-export const darkMapIds = (snap) => new Set(mapsOf(snap).filter((m) => m?.id != null && m.darkLocked).map((m) => m.id));
 
-// Every token that could be a creature: on CHARACTER or MOUNT, not a PC, not a light carrier, with a
-// place; hidden ones too (a cover made for a hidden creature hides and shows with it, so it is on
-// before the DM unhides it). -> [{item, c, mapId, box}] (box: coverBox).
+// Every token that could be a creature (fog/inview.js creaturesOf: on CHARACTER or MOUNT, not a PC,
+// not a light carrier, with a place; hidden ones too: a cover made for a hidden creature hides and
+// shows with it, so it is on before the DM unhides it). -> [{item, c, mapId, r, fp, box}] (box: coverBox).
 function tokensOf(snap) {
   const dpi = snap?.grid?.dpi;
-  const pcIds = new Set((Array.isArray(snap?.pcs) ? snap.pcs : []).map((i) => i?.id));
-  const rects = Array.isArray(snap?.rects) ? snap.rects : [];
   const out = [];
-  for (const item of Array.isArray(snap?.items) ? snap.items : []) {
-    if (!item || item.id == null || !LAYERS.includes(item.layer) || pcIds.has(item.id)) continue;
-    if (isObj(item.metadata) && item.metadata[CARRIER_KEY]) continue;
-    const c = safe(() => centreOf(item, dpi));
-    if (!c || !finite(c.x, c.y)) continue;
-    const box = coverBox(item, dpi);
-    if (!box) continue;
-    out.push({ item, c, mapId: mapAt(c, rects), box });
+  for (const t of creaturesOf(snap)) {
+    const box = coverBox(t.item, dpi);
+    if (box) out.push({ ...t, box });
   }
   return out;
 }
@@ -274,11 +255,6 @@ function pcBoxes(snap) {
   }
   return out;
 }
-
-const dvFtOf = (item, vctx) => {
-  const v = safe(() => visionOf(item, vctx || {}), null);
-  return v && finite(v.dark) && v.dark > 0 ? v.dark : 0;
-};
 
 export function coverInputSig(snap, { gm = false } = {}) {
   if (gm) return "gm";
@@ -295,51 +271,7 @@ export function coverInputSig(snap, { gm = false } = {}) {
   return JSON.stringify([[...dark], cs, pcs, dv, lights, safe(() => seenInputSig(snap), "?")]);
 }
 
-// ---- the polygons, kept between plans (pure apart from the cache) ----
-
-// cache: {maps: Map(mapId -> {sig, polys: Map(key -> polygon)})}. A map's blockers changing (a door,
-// a wall) drops its polygons; a polygon no plan asked for is dropped at the end of the next plan.
-function polygons(cache, snap) {
-  const store = cache && typeof cache === "object" ? cache : null;
-  if (store && !(store.maps instanceof Map)) store.maps = new Map();
-  const blockers = new Map();
-  const used = new Map(); // mapId -> Set of keys
-  const blockersOf = (id) => {
-    if (!blockers.has(id)) {
-      const list = safe(() => sightBlockersOf(snap, id), []);
-      const sig = store ? list.map((s) => `${s.a.x},${s.a.y},${s.b.x},${s.b.y}`).join(";") : "";
-      blockers.set(id, { list, sig });
-    }
-    return blockers.get(id);
-  };
-  function get(mapId, o, reachPx) {
-    const { list, sig } = blockersOf(mapId);
-    const make = () => {
-      const poly = safe(() => visibilityPolygon(o, list, reachPx, { arcSteps: arcSteps(reachPx) }), []);
-      return { poly, bounds: poly.length >= 3 ? boundsOf(poly) : null };
-    };
-    if (!store) return make();
-    let m = store.maps.get(mapId);
-    if (!m || m.sig !== sig) { m = { sig, polys: new Map() }; store.maps.set(mapId, m); }
-    const key = `${r2(o.x)},${r2(o.y)},${r2(reachPx)}`;
-    if (!used.has(mapId)) used.set(mapId, new Set());
-    used.get(mapId).add(key);
-    let p = m.polys.get(key);
-    if (!p) { p = make(); m.polys.set(key, p); }
-    return p;
-  }
-  function done() {
-    if (!store) return;
-    for (const [id, m] of store.maps) {
-      const keep = used.get(id);
-      if (!keep) { store.maps.delete(id); continue; }
-      for (const k of [...m.polys.keys()]) if (!keep.has(k)) m.polys.delete(k);
-    }
-  }
-  return { get, blockers: (id) => blockersOf(id).list, done };
-}
-
-// ---- the plan (pure) ----
+// ---- the plan (pure; the polygons kept between plans in `cache`: fog/inview.js polygons) ----
 
 export function coverPlan(snap, { gm = false, max = MAX_COVERS, clip = null, cache = null } = {}) {
   const none = { specs: [], wanted: 0, cut: false };
@@ -352,50 +284,15 @@ export function coverPlan(snap, { gm = false, max = MAX_COVERS, clip = null, cac
   const onDark = all.filter((t) => dark.has(t.mapId));
   if (!onDark.length) return none;
   const lib = clipOk(clip) ? clip : null;
-  const P = polygons(cache, snap);
+  // Each PC's sight polygon (the fog it lifts), only on the dark maps a creature stands on, and the
+  // one test of who sees what (fog/inview.js seenTest; on a 🌑 map: THE RULE above).
+  const S = seenTest(snap, { cache, maps: new Set(onDark.map((t) => t.mapId)) });
+  const P = S.polys, views = S.views, lightsOf = S.lightsOf, seen = S.sees;
   const soft = CUT_SOFT_FT * pxPerFt + 1; // past the overlay's fade, and its pixel
   const rectOf = new Map(mapsOf(snap).filter((m) => m?.id != null && m.rect).map((m) => [m.id, m.rect]));
-
-  const lights = new Map(); // mapId -> the public lights on it
-  const lightsOf = (id) => {
-    if (!lights.has(id)) lights.set(id, safe(() => litLightsOn(snap, id), []));
-    return lights.get(id);
-  };
-  // Each PC's sight polygon (the fog it lifts), only on the dark maps a creature stands on.
   const pcItem = new Map((Array.isArray(snap.pcs) ? snap.pcs : []).filter((p) => p?.id != null).map((p) => [p.id, p]));
-  const needed = new Set(onDark.map((t) => t.mapId));
-  const views = new Map(); // mapId -> [{v, poly, dvPx}]
-  for (const v of safe(() => pcViews(snap), [])) {
-    if (!needed.has(v.mapId)) continue;
-    const { poly } = P.get(v.mapId, v.c, v.reachPx);
-    if (poly.length < 3) continue;
-    if (!views.has(v.mapId)) views.set(v.mapId, []);
-    views.get(v.mapId).push({ v, poly, dvPx: dvFtOf(pcItem.get(v.id), snap.vctx) * pxPerFt });
-  }
   // (a 🌑 map with no PC on it still gets its covers, under the fog: a PC's sight light rides with it
   // the moment the party lands there, still sized for the map it left: review of fix C, 2026-10-15)
-
-  // Lit for a PC on dark ground: some part of it strictly within a light's reach on the same map,
-  // its middle in the light's cone and in that light's own line of sight.
-  const litAt = (t) => lightsOf(t.mapId).some((l) => Math.sqrt(d2(l, t.c)) - t.box.r < l.reach * pxPerFt
-    && safe(() => inCone(l, t.c), false) && canSee({ x: l.x, y: l.y }, t.c, P.blockers(t.mapId)));
-  // In a PC's sight: its middle inside the PC's sight polygon, or in its line of sight with some part
-  // of it inside the polygon's reach (the fog lifts over the near part of a creature at the edge).
-  const inView = (t, v, poly, d) => pointInPolygon(t.c, poly)
-    || (d - t.box.r < v.reachPx && canSee(v.c, t.c, P.blockers(t.mapId)));
-  const seen = (t) => {
-    let lit = null;
-    for (const { v, poly, dvPx } of views.get(t.mapId) || []) {
-      const d = Math.sqrt(d2(v.c, t.c));
-      if (!inView(t, v, poly, d)) continue;
-      if (!v.dark) return true; // it stands on ground that isn't 🌑: it sees by line of sight
-      if (d < v.dark.ft * pxPerFt) return true; // the middle within its own reach (its square, darkvision, own light)
-      if (dvPx > 0 && d - t.box.r < dvPx) return true; // some part of it in its darkvision (the overlay greys it)
-      if (lit == null) lit = litAt(t);
-      if (lit) return true;
-    }
-    return false;
-  };
 
   const seenOnes = [];
   const unseen = [];
@@ -550,7 +447,7 @@ export function createCover(api = {}, ctx = {}) {
   // ---- the polygon library: loaded the first time a dark map has a creature, never on a GM screen ----
   let clip = clipOk(api.clip) ? api.clip : null;
   let clipLoading = null, clipFailedAt = -Infinity, clipSaid = null;
-  const loadClip = typeof api.loadClip === "function" ? api.loadClip : () => import("./clipper.js?v=669ec13").then((m) => m.default);
+  const loadClip = typeof api.loadClip === "function" ? api.loadClip : () => import("./clipper.js?v=e323d3ba-df9cbf7").then((m) => m.default);
   function ensureClip() {
     if (clip || clipLoading || now() - clipFailedAt < CLIP_RETRY_MS) return;
     const job = Promise.resolve().then(() => loadClip());

@@ -18,20 +18,25 @@
 // and a player's view follows their PC after a portal trip. Those load with import() and may fail
 // on their own: the map jobs, rings and HP keep working without them.
 import OBR, { buildCurve, buildEffect, buildImage, buildLabel, buildLight, buildPath, buildShape, buildText, buildWall, Math2,
-  MathM } from "./obr-sdk.js?v=669ec13";
-import { contains, isRoom, size } from "./areas.js?v=669ec13";
-import { checkPortals, describe, panelLog, setUpInteriors } from "./interiors.js?v=669ec13";
-import { copyLabelStyle, undoLabelStyle } from "./labelstyle.js?v=669ec13";
-import { cleanParty, placeTownsfolk, rememberParty } from "./gather.js?v=669ec13";
-import { isPcToken, nameKey, pcName } from "./fx/pcs.js?v=669ec13";
-import { BADGE_KEY, BADGE_URL, BUBBLES_KEY, BUBBLES_NAME_KEY, COND_KEY, CONDITIONS, DOWN_COLOR, FOE_COLOR, FOG_LOG_LOCAL_CH, GRIMOIRE_KEY, MARK_PREFIX, PARTY_KEY, PARTY_SENSES_KEY, PLACE_KEY, RING_KEY, TARGET_COLOR, WHO_KEY, hiddenAbove, onTokenLayer, targetRingColor } from "./keys.js?v=669ec13";
+  MathM } from "./obr-sdk.js?v=e323d3ba-df9cbf7";
+import { contains, isRoom, size } from "./areas.js?v=e323d3ba-df9cbf7";
+import { checkPortals, describe, panelLog, setUpInteriors } from "./interiors.js?v=e323d3ba-df9cbf7";
+import { copyLabelStyle, undoLabelStyle } from "./labelstyle.js?v=e323d3ba-df9cbf7";
+import { cleanParty, placeTownsfolk, rememberParty } from "./gather.js?v=e323d3ba-df9cbf7";
+import { isPcToken, nameKey, pcName } from "./fx/pcs.js?v=e323d3ba-df9cbf7";
+import { BADGE_KEY, BADGE_URL, BUBBLES_KEY, BUBBLES_NAME_KEY, COND_KEY, CONDITIONS, DOWN_COLOR, FOE_COLOR, FOG_LOG_LOCAL_CH, GRIMOIRE_KEY, MARK_PREFIX, PARTY_KEY, PARTY_SENSES_KEY, PLACE_KEY, RING_KEY, TARGET_COLOR, WHO_KEY, hiddenAbove, onTokenLayer, targetRingColor } from "./keys.js?v=e323d3ba-df9cbf7";
 import { CH, DEFAULT_SETTINGS, LS, buildOf, forMe, here, isLocalOrigin, kindOf, lsGet, on as busOn, send as busSend,
-  setConnection, setSceneWrite, startSceneReader, tierOf } from "./bus.js?v=669ec13";
+  setConnection, setSceneWrite, startSceneReader, tierOf } from "./bus.js?v=e323d3ba-df9cbf7";
 import { DND_FILTER, DND_LABEL, DND_MENU_ID, DND_POPOVER_ID, DND_WIDTH, LOCAL_DND_MENU_ID, MAP_SETUP_FILTERS, MAP_SETUP_HEIGHT,
   MAP_SETUP_LABEL, MAP_SETUP_MENU_ID, MAP_SETUP_NEED, MAP_SETUP_POPOVER_ID, MAP_SETUP_WIDTH, TOP_LEFT, dndQuery, heightOf,
-  popoverAnchor, sectionsFor, setupJobsFor, setupQuery } from "./dndmenu.js?v=669ec13";
+  popoverAnchor, sectionsFor, setupJobsFor, setupQuery } from "./dndmenu.js?v=e323d3ba-df9cbf7";
 
 const HEARTBEAT_MS = 10000;
+// While the last report had a creature some PC sees (seen_by, V1), the map is reported at least this
+// often, so the panel's "known to the party" mark follows a PC's sight within a few seconds; looked at
+// every SEEN_TICK_MS. Otherwise the 10 s heartbeat alone, as before.
+const SEEN_REPORT_MS = 3000;
+const SEEN_TICK_MS = 1000;
 const DEBOUNCE_MS = 250;
 const TODO_MS = 1000; // how often the Dell's copy asks the panel for map jobs
 const PING_MS = 3000; // how long 📍 rings a token
@@ -43,6 +48,8 @@ const RING_KEY_SELECTION_MS = 1500; // a ring key uses the selection Owlbear cle
 const RING_KEY_GAP_MS = 300; // a ring key pressed again within this long of its last press is ignored (a held key repeats)
 
 let timer = null;
+let clock = () => Date.now(); // boot's timers' clock (the offline checks swap it)
+let lastSendAt = -Infinity; // when send() last ran (a change, the heartbeat or the seen tick)
 
 // A Stat Bubbles number (a number, or text typed as one), or null.
 const num = (v) => (typeof v === "number" ? v : typeof v === "string" && v.trim() !== "" && !isNaN(+v) ? +v : null);
@@ -161,6 +168,7 @@ async function setCondition(ids, name, on) {
 }
 
 async function summary() {
+  seenLive = false; // (true again only once this report's seen_by is worked out)
   // No map open: still report, so the panel knows the extension is there.
   if (!(await OBR.scene.isReady())) return { scene: false, grid: null, tokens: [], areas: [] };
   let items = await OBR.scene.items.getItems();
@@ -209,23 +217,106 @@ async function summary() {
     size: size(room),
     tokens: tokens.filter((t) => contains(room, t.position)).map((t) => t.id),
   }));
+  const dpi = await OBR.scene.grid.getDpi();
+  const seen = await seenReport(items, tokens, dpi, scale?.parsed?.multiplier);
+  seenLive = !!seen?.live;
   return {
     scene: true,
     grid: {
-      dpi: await OBR.scene.grid.getDpi(),
+      dpi,
       multiplier: scale.parsed.multiplier,
       unit: scale.parsed.unit,
       measurement: await OBR.scene.grid.getMeasurement(),
       type: await OBR.scene.grid.getType(),
     },
-    tokens,
+    tokens: seen ? seen.tokens : tokens,
+    ...(seen ? { seen_by_v: SEEN_BY_V } : {}),
     areas,
     ...(copied ? { copied } : {}),
   };
 }
 
+// ---- seen_by: which PCs see each creature (V1, the "known to the party" mark's input) ----
+//
+// Each map report's visible non-PC CHARACTER rows carry seen_by: [PC token ids] (empty: nobody sees it),
+// and the report seen_by_v: 1. PC rows and the DM's hidden rows carry no seen_by. PC is this copy's
+// ctx.isPc (the ids the panel sends as pc_tokens). The test is fog/inview.js's (the dark covers' own
+// on a 🌑 map; in view on ☀ and 🌒), on a snapshot built here from the items this report read
+// (fog/fog.js buildSnapshot), never fog.snapshot(): on game night the bridge is the panel-served copy,
+// which only relays and never starts its fog. 🌫 Our fog on or off doesn't matter: these are pure.
+// Its parts load like the others (MODULES: fog, inview), so a broken one leaves out seen_by_v and
+// every seen_by (the panel then goes on without them) and never stops the rest of the report.
+export const SEEN_BY_V = 1;
+const SEEN_WAIT_MS = 2000;
+// After a wait that ran out, the reports leave seen_by out this long without asking again, so a read
+// Owlbear never answers holds one report by SEEN_WAIT_MS, never every one.
+const SEEN_REST_MS = 30000;
+let seenParts = null; // {ctx, load, T}: boot's, on a GM copy (only a GM tab reports)
+let seenRestUntil = -Infinity; // (T's clock) no seen work before this
+const seenCache = {}; // the sight polygons, kept between reports (fog/inview.js polygons)
+let seenLive = false; // the last report had a creature some PC sees: report every SEEN_REPORT_MS
+let seenSaid = null; // the last seen_by failure warned about (once each, till it works again)
+
+// The report's token rows with seen_by added (copies; `tokens` is left as it is) and whether any PC
+// sees any of them. Pure apart from its parts: fog (fog/fog.js) and inview (fog/inview.js). Throws
+// when it can't be worked out.
+export function withSeenBy(tokens, items, { sceneMeta, roomMeta, grid, ctx, fog, inview, cache = null }) {
+  if (typeof fog?.buildSnapshot !== "function" || typeof inview?.seenByPlan !== "function") {
+    throw new Error("the seen_by parts aren't loaded");
+  }
+  const snap = fog.buildSnapshot(items, sceneMeta, roomMeta, grid, ctx);
+  const plan = inview.seenByPlan(snap, { cache, strict: true }); // a part that threw: no seen_by at all
+  const pcIds = new Set(snap.pcs.map((i) => i.id));
+  let live = false;
+  const rows = tokens.map((t) => {
+    if (t.visible === false || pcIds.has(t.id)) return t;
+    const ids = plan.get(t.id) || [];
+    if (ids.length) live = true;
+    return { ...t, seen_by: ids };
+  });
+  return { tokens: rows, live };
+}
+
+// The seen_by part of one report: {tokens, live}, or null when it can't be worked out (said once).
+async function seenReport(items, tokens, dpi, ft) {
+  try {
+    if (!seenParts) throw new Error("no GM copy started here");
+    const { ctx, load, T } = seenParts;
+    if (T.now() < seenRestUntil) return null; // resting after a wait that ran out (said then)
+    // Its own reads give up after SEEN_WAIT_MS: a call Owlbear never answers must not hold the
+    // report (lesson no-report-lock); the report then goes without seen_by, and so do the next
+    // ones for SEEN_REST_MS without waiting again.
+    let wait = null;
+    const late = new Promise((_, no) => {
+      wait = T.setTimeout(() => {
+        seenRestUntil = T.now() + SEEN_REST_MS;
+        no(new Error(`its parts or Owlbear didn't answer in ${SEEN_WAIT_MS / 1000} s`));
+      }, SEEN_WAIT_MS);
+    });
+    let got;
+    try {
+      got = await Promise.race([Promise.all([load("fog"), load("inview"), OBR.scene.getMetadata(), OBR.room.getMetadata()]), late]);
+    } finally {
+      T.clearTimeout(wait);
+    }
+    const [fog, inview, sceneMeta, roomMeta] = got;
+    // (fx/place.js gridOf's: the scene's dpi, the feet a square)
+    const d = Number.isFinite(dpi) && dpi > 0 ? dpi : 150, f = Number.isFinite(ft) && ft > 0 ? ft : 5;
+    const out = withSeenBy(tokens, items, { sceneMeta, roomMeta, grid: { dpi: d, ftPerCell: f, pxPerFt: d / f },
+      ctx, fog, inview, cache: seenCache });
+    seenSaid = null;
+    return out;
+  } catch (e) {
+    const text = String(e?.message || e);
+    if (text !== seenSaid) console.warn(`dnd-npc: the map report goes without seen_by: ${text}`);
+    seenSaid = text;
+    return null;
+  }
+}
+
 async function send() {
-  timer = null;
+  if (timer) { clearTimeout(timer); timer = null; } // a tick or heartbeat sending now: no debounced one after it
+  lastSendAt = clock();
   if (bridge) return bridge.report(); // to the panel the bridge found (nothing on a standby tab)
   if (!legacy) return; // not the Dell's tab: it never reports
   try {
@@ -473,7 +564,7 @@ const LOCAL_RING_KEY_IDS = { blue: "dnd-npc/local/ring-key-1", yellow: "dnd-npc/
 // 📺 Show my view on the projector: a toolbar button beside it (views.js).
 const PROJECTOR_ACTION_ID = "dnd-npc/projector-view";
 const LOCAL_PROJECTOR_ACTION_ID = "dnd-npc/local/projector-view";
-// 🏘 Map setup (🏘 Set up interiors, 👥 Place townsfolk, 🏘 Check portals; 🎨 and ↩ on a text label) needs interiors.json, which
+// 🏘 Map setup (🏘 Set up interiors, 👥 Place tokens, 🏘 Check portals; 🎨 and ↩ on a text label) needs interiors.json, which
 // only the panel on this PC can hand over (far too big for the bridge's broadcasts): only the copy the
 // panel serves makes it, even when it only relays on the Dell's tab (the Pages copy there can't reach
 // the panel), and never removes it. (🧭 Bring PCs here is one of 🎲 DND's tabs: what it needs is on
@@ -564,7 +655,7 @@ async function runTownsfolk(id) {
     await placeTownsfolk(id);
   } catch (e) {
     console.warn("dnd-npc townsfolk failed", e);
-    OBR.notification.show(`👥 Placing townsfolk failed: ${describe(e)}`, "ERROR");
+    OBR.notification.show(`👥 Placing tokens failed: ${describe(e)}`, "ERROR");
     panelLog({ what: "townsfolk", error: describe(e), stack: String(e?.stack || ""), detail: "" });
   }
 }
@@ -644,18 +735,19 @@ const JOBS = {
 // The parts that load on their own (R4): a broken one is left out and the rest carry on.
 // Literal paths, so the publisher can stamp each with the build.
 const MODULES = {
-  bridge: () => import("./bridge.js?v=669ec13"),
-  fx: () => import("./fx/engine.js?v=669ec13"),
-  samples: () => import("./fx/samples.js?v=669ec13"),
-  aim: () => import("./aim/tool.js?v=669ec13"),
-  geometry: () => import("./aim/geometry.js?v=669ec13"),
-  rings: () => import("./aim/rings.js?v=669ec13"),
-  player: () => import("./player/state.js?v=669ec13"),
-  lights: () => import("./fx/lighting.js?v=669ec13"),
-  lightjobs: () => import("./fx/lightjobs.js?v=669ec13"),
-  lightwriter: () => import("./fx/lightwriter.js?v=669ec13"),
-  views: () => import("./views.js?v=669ec13"),
-  fog: () => import("./fog/fog.js?v=669ec13"),
+  bridge: () => import("./bridge.js?v=e323d3ba-df9cbf7"),
+  fx: () => import("./fx/engine.js?v=e323d3ba-df9cbf7"),
+  samples: () => import("./fx/samples.js?v=e323d3ba-df9cbf7"),
+  aim: () => import("./aim/tool.js?v=e323d3ba-df9cbf7"),
+  geometry: () => import("./aim/geometry.js?v=e323d3ba-df9cbf7"),
+  rings: () => import("./aim/rings.js?v=e323d3ba-df9cbf7"),
+  player: () => import("./player/state.js?v=e323d3ba-df9cbf7"),
+  lights: () => import("./fx/lighting.js?v=e323d3ba-df9cbf7"),
+  lightjobs: () => import("./fx/lightjobs.js?v=e323d3ba-df9cbf7"),
+  lightwriter: () => import("./fx/lightwriter.js?v=e323d3ba-df9cbf7"),
+  views: () => import("./views.js?v=e323d3ba-df9cbf7"),
+  fog: () => import("./fog/fog.js?v=e323d3ba-df9cbf7"),
+  inview: () => import("./fog/inview.js?v=e323d3ba-df9cbf7"), // the map report's seen_by (summary(), GM copies only)
 };
 
 const HELLO_MS = 30000; // each screen says hello this often, so the panel's screens list stays fresh
@@ -715,6 +807,8 @@ export async function boot(api = sdk, opts = {}) {
     setInterval: (f, ms) => setInterval(f, ms), clearInterval: (t) => clearInterval(t), now: () => Date.now(),
   };
   const load = opts.importer || ((name) => MODULES[name]());
+  clock = () => T.now();
+  lastSendAt = -Infinity;
   const origin = opts.origin ?? globalThis.location?.origin ?? "";
   const local = isLocalOrigin(origin);
   const role = await O.player.getRole();
@@ -749,6 +843,10 @@ export async function boot(api = sdk, opts = {}) {
     return it ? isPcToken(it, { party: ctx.party, pcIds: ctx.pcTokens }) : ctx.pcTokens.has(id);
   };
   isPcNow = ctx.isPc;
+  // summary()'s seen_by: this copy's PC rule and party, its parts (only a GM tab ever reports).
+  seenParts = role === "GM" ? { ctx, load, T } : null;
+  seenLive = false;
+  seenRestUntil = -Infinity;
   // A PC's darkvision from the party sheets (the room's PARTY_SENSES_KEY, read below): {dark} or
   // null, by the PC's name (fx/pcs.js), for fx/lightmeta.js visionOf().
   ctx.senses = (item) => {
@@ -1511,6 +1609,12 @@ export async function boot(api = sdk, opts = {}) {
       O.scene.grid.onChange(soon);
       O.scene.onReadyChange(soon);
       T.setInterval(send, HEARTBEAT_MS);
+      // ...and while the last report had a creature some PC sees, one at least every SEEN_REPORT_MS
+      // (a report for a change or the heartbeat counts). Only the tab holding the lease sends
+      // (bridge.report checks isBridge); with nobody seen this sends nothing, as before V1.
+      T.setInterval(() => {
+        if (seenLive && clock() - lastSendAt >= SEEN_REPORT_MS) send();
+      }, SEEN_TICK_MS);
       if (bridgeMod?.startBridge) {
         ctx.onStatus = pushState;
         try {

@@ -15,23 +15,24 @@
 // Pages copy too, which can never reach interiors.json. Only a map without it yet (interiors
 // not set up since) falls back to interiors.json, on the copy the panel serves.
 //
-// Also "👥 Place townsfolk" (GM only, on a map image): each NPC listed in interiors.json's
+// Also "👥 Place tokens" (GM only, on a map image): each NPC listed in interiors.json's
 // town.townsfolk for that map (townsfolkFor) goes to its own square in its room, next to its piece
-// of furniture, named as its entry's token. On a building's or a site's own map it also places that
-// map's monsters (monsterPlan): the adventure's encounters, as many as the party's size calls for, and
-// the scenery its places hide (two dead goblins under a bridge), all hidden: the token of each kind the
-// DM dropped beside the maps moved in first, then copies of it, each named as the engine reads it. On a road
-// camp's own map (the road's night 1 camp: one place with several fights to roll from) it lays out the road's pool
+// of furniture, named as its entry's token, hidden if it starts hidden (never shown: Hide wins) and linked to
+// its person; one the party already knows (👁) stays where it is. On a building's or a site's own map
+// it also places that map's monsters (monsterPlan): the adventure's encounters, as many as the party's
+// size calls for, and the scenery its places hide (two dead goblins under a bridge), all hidden: the
+// token of each kind the DM dropped beside the maps moved in first, then copies of it, each named as
+// the engine reads it, and his spares of a kind placed hidden where they lie. On a road camp's own map (the road's night 1 camp: one place with several fights to roll from) it lays out the road's pool
 // instead (poolPlan), as from a drawing marked as that place; the road's other maps say to press it there.
 // check_interiors.mjs and check_road_maps.mjs test the pure parts offline.
-import OBR, { MathM } from "./obr-sdk.js?v=669ec13";
-import { contains, isRoom, outline } from "./areas.js?v=669ec13";
-import { ask, directBase } from "./bus.js?v=669ec13";
-import { bounds, groupOf, listed, loadInteriors, mapToScene, matchImages, normName, sceneGroups, toScene } from "./interiors.js?v=669ec13";
+import OBR, { MathM } from "./obr-sdk.js?v=e323d3ba-df9cbf7";
+import { contains, isRoom, outline } from "./areas.js?v=e323d3ba-df9cbf7";
+import { ask, directBase } from "./bus.js?v=e323d3ba-df9cbf7";
+import { bounds, groupOf, listed, loadInteriors, mapToScene, matchImages, normName, sceneGroups, toScene } from "./interiors.js?v=e323d3ba-df9cbf7";
 import { BUBBLES_KEY, BUBBLES_NAME_KEY, DOWN_COLOR, INTERIOR_KEY, MAP_INFO_KEY, PARTY_KEY, PARTY_SENSES_KEY, PLACE_KEY,
-         RING_KEY, WHO_KEY, onTokenLayer } from "./keys.js?v=669ec13";
-import { nameKey, pcName, tokenLabel } from "./fx/pcs.js?v=669ec13";
-import { readLine, toWorld } from "./fog/lineread.js?v=669ec13";
+         RING_KEY, WHO_KEY, onTokenLayer } from "./keys.js?v=e323d3ba-df9cbf7";
+import { nameKey, pcName, tokenLabel } from "./fx/pcs.js?v=e323d3ba-df9cbf7";
+import { readLine, toWorld } from "./fog/lineread.js?v=e323d3ba-df9cbf7";
 
 const RADIUS = 12; // squares around the spot that are tried
 
@@ -326,7 +327,34 @@ export function gather(json, target, items, party, sceneDpi, { chosen = null, bo
   return { name: t.name, kind: t.kind, point: t.point, moves, pcs: pcs.map((p) => p.name) };
 }
 
-// ---- 👥 Place townsfolk ----
+// ---- 👥 Place tokens: the townsfolk ----
+
+// What the party already knows (👁 K1: director.json's known_tokens and known_people, each less the DM's 👁 taps
+// off), as /api/map/monsters hands it over: {tokens: token ids, people: person slugs}. Nobody when the panel or
+// the map tool doesn't say (one from before it, or none reached).
+export function knownOf(data) {
+  const set = (xs) => new Set((Array.isArray(xs) ? xs : []).filter((x) => typeof x === "string" && x.trim())
+    .map((x) => x.trim()));
+  return { tokens: set(data?.known_tokens), people: new Set([...set(data?.known_people)].map((x) => x.toLowerCase())) };
+}
+
+// 👁 Whether token `i` is one the party knows (`known`: knownOf): its own id, or the person it is linked to (🏷 This
+// is…), as the game keeps one person by name. No press takes it for a monster.
+export function isKnownToken(i, known) {
+  const w = String(i?.metadata?.[WHO_KEY] || "").trim().toLowerCase();
+  return known.tokens.has(i.id) || (w.startsWith("npc:") && known.people.has(w.slice(4)));
+}
+
+// 👁 The token of every town.townsfolk person the party knows (`known`), whatever map their entry is on (a guide
+// leading them through another site, one charmed far from home), found as findTownsfolk finds it (a name match too, no link
+// needed): ids no press takes for one of a kind.
+export function knownPeopleTokens(json, items, known) {
+  const ids = new Set();
+  for (const f of findTownsfolk(json?.town?.townsfolk || [], items)) {
+    if (f.item && known.people.has(String(f.entry.person || "").trim().toLowerCase())) ids.add(f.item.id);
+  }
+  return ids;
+}
 
 // The token of each town.townsfolk entry: [{entry, item}] (item null when it isn't in the scene).
 // In order, each pass over every entry still without one: a token marked as the entry's person
@@ -361,7 +389,7 @@ export function findTownsfolk(entries, items) {
   return out;
 }
 
-// The entries "👥 Place townsfolk" on this map image places (all of them with no image). A building's
+// The entries "👥 Place tokens" on this map image places (all of them with no image). A building's
 // map (one in interiors.json, by its name or label): the entries on that building's maps, every floor.
 // Any other image is the town (as 🏘 Set up interiors takes it): the entries on the buildings with a
 // spot on the town map and any naming a map interiors.json doesn't have (reported, as before), but
@@ -403,24 +431,32 @@ export function townsfolkSpot(map, image, entry, sceneDpi) {
   return { room: room.name, area, inside, point: prop || insidePoint(area, drawingBox(area), sceneDpi) };
 }
 
-// The whole placing, without touching Owlbear: {moves: [{id, token, room, cell, position}],
-// notFound: [token names], noMap: [map names], noRoom: ["map · room"]}. Each NPC gets one square
-// in its room, reachable from its spot without crossing a wall line and clear of them, off
+// The whole placing, without touching Owlbear: {moves: [{id, token, person, hidden, room, cell, position}],
+// notFound: [token names], noMap: [map names], noRoom: ["map · room"], known: [token names], matched: [token ids]}.
+// Each NPC gets one square in its room, reachable from its spot without crossing a wall line and clear of them, off
 // portals, furniture, every other token and the squares given to the NPCs before it. `clicked`:
 // the map image the menu was opened on; only its entries move (townsfolkFor), but tokens are
 // matched against every entry, so each token still goes to its own. On the town, `elsewhere`: the
-// maps in the scene with entries it left for a press on their own map.
-export function townsfolkPlan(json, items, sceneDpi, { clicked } = {}) {
+// maps in the scene with entries it left for a press on their own map. `known` (knownOf): an entry whose person
+// the party knows, or whose token it knows, is left where it is (a rescued prisoner stays rescued): never moved,
+// never missing, still in everyone's way, and counted (`known`) only when its token is in the scene. `matched`:
+// every token found for this map's entries, the known ones too, so the monster placing never claims one.
+export function townsfolkPlan(json, items, sceneDpi, { clicked, known = knownOf(null) } = {}) {
   const entries = json?.town?.townsfolk || [];
   const mine = new Set(townsfolkFor(json, clicked));
   const maps = listed(json || {});
   const images = items.filter((i) => i.layer === "MAP" && i.type === "IMAGE");
-  const found = findTownsfolk(entries, items).filter((f) => mine.has(f.entry));
+  const knows = (f) => known.people.has(String(f.entry.person || "").trim().toLowerCase())
+    || (!!f.item && known.tokens.has(f.item.id));
+  const all = findTownsfolk(entries, items).filter((f) => mine.has(f.entry));
+  const found = all.filter((f) => !knows(f));
   const moving = new Set(found.filter((f) => f.item).map((f) => f.item.id));
   const others = items.filter((i) => onTokenLayer(i) && !i.attachedTo && !moving.has(i.id)); // a loose mount too
   const fixed = [...portalBoxes(items), ...others.map((i) => tokenArea(i, sceneDpi)), ...propBoxes(json, items, sceneDpi)];
   const walls = wallSegments(items);
-  const out = { moves: [], notFound: [], noMap: [], noRoom: [], elsewhere: [] };
+  const out = { moves: [], notFound: [], noMap: [], noRoom: [], elsewhere: [],
+                known: all.filter((f) => f.item && knows(f)).map((f) => f.entry.token),
+                matched: all.filter((f) => f.item).map((f) => f.item.id) };
   if (clicked && !matchImages(maps, [clicked]).size) {
     for (const e of entries) {
       if (mine.has(e) || out.elsewhere.includes(e.map)) continue;
@@ -447,35 +483,44 @@ export function townsfolkPlan(json, items, sceneDpi, { clicked } = {}) {
       out.noRoom.push(`${entry.map} · ${entry.room}`);
       continue;
     }
-    // The token's centre goes on the square's centre (its position is wherever its anchor is).
+    // The token's centre goes on the square's centre (its position is wherever its anchor is). Its person and its
+    // start (K2's `hidden`, an optional true) come along for townsfolkUpdates.
     const b = tokenBox(item, sceneDpi);
-    out.moves.push({ id: item.id, token: entry.token, room: spot.room, cell,
+    out.moves.push({ id: item.id, token: entry.token, person: String(entry.person || "").trim().toLowerCase() || null,
+                     hidden: entry.hidden === true, room: spot.room, cell,
                      position: { x: cell.x + item.position.x - b.x, y: cell.y + item.position.y - b.y } });
     given.push(areaAt(cell, b.size, sceneDpi));
   }
   return out;
 }
 
-export function townsfolkText({ moves, notFound, noMap, noRoom, elsewhere = [] }) {
-  let s = `👥 ${moves.length} townsfolk placed`;
-  if (notFound.length) s += `. Not in the scene: ${notFound.join(", ")}`;
-  if (noMap.length) s += `. Map not laid out: ${noMap.join(", ")}`;
-  if (noRoom.length) s += `. No room for: ${noRoom.join(", ")}`;
-  if (elsewhere.length) s += `. On their own maps, press there: ${elsewhere.join(", ")}`;
-  return s;
+// The townsfolk notices, each within NOTICE_MAX (fitNotices: every name while they fit), a warning while any is
+// missing, unlaid or out of room. The ones the party knows (👁) are only counted, with the number placed: left
+// where they stand.
+export function townsfolkNotices({ moves, notFound, noMap, noRoom, elsewhere = [], known = [] }) {
+  const head = `👥 ${moves.length} townsfolk placed${known.length
+    ? `. ${known.length} ${known.length === 1 ? "is" : "are"} already known to the party, left where they stand` : ""}`;
+  return fitNotices(head, [["Not in the scene", notFound], ["Map not laid out", noMap],
+    ["No room for", noRoom], ["On their own maps, press there", elsewhere]],
+  notFound.length || noMap.length || noRoom.length ? "WARNING" : "SUCCESS", { most: Infinity });
 }
 
-// ---- 👾 monsters, with 👥 Place townsfolk ----
+// The press's first notice when the panel or map tool doesn't say who the party knows (👁): placed as before, but said.
+export const BLIND_TEXT = "Couldn't check who the party knows (restart the panel or the map tool, then press again)";
+
+// ---- 👾 monsters, with 👥 Place tokens ----
 // The data is the panel's (or tools/owlbear_only.py's) /api/map/monsters: {present: the party's size as the
 // Story tab counts it (director.json's `present`; 0 = nobody marked), fallen: the NPCs the game last saw dead,
 // every token of theirs (director.json's `fallen`: a row that speaks as one is never placed again),
-// rows: adventure_source.encounters(), props: adventure_source.props(), the scenery tokens hides edges lay out}.
+// rows: adventure_source.encounters(), props: adventure_source.props(), the scenery tokens hides edges lay out,
+// known_tokens and known_people: what the party knows (👁, knownOf)}.
 // A press on a building's or a site's own map places only that map's encounters and scenery (every floor of it);
 // the town's never places any, so nothing is sent back from the town. Every token starts hidden, on its own square
 // in its room: the one of a kind the DM dropped beside the maps (on no map, in no room) is moved in as the first,
-// and copies of it make up the rest. Nothing in play is ever changed, moved or brought back: a place that already
-// holds a token of a kind (alive, down at 0 HP or dead), or a fight a press placed before, gets no more of it, so a
-// second press adds nothing and leaves a spare token beside the maps where it is.
+// and copies of it make up the rest; any more of his of that kind beside the maps are spares, hidden where they lie.
+// Nothing in play is ever changed, moved or brought back: a place that already holds a token of a kind (alive,
+// down at 0 HP or dead), or a fight a press placed before, gets no more of it, so a second press adds nothing and
+// leaves a spare token beside the maps where it is. A token the party knows is never moved in.
 
 // A label as the engine matches names (map_state.bare): case and spacing don't matter, a leading "the" and a
 // picture's extension are dropped, and so are its numbers ("Zombie 3" -> "zombie"; a bare number stays).
@@ -602,11 +647,13 @@ function propRows(data) {
 // [{id, name, position, placed, room, place, prop, kind}] (the DM's own tokens of a kind, dropped beside the maps:
 // each moved in as the first of its kind, hidden, marked and named, and copies only make up the rest), size: "party
 // of 6", already: [places left alone], missing: [kinds with no token in the scene], crowded: [rooms with tokens
-// outside them], byHand: [places with several encounters (a road camp's choices)]}. `avoid`: boxes no token goes
-// on (the squares the townsfolk were just given); `skip`: ids never moved in (the townsfolk this press moves).
-// Only on a listed map (`clicked`); the town gets nothing.
+// outside them], byHand: [places with several encounters (a road camp's choices)], spare: [{id, kind}] (the DM's
+// own of a kind placed here that nothing took: hidden where they lie)}. `avoid`: boxes no token goes on (the squares
+// the townsfolk were just given); `skip`: ids never moved in (every townsfolk token this press matched, moved or
+// known, and any known person's token, whatever map their entry is on), nor is a token the party knows (data.known_tokens, or one linked to a person in data.known_people). Only on
+// a listed map (`clicked`); the town gets nothing.
 export function monsterPlan(json, data, items, sceneDpi, { clicked, avoid: extra = [], skip = new Set(), id = newId } = {}) {
-  const out = { copies: [], adopt: [], size: "", already: [], missing: [], crowded: [], byHand: [], fallen: [] };
+  const out = { copies: [], adopt: [], size: "", already: [], missing: [], crowded: [], byHand: [], fallen: [], spare: [] };
   const maps = listed(json || {});
   const [name] = clicked ? matchImages(maps, [clicked]).keys() : [];
   if (!name || !Array.isArray(data?.rows)) return out;
@@ -711,21 +758,27 @@ export function monsterPlan(json, data, items, sceneDpi, { clicked, avoid: extra
   }
   // the DM's own tokens moved in: of the kind, dropped beside the maps (on no map, in no room or marked place),
   // alive, placed for nothing, linked (🏷 This is…) to nobody but the group's own voice, no townsfolk this press
-  // moves. A speaker's own label goes to its own group first, the plain ones to the plain groups, then the speakers.
+  // matched, none the party knows (👁: its token, or the person it is linked to, as the game keeps one person by name).
+  // A speaker's own label goes to its own group first, the plain ones to the plain groups, then the speakers.
   const images = items.filter((i) => isMapImage(i) && i.image).map((m) => bounds(m, sceneDpi));
   const drawn = items.filter((i) => i.layer === "DRAWING" && (isPlaceDrawing(i) || i.metadata?.[INTERIOR_KEY]?.kind === "room"));
+  const known = knownOf(data);
+  const knownTok = (i) => isKnownToken(i, known);
   const loose = tokens.filter((i) => {
     const c = tokenBox(i, sceneDpi);
-    return !skip.has(i.id) && !i.metadata?.[PLACED_KEY] && !down.has(i.id) && !images.some((bx) => inBox(bx, c))
+    return !skip.has(i.id) && !knownTok(i) && !i.metadata?.[PLACED_KEY] && !down.has(i.id) && !images.some((bx) => inBox(bx, c))
       && !drawn.some((d) => contains(d, c));
   });
   const taken = new Set();
   const named = (i, n) => tokenNames(i).includes(bareName(n));
+  const linkedElse = (g, i) => {
+    const w = String(i.metadata?.[WHO_KEY] || "");
+    return w.startsWith("npc:") && !g.voices.has(w.slice(4));
+  };
   const give = (g, test) => {
     for (const i of loose) {
       if (g.adopt.length >= g.count) return;
-      const w = String(i.metadata?.[WHO_KEY] || "");
-      if (taken.has(i.id) || !ofKind(i, g.creature) || (w.startsWith("npc:") && !g.voices.has(w.slice(4))) || !test(i)) continue;
+      if (taken.has(i.id) || !ofKind(i, g.creature) || linkedElse(g, i) || !test(i)) continue;
       g.adopt.push(i);
       taken.add(i.id);
     }
@@ -781,6 +834,7 @@ export function monsterPlan(json, data, items, sceneDpi, { clicked, avoid: extra
       missing.add(g.kind);
       continue;
     }
+    g.placed = true;
     // the DM's own first, then the copies that make up the rest
     const jobs = [...g.adopt, ...Array.from({ length: Math.max(0, g.count - g.adopt.length) }, () => null)];
     let k = 0;
@@ -806,36 +860,136 @@ export function monsterPlan(json, data, items, sceneDpi, { clicked, avoid: extra
     });
   }
   out.missing = [...missing];
+  // the DM's spares (his answer 22: the extras go hidden): his tokens beside the maps of a kind placed here that
+  // nothing took (one dropped too many, or more than tonight's party calls for), hidden where they lie, so a later
+  // fight that needs its kind still moves them in; one shown only (a hidden one is left as it is)
+  for (const i of loose) {
+    if (taken.has(i.id) || i.visible === false) continue;
+    const g = todo.find((o) => o.placed && ofKind(i, o.creature) && !linkedElse(o, i));
+    if (g) out.spare.push({ id: i.id, kind: g.kind });
+  }
   // the size used, as the Story tab's encounter line counts it; a map with no counts by size says the book's
   out.size = sizeNote(scaled, noLines, present);
   return out;
 }
 
+// "👾 2 spare Goblin tokens and 1 spare Wolf token hidden": every kind while it fits in NOTICE_MAX, else the first
+// kinds and "and 5 more spare tokens"
+function spareText(spare) {
+  const by = new Map();
+  for (const x of spare) by.set(x.kind, (by.get(x.kind) || 0) + 1);
+  const kinds = [...by], one = ([k, n]) => `${n} spare ${k} token${n === 1 ? "" : "s"}`;
+  const and = (ys) => (ys.length > 1 ? `${ys.slice(0, -1).join(", ")} and ${ys.at(-1)}` : ys[0]);
+  for (let k = kinds.length; k >= 1; k--) {
+    const more = kinds.slice(k).reduce((s, [, n]) => s + n, 0);
+    const text = `👾 ${and([...kinds.slice(0, k).map(one), ...(more ? [`${more} more spare token${more === 1 ? "" : "s"}`] : [])])} hidden`;
+    if (noticeSize(text) <= NOTICE_MAX) return text;
+  }
+  return clip(`👾 ${spare.length} spare token${spare.length === 1 ? "" : "s"} hidden`);
+}
+
 // A list for a notice: the first few, then how many more.
 const few = (xs, n = 4) => xs.length > n ? `${xs.slice(0, n).join(", ")} and ${xs.length - n} more` : xs.join(", ");
+
+// Owlbear drops a notice that is too long, without a word: the road press's 315-character warning was sent and
+// never shown (live test 2026-10-24), while its notices of 183 and 187 characters showed. Its SDK hands the text
+// straight on and its docs name no limit, so every notice the 👥 press shows is kept to NOTICE_MAX bytes of UTF-8
+// (never fewer than its characters), under the shortest of those seen to show.
+export const NOTICE_MAX = 180;
+export const noticeSize = (s) => new TextEncoder().encode(String(s)).length;
+
+// `s` cut to NOTICE_MAX, ending "…" (only a head too long by itself: a place with a very long name).
+function clip(s) {
+  if (noticeSize(s) <= NOTICE_MAX) return s;
+  let out = "";
+  for (const ch of s) {
+    if (noticeSize(`${out}${ch}…`) > NOTICE_MAX) break;
+    out += ch;
+  }
+  return `${out.trimEnd()}…`;
+}
+
+const liveParts = (parts) => parts.filter(([, xs]) => Array.isArray(xs) && xs.length);
+const partText = ([label, xs, tail = ""], n) => `${label}: ${few(xs, n)}${tail}`;
+
+// `head` and every one of `parts` ([label, names, tail]) as "head. label: A, B and 3 more" + tail, each list cut to
+// fewer names (from `most` down to one) until it fits in NOTICE_MAX; null when even one name each doesn't.
+function fitAll(head, parts, most) {
+  const top = Math.max(1, Math.min(most, Math.max(0, ...parts.map(([, xs]) => xs.length))));
+  for (let n = top; n >= 1; n--) {
+    const text = [head, ...parts.map((part) => partText(part, n))].filter(Boolean).join(". ");
+    if (noticeSize(text) <= NOTICE_MAX) return text;
+  }
+  return null;
+}
+
+// One notice of at most NOTICE_MAX: `head`, then each part that has names, in the order of what matters most. Every
+// list is cut to fewer names first, then the last parts go.
+export function fitNotice(head, parts, { most = 4 } = {}) {
+  const live = liveParts(parts);
+  for (let k = live.length; k > 0; k--) {
+    const text = fitAll(head, live.slice(0, k), most);
+    if (text) return text;
+  }
+  return clip(head || (live.length ? partText(live[0], 1) : ""));
+}
+
+// The same as notices ([text, variant]), nothing lost: the head with every part that fits, then each part that
+// doesn't as its own notice, under the head's icon ("👾 Already there, left alone: …"). packNotices joins what fits.
+export function fitNotices(head, parts, variant, { most = 4 } = {}) {
+  const live = liveParts(parts), icon = String(head).split(" ")[0];
+  let k = live.length, first = null;
+  for (; k > 0 && !(first = fitAll(head, live.slice(0, k), most)); k--);
+  return [[first || clip(head), variant],
+    ...live.slice(k).map(([label, xs, tail]) => [fitNotice("", [[`${icon} ${label}`, xs, tail]], { most }), variant])];
+}
+
+// The notices to show ([text, variant], each within NOTICE_MAX), in order: each joined to the one before ("A. B",
+// its icon dropped when it is the one before's) while the two still fit in one, a warning if either is. One marked
+// `alone` ([text, variant, true]: a fight left short, the line the DM must not miss) is always its own notice.
+const RANK = { ERROR: 3, WARNING: 2 };
+export function packNotices(list) {
+  const out = [];
+  let icon = "", apart = true;
+  for (const [raw, variant, alone = false] of list) {
+    if (!raw) continue;
+    const text = clip(raw), own = text.split(" ")[0], last = out.at(-1);
+    const joined = last && !apart && !alone && `${last[0]}. ${own === icon ? text.slice(own.length + 1) : text}`;
+    if (joined && noticeSize(joined) <= NOTICE_MAX) {
+      last[0] = joined;
+      if ((RANK[variant] || 0) > (RANK[last[1]] || 0)) last[1] = variant;
+    } else out.push([text, variant]);
+    icon = own;
+    apart = alone;
+  }
+  return out;
+}
 
 const DEAD_TEXT = "Dead in the campaign record, never brought back";
 
 // "11 new copies, 1 of yours moved in"
 const madeOf = (c, a) => `${c} new cop${c === 1 ? "y" : "ies"}${a ? `, ${a} of yours moved in` : ""}`;
 
-export function monsterText({ copies, adopt = [], size, already, missing, crowded, byHand, fallen = [] }) {
+// A map's monsters as notices (packNotices joins what fits): what was placed and what was there, the DM's spares
+// hidden, then each thing the DM must see to, as its own warning.
+export function monsterNotices({ copies, adopt = [], size, already, missing, crowded, byHand, fallen = [], spare = [] }) {
   const mc = copies.filter((c) => !c.prop).length, ma = adopt.filter((a) => !a.prop).length, n = mc + ma;
-  let s = n ? `👾 ${n} monster${n === 1 ? "" : "s"} placed, hidden (${madeOf(mc, ma)}), ${size}`
+  const head = n ? `👾 ${n} monster${n === 1 ? "" : "s"} placed, hidden (${madeOf(mc, ma)}), ${size}`
     : `👾 No monsters added, ${size}`;
   const scenery = [...adopt, ...copies].filter((x) => x.prop);
+  const parts = [];
   if (scenery.length) {
     const by = new Map();
     for (const x of scenery) by.set(x.kind, (by.get(x.kind) || 0) + 1);
-    s += `. ${scenery.length} scenery token${scenery.length === 1 ? "" : "s"} placed, hidden`
-      + ` (${madeOf(copies.length - mc, adopt.length - ma)}): ${few([...by].map(([k, v]) => (v > 1 ? `${k} ×${v}` : k)))}`;
+    parts.push([`${scenery.length} scenery token${scenery.length === 1 ? "" : "s"} placed, hidden`
+      + ` (${madeOf(copies.length - mc, adopt.length - ma)})`, [...by].map(([k, v]) => (v > 1 ? `${k} ×${v}` : k))]);
   }
-  if (already.length) s += `. Already there, left alone: ${few(already)}`;
-  if (fallen.length) s += `. ${DEAD_TEXT}: ${few(fallen)}`;
-  if (missing.length) s += `. Not in the scene: ${few(missing)} (drop one token of each beside the maps, outside every room, then press again)`;
-  if (crowded.length) s += `. Out of room, some placed just outside: ${few(crowded)}`;
-  if (byHand.length) s += `. Several encounters to choose from, place by hand: ${few(byHand)}`;
-  return s;
+  parts.push(["Already there, left alone", already]);
+  const warn = (label, xs, tail) => xs.length && [fitNotice("", [[`👾 ${label}`, xs, tail]], { most: Infinity }), "WARNING"];
+  return [...fitNotices(head, parts, "SUCCESS"), spare.length && [spareText(spare), "SUCCESS"], warn(DEAD_TEXT, fallen),
+    warn("Not in the scene", missing, " (drop one token of each beside the maps, outside every room, then press again)"),
+    warn("Out of room, some placed just outside", crowded), warn("Several encounters to choose from, place by hand", byHand)]
+    .filter(Boolean);
 }
 
 // ---- 👾 the tokens that wait at a road camp: on its own map, or on a drawing marked as a place ----
@@ -847,7 +1001,10 @@ export function monsterText({ copies, adopt = [], size, already, missing, crowde
 // from a drawing (game night 1's goblin hideout: its goblins are never brought back): only its own map
 // places it. Every name is as the engine reads it: a speaker's own label once, never numbered; every other
 // token its kind, the first bare and the rest numbered ("Goblin", "Goblin 2"), and every one numbered where a
-// bare name reads as someone ("Bugbear 2", never a bare "Bugbear").
+// bare name reads as someone ("Bugbear 2", never a bare "Bugbear"). A fight an earlier press left short (a token
+// of it deleted, or an older press's count) gets no copies, since the one gone may have died: only the DM's loose
+// tokens of its kind move into its row, while every token of it still waits hidden there, and the notice names
+// what it still lacks; once any of it is in play, down or dead, it is left alone as it is.
 
 // A drawing the DM marked as a place by hand (🎲 DND → 🗺 Mark as place), not a room 🏘 Set up interiors drew.
 export const isPlaceDrawing = (i) => !!i && i.layer === "DRAWING" && typeof i.metadata?.[PLACE_KEY] === "string"
@@ -909,13 +1066,19 @@ export function poolsAway(json, rows, image) {
 
 // The whole pool, without touching Owlbear: {label, total, copies: [{item, name, cell}], adopt: [{id, name,
 // position}] (tokens of the kind lying loose, alive, in no place: renamed if they must be, moved into the rows,
-// hidden and marked), kept: [counted where they stand: on a map, in a place, or down], already: [fights a
-// press placed before, left alone], fallen, missing, size, none (no fight waits here), one (one fight: by its
+// hidden and marked), kept: [counted where they stand: on a map, in a place, or down], already: [groups a
+// press placed before that are whole, left alone], played: [groups of a fight a press placed before that is in
+// play: left alone, nothing added], short: ["Goblin 7 of 8": groups of a fight a press placed before still short
+// of their count, no copies made], fallen, missing, size, none (no fight waits here), one (one fight: by its
 // own map, or by hand), map (pressed on the camp's map), under (from the map: "the road maps", where the rows
 // are)}. Each fight's count counts every token of it already in the scene, so a second press adds nothing and
-// nothing dead comes back. `clicked`: the drawing, or the camp's map image with its `place` (poolOfMap); `group`:
+// nothing dead comes back: a fight a press placed before gets no copies, only the DM's loose tokens of its kind
+// (up to its count, its marked tokens counted), and only while every marked token of it is hidden, alive and in
+// its row, no unmarked token of its kind is on a map, in a drawing or down, and nobody who speaks for it is in
+// data.fallen.
+// `clicked`: the drawing, or the camp's map image with its `place` (poolOfMap); `group`:
 // the road it is on (poolGroup); `avoid`: boxes no token goes on; `skip`: ids never taken (the townsfolk the same
-// press moves).
+// press moves, and every known person's token: knownPeopleTokens), nor is a token the party knows (isKnownToken).
 export function poolPlan(data, items, sceneDpi, { clicked, place: at = null, group = null, avoid: extra = [], skip = new Set(),
                                                   id = newId } = {}) {
   const onMap = !!clicked && isMapImage(clicked);
@@ -923,7 +1086,7 @@ export function poolPlan(data, items, sceneDpi, { clicked, place: at = null, gro
   const allRows = Array.isArray(data?.rows) ? data.rows : [];
   const rows = allRows.filter((r) => r && r.creature && placeOf(r) === place);
   const out = { label: rows[0]?.room_name || (onMap ? imageName(clicked) : tokenLabel(clicked)) || place, total: 0, copies: [],
-                adopt: [], kept: [], already: [], fallen: [], missing: [], size: "", none: false, one: false, map: onMap, under: "",
+                adopt: [], kept: [], already: [], played: [], short: [], fallen: [], missing: [], size: "", none: false, one: false, map: onMap, under: "",
                 pools: [...poolsOf(allRows).values()] };
   const encounters = [...new Set(rows.map((r) => r.encounter))];
   if (!rows.length) out.none = true;
@@ -954,7 +1117,7 @@ export function poolPlan(data, items, sceneDpi, { clicked, place: at = null, gro
     const g = groups.find((x) => x.encounter === row.encounter && x.creature === row.creature
       && bareName(x.base.name) === bareName(base.name));
     if (g) g.count += c.count;
-    else groups.push({ encounter: row.encounter, creature: row.creature, base, count: c.count, members: [],
+    else groups.push({ encounter: row.encounter, creature: row.creature, base, count: c.count, members: [], have: 0,
                        kind: row.creature_name || titleCase(spaced(row.creature)),
                        own: new Set([row.creature_name, spaced(row.creature)].map(bareName)) });
   }
@@ -977,19 +1140,95 @@ export function poolPlan(data, items, sceneDpi, { clicked, place: at = null, gro
     return places.some((d) => d.metadata?.[INTERIOR_KEY] && !roadPlaces.has(d.metadata?.[PLACE_KEY]) && contains(d, c))
       || (onMap && onImage(c, false));
   };
-  for (const g of groups) if (tokens.some((i) => placedAs(i, place, g.encounter, g.creature, g.base.name))) g.done = true;
   // the tokens of each kind that are the pool's own: none placed for anything, none in a site's room, none linked
-  // (🏷 This is…) to an NPC who isn't one of this place's speakers (a "Wolf" that is someone's pet)
+  // (🏷 This is…) to an NPC who isn't one of this place's speakers (a "Wolf" that is someone's pet), none the party
+  // knows (👁: its token, or the person it is linked to, a speaker too)
   const voices = new Set(rows.map((r) => r.speaks_as).filter((s) => typeof s === "string"));
   const linkedElse = (i) => {
     const w = String(i.metadata?.[WHO_KEY] || "");
     return w.startsWith("npc:") && !voices.has(w.slice(4));
   };
-  const free = tokens.filter((i) => !skip.has(i.id) && !i.metadata?.[PLACED_KEY] && !linkedElse(i) && !inRoom(i));
+  const known = knownOf(data);
+  const free = tokens.filter((i) => !skip.has(i.id) && !isKnownToken(i, known) && !i.metadata?.[PLACED_KEY] && !linkedElse(i)
+    && !inRoom(i));
+  // the rows go under the drawing, a square below its lowest edge, one row a fight, left to right. From the camp's
+  // map: under all the road's maps together (the strips laid out below the camp leave a gap too narrow for eight
+  // rows), clear of every map too.
+  const ours = images.filter((m) => road.has(m.id)).map((m) => m.box);
+  const box = !onMap ? drawingBox(clicked) : {
+    min: { x: Math.min(...ours.map((b) => b.min.x)), y: Math.min(...ours.map((b) => b.min.y)) },
+    max: { x: Math.max(...ours.map((b) => b.max.x)), y: Math.max(...ours.map((b) => b.max.y)) } };
+  if (onMap && ours.length > 1) out.under = `the ${String(group?.name || "road").replace(/^the\s+/i, "")} maps`;
+  const left = cellCentre({ x: box.min.x, y: 0 }, sceneDpi).x;
+  const rowsTop = cellCentre({ x: 0, y: box.max.y }, sceneDpi).y + sceneDpi;
+  // a fight a press placed before (a token marked for it, wherever it is now) never gets copies: a token gone from
+  // it may have died there and been deleted (the roll often sends only some of a row). It only takes in the DM's
+  // loose tokens of its kind, into its own row, up to its count, and the notice names what it is still short of. It
+  // is left alone as in play once a marked token of it is shown, down, on a map, in a drawing or moved off its row,
+  // a token of its kind is on a map, in a drawing or down, or anyone who speaks for it is dead; and while a token
+  // of it is marked for a group the adventure no longer has.
+  const markedFor = (i, encounter) => {
+    const t = i.metadata?.[PLACED_KEY];
+    return !!t && (!t.place || t.place === place) && t.encounter === encounter;
+  };
+  const dead = new Set((Array.isArray(data?.fallen) ? data.fallen : []).filter((x) => typeof x === "string"));
+  const onBoard = (i) => {
+    const c = tokenBox(i, sceneDpi);
+    return images.some((m) => inBox(m.box, c)) || places.some((d) => contains(d, c));
+  };
+  // a token's top-left square (a big token's row is the line its top squares are on), and how many squares it spans
+  const spanOf = (i) => Math.max(1, Math.round(tokenBox(i, sceneDpi).size / sceneDpi));
+  const topSquare = (i) => {
+    const tb = tokenBox(i, sceneDpi), h = (spanOf(i) - 1) * sceneDpi / 2;
+    return cellCentre({ x: tb.x - h, y: tb.y - h }, sceneDpi);
+  };
+  const lineOf = (i) => topSquare(i).y;
+  // Moved off its row, by the DM: a press writes the line it lays a token on into the token's mark (`row`), so a
+  // token off that line was moved. A token an older press laid has no `row`: there, a press's own layout is each
+  // group on one line below the maps. A press lays a group on one line (it never wraps), and the presses before
+  // 2026-10-24 laid a group they added later (its kind's token dropped after the first press, or its tokens deleted)
+  // on a line of its own: a fight of two kinds on two lines (the live test's goblins on row 3, their leader on row
+  // 7) is a press's, while one kind on two lines was moved.
+  const offRow = (i) => {
+    const r = i.metadata?.[PLACED_KEY]?.row;
+    return (typeof r === "number" && Math.abs(lineOf(i) - r) > sceneDpi / 4) || lineOf(i) < rowsTop;
+  };
+  for (const encounter of new Set(groups.map((g) => g.encounter))) {
+    const prior = tokens.filter((i) => markedFor(i, encounter));
+    if (!prior.length) continue;
+    const mine = groups.filter((g) => g.encounter === encounter);
+    const ofFight = (i) => mine.some((g) => tokenNames(i).some((n) => kinds.get(g.creature)?.has(n)));
+    const whose = (i) => mine.find((g) => placedAs(i, place, encounter, g.creature, g.base.name));
+    const odd = prior.some((i) => !whose(i));
+    const ownOf = (g) => prior.filter((i) => whose(i) === g);
+    const moved = prior.some(offRow) || mine.some((g) => new Set(ownOf(g).map(lineOf)).size > 1);
+    const played = prior.some((i) => i.visible !== false || down.has(i.id) || onBoard(i)) || moved
+      || free.some((i) => ofFight(i) && (down.has(i.id) || onBoard(i)))
+      || rows.some((r) => r.encounter === encounter && typeof r.speaks_as === "string" && dead.has(r.speaks_as));
+    // each group's own line takes in its loose ones (a group with none left: the fight's top line), from the
+    // leftmost square of the fight's on that line
+    const first = Math.min(...prior.map(lineOf));
+    for (const g of mine) {
+      const own = ownOf(g);
+      const y = own.length ? lineOf(own[0]) : first;
+      g.prior = true;
+      g.have = own.length;
+      g.played = played;
+      g.line = { y, x: Math.min(...prior.filter((i) => lineOf(i) === y).map((i) => topSquare(i).x)) };
+      if (played || odd || g.have >= g.count) g.done = true;
+    }
+  }
+  // a fight no press placed before starts its row below every row a press laid here (never in the gap a deleted
+  // token left in another fight's row)
+  const laid = tokens.filter((i) => {
+    const t = i.metadata?.[PLACED_KEY];
+    return !!t && (!t.place || t.place === place) && encounters.includes(t.encounter) && lineOf(i) >= rowsTop && !onBoard(i);
+  });
+  const below = laid.length ? Math.max(...laid.map((i) => lineOf(i) + spanOf(i) * sceneDpi)) : rowsTop;
   const taken = new Set();
   const give = (g, test) => {
     for (const i of free) {
-      if (g.done || g.members.length >= g.count) return;
+      if (g.done || g.members.length + g.have >= g.count) return;
       if (taken.has(i.id) || !tokenNames(i).some((n) => kinds.get(g.creature)?.has(n)) || !test(i)) continue;
       g.members.push(i);
       taken.add(i.id);
@@ -1057,14 +1296,7 @@ export function poolPlan(data, items, sceneDpi, { clicked, place: at = null, gro
   // every kept name first, so no new one takes its number
   for (const g of groups) g.keep = new Set(g.done ? [] : g.loose.filter((i) => keeps(g, i)).map((i) => i.id));
 
-  // the rows: under the drawing, a square below its lowest edge, one row a fight, left to right. From the camp's
-  // map: under all the road's maps together (the strips laid out below the camp leave a gap too narrow for eight
-  // rows), clear of every map too.
-  const ours = images.filter((m) => road.has(m.id)).map((m) => m.box);
-  const box = !onMap ? drawingBox(clicked) : {
-    min: { x: Math.min(...ours.map((b) => b.min.x)), y: Math.min(...ours.map((b) => b.min.y)) },
-    max: { x: Math.max(...ours.map((b) => b.max.x)), y: Math.max(...ours.map((b) => b.max.y)) } };
-  if (onMap && ours.length > 1) out.under = `the ${String(group?.name || "road").replace(/^the\s+/i, "")} maps`;
+  // the rows (box, left and rowsTop above)
   const fixed = [...portalBoxes(items), ...roots.filter((i) => !pending.has(i.id)).map((i) => tokenArea(i, sceneDpi)), ...extra];
   const walls = wallSegments(items);
   // a token `span` squares wide with its top-left square's centre at (x, y): every square of it clear
@@ -1078,22 +1310,31 @@ export function poolPlan(data, items, sceneDpi, { clicked, place: at = null, gro
     }
     return true;
   };
-  const left = cellCentre({ x: box.min.x, y: 0 }, sceneDpi).x;
-  let top = cellCentre({ x: 0, y: box.max.y }, sceneDpi).y + sceneDpi;
+  let top = below;
   const fights = [...new Set(groups.map((g) => g.encounter))];
   for (const encounter of fights) {
     // a row starts clear of every drawing (a strip drawn under the camp: the row goes below it), and from the
-    // camp's map clear of every map
-    for (let k = 0; k < 200 && !clear(left, top, 1); k++) top += sceneDpi;
-    let x = left, tall = 1, placedAny = false;
+    // camp's map clear of every map; a fight a press placed before takes the DM's loose ones into its groups' own
+    // lines, from their first gaps
+    const prior = groups.some((g) => g.encounter === encounter && g.prior);
+    if (!prior) for (let k = 0; k < 200 && !clear(left, top, 1); k++) top += sceneDpi;
+    let y = top, x = left, tall = 1, placedAny = false;
     for (const g of groups.filter((o) => o.encounter === encounter)) {
       if (g.done) {
-        if (!out.already.includes(g.base.name)) out.already.push(g.base.name);
+        const list = g.played ? out.played : out.already;
+        if (!list.includes(g.base.name)) list.push(g.base.name);
         continue;
+      }
+      if (g.line) {
+        y = g.line.y;
+        x = Math.min(left, g.line.x);
       }
       const loose = g.loose;
       for (const i of g.members) if (!loose.includes(i)) out.kept.push(tokenLabel(i) || g.kind);
-      const want = g.count - g.members.length;
+      // no copies for a fight a press placed before (a token gone from it may be dead): what it still lacks is named
+      const want = g.prior ? 0 : g.count - g.members.length;
+      const has = g.have + g.members.length;
+      if (g.prior && has < g.count) out.short.push(`${g.base.name} ${has} of ${g.count}`);
       // the token copied: one of the pool's own alive, else any of the kind (alive, then hidden, first)
       const kindTokens = tokens.filter((i) => tokenNames(i).some((n) => kinds.get(g.creature)?.has(n)));
       const src = loose[0] || [...kindTokens].sort((a, c) => (down.has(a.id) - down.has(c.id)) * 2
@@ -1109,8 +1350,8 @@ export function poolPlan(data, items, sceneDpi, { clicked, place: at = null, gro
         const span = Math.max(1, Math.round(tb.size / sceneDpi));
         let cell = null;
         for (let k = 0; k < 400; k++) {
-          if (clear(x, top, span)) {
-            cell = { x: x + (span - 1) * sceneDpi / 2, y: top + (span - 1) * sceneDpi / 2 };
+          if (clear(x, y, span)) {
+            cell = { x: x + (span - 1) * sceneDpi / 2, y: y + (span - 1) * sceneDpi / 2 };
             break;
           }
           x += sceneDpi;
@@ -1121,7 +1362,8 @@ export function poolPlan(data, items, sceneDpi, { clicked, place: at = null, gro
         placedAny = true;
         fixed.push(areaAt(cell, tb.size, sceneDpi));
         const position = { x: cell.x + from.position.x - tb.x, y: cell.y + from.position.y - tb.y };
-        const placed = { place, encounter, creature: g.creature, base: g.base.name };
+        // `row`: the line it is laid on (offRow: off it, the DM moved it)
+        const placed = { place, encounter, creature: g.creature, base: g.base.name, row: y };
         if (job.i) {
           const kept = g.keep.has(job.i.id);
           const nm = kept ? tokenLabel(job.i).trim() : nameFor(g);
@@ -1133,47 +1375,80 @@ export function poolPlan(data, items, sceneDpi, { clicked, place: at = null, gro
         out.total++;
       }
     }
-    if (placedAny) top += tall * sceneDpi;
+    if (placedAny && !prior) top += tall * sceneDpi;
   }
   return out;
 }
 
-export function poolText(p) {
-  const pools = p.pools.length ? p.pools : [];
-  if (p.none) return `👾 No monsters wait at ${p.label}${pools.length ? ` (press this on ${few(pools, 2)})` : ""}`;
-  if (p.one) return `👾 No monsters added at ${p.label}: its one fight is placed from its own map or by hand`
-    + ` (only a place with several fights to roll from${pools.length ? `, like ${few(pools, 2)},` : ""} keeps its tokens by its drawing)`;
+// The pool's notices ([text, variant], packNotices joins what fits): what waits and what was there, then what the DM
+// must see to, each as its own warning: a fight short (the line he must not miss: never joined to another), the dead,
+// a kind not in the scene.
+export function poolNotices(p) {
+  const played = p.played || [], short = p.short || [], pools = p.pools?.length ? p.pools : [];
+  if (p.none) return [[clip(`👾 No monsters wait at ${p.label}${pools.length ? ` (press this on ${few(pools, 2)})` : ""}`), "WARNING"]];
+  if (p.one) {
+    const said = `👾 No monsters added at ${p.label}: its one fight is placed from its own map or by hand`;
+    const one = (like) => `${said} (only a place with several fights to roll from${like ? `, like ${like},` : ""} keeps its tokens by its drawing)`;
+    const fits = [one(pools.length && few(pools, 2)), one(pools.length && few(pools, 1)), one(""), said]
+      .find((s) => noticeSize(s) <= NOTICE_MAX);
+    return [[fits || clip(said), "WARNING"]];
+  }
   const c = p.copies.length, a = p.adopt.length;
-  let s = p.total ? `👾 ${p.total} monster${p.total === 1 ? " waits" : "s wait"} hidden below ${p.under || p.label}, a row a fight`
+  const head = p.total ? `👾 ${p.total} monster${p.total === 1 ? " waits" : "s wait"} hidden below ${p.under || p.label}, a row a fight`
     + ` (${c} new cop${c === 1 ? "y" : "ies"}${a ? `, ${a} of yours moved there` : ""}), ${p.size}`
     : `👾 No monsters added, ${p.size}`;
-  if (p.already.length) s += `. Already there, left alone: ${few(p.already)}`;
-  if (p.kept.length) s += `. Counted where they stand (in play or down): ${few(p.kept)}`;
-  if (p.fallen.length) s += `. ${DEAD_TEXT}: ${few(p.fallen)}`;
-  if (p.missing.length) {
-    s += `. Not in the scene: ${few(p.missing)} (drop one token of each beside the ${p.map ? "maps, off every map and drawing"
-      : "drawings, outside them all"}, then press again)`;
-  }
-  return s;
+  const beside = `beside the ${p.map ? "maps, off every map and drawing" : "drawings, outside them all"}`;
+  const warn = (label, xs, tail) => xs.length && [fitNotice("", [[`👾 ${label}`, xs, tail]], { most: Infinity }), "WARNING"];
+  return [...fitNotices(head, [["In play or down, left alone", played], ["Already there, left alone", p.already],
+    ["Counted where they stand (in play or down)", p.kept]], "SUCCESS"),
+  short.length && [...warn("Short, no copies made", short, ` (if none of them died, drop the missing ones ${beside}, then press again)`), true],
+  warn(DEAD_TEXT, p.fallen), warn("Not in the scene", p.missing, ` (drop one token of each ${beside}, then press again)`)]
+    .filter(Boolean);
+}
+
+// Whether a townsfolk token is surely its entry's: found by its "This is…" link or by its whole name (case,
+// spacing, a file extension, the person's slug aside), never by its first word alone, which may be someone
+// else's token.
+function sureOf(i, token, person) {
+  const names = [i.metadata?.[BUBBLES_NAME_KEY], i.text?.plainText, i.name].map(normName).filter(Boolean);
+  return !!(person && String(i.metadata?.[WHO_KEY] || "").trim().toLowerCase() === `npc:${person}`)
+    || names.includes(normName(token)) || !!(person && names.includes(normName(person.replace(/_/g, " "))));
 }
 
 // The townsfolk moves whose token isn't named exactly as its entry yet: [{id, name}], so the engine reads each
 // as its person without the DM renaming it. The item's name always; its label and Stat Bubbles name tag only
 // when it shows one (no name appears on the projector that wasn't there: a label that hides a name stays). Only a
-// token found by its "This is…" link or by its whole name (case, spacing, a file extension, the person's slug
-// aside), never one found by its first word alone, which may be someone else's token.
+// sure match (sureOf).
 export function townsfolkNames(moves, items, entries = []) {
   const byId = new Map(items.map((i) => [i.id, i]));
   return moves.filter((m) => {
     const i = byId.get(m.id), e = entries.find((x) => x.token === m.token);
     if (!i || !m.token) return false;
     const person = String(e?.person || "").trim().toLowerCase();
-    const names = [i.metadata?.[BUBBLES_NAME_KEY], i.text?.plainText, i.name].map(normName).filter(Boolean);
-    const sure = (person && String(i.metadata?.[WHO_KEY] || "").trim().toLowerCase() === `npc:${person}`)
-      || names.includes(normName(m.token)) || (person && names.includes(normName(person.replace(/_/g, " "))));
-    return !!sure && (i.name !== m.token || (!!i.text?.plainText && i.text.plainText !== m.token)
+    return sureOf(i, m.token, person) && (i.name !== m.token || (!!i.text?.plainText && i.text.plainText !== m.token)
       || (!!i.metadata?.[BUBBLES_NAME_KEY] && i.metadata[BUBBLES_NAME_KEY] !== m.token));
   }).map((m) => ({ id: m.id, name: m.token }));
+}
+
+// What the press writes on the townsfolk it moves, in one update before the move: [{id, name, visible, who}], only
+// for a token where something changes. `name`: townsfolkNames' (null: it's right already, or the match isn't
+// sure). `visible`: false when its entry starts hidden (K2's `hidden: true`), else null: the press never shows a
+// token, so one the DM hid stays hidden (Hide always wins). `who`: the 🏷 This is…
+// link the engine reads a person by ("npc:<person>", WHO_KEY), only on a sure match (sureOf) and only on a token
+// linked to nobody yet: the DM's own link is never changed (null: none to write).
+export function townsfolkUpdates(moves, items, entries = []) {
+  const byId = new Map(items.map((i) => [i.id, i]));
+  const names = new Map(townsfolkNames(moves, items, entries).map((n) => [n.id, n.name]));
+  const out = [];
+  for (const m of moves) {
+    const i = byId.get(m.id);
+    if (!i) continue;
+    const person = String(m.person || entries.find((x) => x.token === m.token)?.person || "").trim().toLowerCase();
+    const who = person && !String(i.metadata?.[WHO_KEY] || "").trim() && sureOf(i, m.token, person) ? `npc:${person}` : null;
+    const u = { id: m.id, name: names.get(m.id) || null, visible: m.hidden ? false : null, who };
+    if (u.name || u.who || (u.visible === false && i.visible !== false)) out.push(u);
+  }
+  return out;
 }
 
 // ---- the party's names, remembered in the room ----
@@ -1395,7 +1670,7 @@ async function moveTokens(to, O = OBR) {
   }
 }
 
-// The adventure's monsters from the panel (or tools/owlbear_only.py): {present, rows}, or null when this
+// The adventure's monsters from the panel (or tools/owlbear_only.py): {present, rows, known_tokens, …}, or null when this
 // copy can't reach it, or it is from before them (then it needs a restart).
 export async function loadMonsters() {
   const base = directBase();
@@ -1410,9 +1685,11 @@ export async function loadMonsters() {
 
 const ADD_BATCH = 80, ADD_PAUSE_MS = 400; // as interiors.js: Owlbear rate-limits big addItems calls
 
-// From a map image's menu: every NPC of town.townsfolk for that map (townsfolkFor) that's in the scene to
-// its room, named as its entry; and on a building's or a site's own map, its monsters and scenery (monsterPlan),
-// hidden: the DM's dropped token of each kind moved in, then the copies. On a road camp's own map, the road's
+// From a map image's menu (👥 Place tokens): every NPC of town.townsfolk for that map (townsfolkFor) that's in the
+// scene to its room, named as its entry, hidden if it starts hidden and linked to its person, but none the party
+// knows (👁: the panel's /api/map/monsters says who, on the town too); and on a building's or a site's own map, its
+// monsters and scenery (monsterPlan), hidden: the DM's dropped token of each kind moved in, then the copies, and
+// his spares of those kinds hidden where they lie. On a road camp's own map, the road's
 // pool (poolPlan) in rows below the road's maps; on the road's other maps, a notice naming the camp's. `O`, `load`
 // and `monsters` are only swapped by the offline checks.
 export async function placeTownsfolk(clickedId, { O = OBR, load = loadInteriors, monsters = loadMonsters } = {}) {
@@ -1438,17 +1715,22 @@ export async function placeTownsfolk(clickedId, { O = OBR, load = loadInteriors,
   const own = matchImages(listed(json), [clicked]).size > 0; // a building's or a site's own map, not the town
   const folk = !!json.town?.townsfolk?.length && townsfolkFor(json, clicked).length > 0;
   let data = null;
-  if (own) {
+  if (own || folk) { // the town's press too: what the party knows (👁) comes with the monsters
     try {
       data = await monsters();
     } catch {
       data = null;
     }
   }
-  const r = folk ? townsfolkPlan(json, items, sceneDpi, { clicked }) : null;
+  const known = knownOf(data);
+  const r = folk ? townsfolkPlan(json, items, sceneDpi, { clicked, known }) : null;
   const byId = new Map(items.map((i) => [i.id, i]));
   const taken = (r?.moves || []).map((m) => areaAt(m.cell, tokenBox(byId.get(m.id), sceneDpi).size, sceneDpi));
-  const skip = new Set((r?.moves || []).map((mv) => mv.id));
+  const skip = new Set(r?.matched || []); // every townsfolk token the plan found, the known ones left put too
+  // ...and the token of every person the party knows, whatever map their entry is on (a guide leading
+  // them through another site, one charmed far from home): the game keeps a one-person NPC by name, not by token, so the monsters
+  // never take theirs for one of a kind. Counted in the notice only on their own map (townsfolkPlan's `known`)
+  for (const tid of knownPeopleTokens(json, items, known)) skip.add(tid);
   // a road camp's own map: the road's pool, in rows below the road's maps (as from the camp's drawing); else the
   // map's monsters
   const at = data ? poolOfMap(mapEntry(json, clicked), data.rows) : null;
@@ -1464,39 +1746,57 @@ export async function placeTownsfolk(clickedId, { O = OBR, load = loadInteriors,
       ? "👥 No townsfolk start on this map" : "👥 No townsfolk listed in interiors.json", "WARNING");
     return;
   }
-  const names = r ? townsfolkNames(r.moves, items, json.town?.townsfolk || []) : [];
-  if (names.length) {
-    const to = new Map(names.map((n) => [n.id, n.name]));
+  // the townsfolk renamed, hidden if they start hidden, and linked to their person, in one step before the move
+  // (moveTokens hides and shows again only what's attached to them). A press never shows one: Hide always wins
+  const ups = r ? townsfolkUpdates(r.moves, items, json.town?.townsfolk || []) : [];
+  if (ups.length) {
+    const to = new Map(ups.map((u) => [u.id, u]));
     await O.scene.items.updateItems([...to.keys()], (drafts) => {
       for (const d of drafts) {
-        const nm = to.get(d.id);
-        d.name = nm;
-        if (d.text?.plainText) d.text.plainText = nm;
-        if (d.metadata?.[BUBBLES_NAME_KEY]) d.metadata[BUBBLES_NAME_KEY] = nm;
+        const u = to.get(d.id);
+        if (u.name) {
+          d.name = u.name;
+          if (d.text?.plainText) d.text.plainText = u.name;
+          if (d.metadata?.[BUBBLES_NAME_KEY]) d.metadata[BUBBLES_NAME_KEY] = u.name;
+        }
+        if (u.visible === false) d.visible = false;
+        if (u.who && !d.metadata[WHO_KEY]) d.metadata[WHO_KEY] = u.who;
       }
     });
   }
   if (r?.moves.length) await moveTokens(new Map(r.moves.map((mv) => [mv.id, mv.position])), O);
-  // the copies, then the DM's own moved in, each step waiting out Owlbear's rate limit. A step that still fails
-  // shows its error: what got in is tagged, so the reset is to delete them all, drop one of each again and press
+  // the copies, then the DM's own moved in, then his spares hidden where they lie, each step waiting out Owlbear's
+  // rate limit. A step that still fails shows its error: what got in is tagged, so the reset is to delete them all,
+  // drop one of each again and press
   const made = p || m;
   await addInBatches((made?.copies || []).map((c) => c.item), O);
   await moveIn(made?.adopt || [], O);
-  const parts = [];
-  if (r) parts.push(townsfolkText(r));
-  if (p) parts.push(poolText(p));
-  else if (anyMonsters) parts.push(monsterText(m));
+  const spare = (m?.spare || []).map((x) => x.id);
+  if (spare.length) {
+    await rateLimited(() => O.scene.items.updateItems(spare, (drafts) => { for (const d of drafts) d.visible = false; }));
+  }
+  // the notices, each within NOTICE_MAX (a longer one never shows): joined into one while they fit. A panel or map
+  // tool that doesn't say who the party knows (unreachable, or not restarted since K3): placed as before, but said
+  // first, so the DM knows a rescued NPC may have gone back to their start. On a map with monsters and no panel at
+  // all, the monsters' warning says it for both, first too
+  const blind = !(Array.isArray(data?.known_tokens) && Array.isArray(data?.known_people)) && (!!r || anyMonsters)
+    && !(own && !data);
+  const notes = [];
+  if (blind) notes.push([BLIND_TEXT, "WARNING"]);
+  else if (own && !data) notes.push([RESTART_KNOWN_TEXT, "WARNING"]);
+  if (r) notes.push(...townsfolkNotices(r));
+  if (p) notes.push(...poolNotices(p));
+  else if (anyMonsters) notes.push(...monsterNotices(m));
   else if (away.length) {
     const here = mapEntry(json, clicked);
-    parts.push(poolText({ none: true, label: here.building || here.name, pools: away }));
-  } else if (own && !data) {
-    parts.push("👾 Monsters: the map tool can't list them yet (restart tools\\owlbear_only.py or the game, then press again)");
+    notes.push(...poolNotices({ none: true, label: here.building || here.name, pools: away }));
   }
-  const warn = (r && (r.notFound.length || r.noMap.length || r.noRoom.length)) || (own && !data) || away.length > 0
-    || (p && (p.missing.length || p.fallen.length))
-    || (m && (m.missing.length || m.crowded.length || m.byHand.length || m.fallen.length));
-  O.notification.show(parts.join(". "), warn ? "WARNING" : "SUCCESS");
+  for (const [text, variant] of packNotices(notes)) O.notification.show(text, variant);
 }
+
+const RESTART_TEXT = "👾 Monsters: the map tool can't list them yet (restart tools\\owlbear_only.py or the game, then press again)";
+const RESTART_KNOWN_TEXT = "👾 Monsters: the map tool can't list them yet, nor who the party knows"
+  + " (restart tools\\owlbear_only.py or the game, then press again)";
 
 // One Owlbear call, waiting out its rate limit ("RateLimitHit": wait 1, 2, 4 s and try again); any other error is thrown.
 async function rateLimited(call) {
@@ -1549,17 +1849,17 @@ async function placePool(drawing, { O = OBR, monsters = loadMonsters, json = nul
     data = null;
   }
   if (!data) {
-    O.notification.show("👾 Monsters: the map tool can't list them yet (restart tools\\owlbear_only.py or the game, then press again)", "WARNING");
+    O.notification.show(RESTART_TEXT, "WARNING");
     return;
   }
   const sceneDpi = await O.scene.grid.getDpi();
   const items = await O.scene.items.getItems();
   const place = String(drawing.metadata[PLACE_KEY]).trim();
-  const p = poolPlan(data, items, sceneDpi, { clicked: drawing, group: json ? poolGroup(json, items, place) : null });
+  const p = poolPlan(data, items, sceneDpi, { clicked: drawing, group: json ? poolGroup(json, items, place) : null,
+                                             skip: knownPeopleTokens(json, items, knownOf(data)) }); // 👁 as on the map
   // the copies, then the DM's own moved in, each step waiting out Owlbear's rate limit. A step that still fails
   // shows its error: what got in is tagged, so the reset is to delete them all, drop one of each again and press
   await addInBatches(p.copies.map((c) => c.item), O);
   await moveIn(p.adopt, O);
-  const warn = p.none || p.one || p.missing.length || p.fallen.length;
-  O.notification.show(poolText(p), warn ? "WARNING" : "SUCCESS");
+  for (const [text, variant] of packNotices(poolNotices(p))) O.notification.show(text, variant);
 }

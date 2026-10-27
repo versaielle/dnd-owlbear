@@ -8,13 +8,13 @@
 // below), and each tab is the old page (conditions.html, light.html, menu.html) or, for 📺, one button
 // in dnd.html. One tab is new (the DM, 2026-10-20): ☀ Scene lights on one map image (maplight.html).
 // tabs.js draws the tab row.
-// 🏘 Map setup replaces thisPcMenus()' three (Set up interiors, Place townsfolk, Check portals): its
+// 🏘 Map setup replaces thisPcMenus()' three (Set up interiors, Place tokens, Check portals): its
 // small page (mapsetup.html), opened the same way, asks this copy's background to run the job, as the
 // old entry did. On one text label it offers 🎨 Copy label style and ↩ Undo label style instead.
 //
 // Pure: no SDK import, so the node checks import it (check_menus.mjs).
 
-import { INTERIOR_KEY, PLACE_KEY } from "./keys.js?v=669ec13";
+import { INTERIOR_KEY, PLACE_KEY } from "./keys.js?v=e323d3ba-df9cbf7";
 
 export const DND_MENU_ID = "dnd-npc/dnd"; // the Pages copy's entry
 // The copy the panel on this PC serves has its own id (Owlbear's ids are room-wide): when it steps
@@ -201,17 +201,17 @@ export const MAP_SETUP_NEED = "map-setup"; // its LOCAL_ASK to this copy's backg
 // One text label: an Owlbear TEXT item (the Text tool's, plain or rich) or a LABEL.
 const ONE_TEXT_LABEL = () => ({ roles: GM, max: 1, every: [{ key: "type", value: "TEXT", coordinator: "||" }, { key: "type", value: "LABEL" }] });
 // One drawing the DM marked as a place (🗺 Mark as place: the road's strips and camps), not a room 🏘 Set up
-// interiors drew: 👥 Place townsfolk there puts the road's tokens beside it (gather.js poolPlan).
+// interiors drew: 👥 Place tokens there puts the road's tokens beside it (gather.js poolPlan).
 const ONE_PLACE_DRAWING = () => ({ roles: GM, max: 1, every: [{ key: "layer", value: "DRAWING" },
   { key: ["metadata", PLACE_KEY], value: undefined, operator: "!=" }, { key: ["metadata", PLACE_KEY], value: null, operator: "!=" },
   { key: ["metadata", INTERIOR_KEY], value: undefined }] }); // null: 🗺 Mark as place's ✕ clears a mark to null
 // The three old entries: each button keeps its label and its filter. Then the DM's 🎨 (2026-10-20): on one
 // text label, its colours, outline and font copied to the rest of its map's labels, and its undo (labelstyle.js).
 // 👥 also on one drawing marked as a place (the road's night 1 camp, 10-20). A job is offered when any of its
-// filters fits.
+// filters fits. 👥 was "Place townsfolk" until K3 (it places people and monsters); its job key stays "townsfolk".
 export const MAP_SETUP_JOBS = [
   { key: "interiors", label: "🏘 Set up interiors", filters: [ONE_MAP_IMAGE()] },
-  { key: "townsfolk", label: "👥 Place townsfolk", filters: [ONE_MAP_IMAGE(), ONE_PLACE_DRAWING()] },
+  { key: "townsfolk", label: "👥 Place tokens", filters: [ONE_MAP_IMAGE(), ONE_PLACE_DRAWING()] },
   { key: "portals", label: "🏘 Check portals", filters: [ONE_MAP_IMAGE()] },
   { key: "labelstyle", label: "🎨 Copy label style", filters: [ONE_TEXT_LABEL()] },
   { key: "labelundo", label: "↩ Undo label style", filters: [ONE_TEXT_LABEL()] },
