@@ -1,0 +1,236 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  body { margin: 0; padding: 5px 6px; font: 12px/1.3 system-ui, sans-serif; color: #fff; background: transparent; }
+  /* Fixed heights, so the page is 122 px under the tab row (dndmenu.js TABS maplight). */
+  #head { display: flex; gap: 8px; align-items: baseline; height: 15px; margin: 0 2px 4px; line-height: 15px; }
+  #word { font-size: 11px; letter-spacing: .08em; text-transform: uppercase; opacity: .7; white-space: nowrap; }
+  #name { flex: 1; min-width: 0; text-align: right; opacity: .85; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  #chips { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; }
+  #props-row { display: flex; margin-top: 6px; }
+  button { box-sizing: border-box; height: 24px; min-width: 0; margin: 0; padding: 0 8px; border: 2px solid transparent;
+           border-radius: 999px; background: rgba(255, 255, 255, .08); color: inherit; font: 12px/20px system-ui, sans-serif;
+           cursor: pointer; opacity: .6; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  button:hover { opacity: .85; background: rgba(255, 255, 255, .18); }
+  button.on { opacity: 1; border-color: #d9a441; background: rgba(217, 164, 65, .2); }
+  button:disabled { opacity: .3; cursor: default; background: rgba(255, 255, 255, .05); }
+  #props { font-size: 11px; }
+  #follows, #said { height: 14px; margin: 4px 2px 0; font-size: 11px; line-height: 14px; overflow: hidden; white-space: nowrap;
+                    text-overflow: ellipsis; }
+  #follows { opacity: .75; }
+  #said { margin-top: 6px; color: #7fd99a; }
+  #said.dim { color: inherit; opacity: .75; }
+  #said.warn { color: #f0c36b; }
+  #said.bad { color: #f08a7b; }
+</style>
+</head>
+<body>
+<div id="head"><span id="word">This map</span><span id="name"></span></div>
+<div id="chips"></div>
+<div id="follows"></div>
+<div id="props-row"><button id="props" disabled></button></div>
+<div id="said" class="dim"></div>
+<script type="module">
+// 🎲 DND's ☀ Scene lights tab, on ONE map image right-clicked (dndmenu.js TABS; tabs.js draws the tab row).
+// The DM, 2026-10-20: "I should be able to right click on a map in the scene then dnd->our menu->scene
+// lights (just bright,dim,dark) fog controls can stay in the main menu", then "maybe props light themselves too".
+//   ☀ lit / 🌒 dim / 🌑 dark   that map's own darkness (MAP_DARKNESS_KEY on it), in the 🔥 box's "This scene"
+//                              chips' words (lightui.js DARKNESS). The map's own value is on; with none (it
+//                              follows the scene) none is on and the line under them says "Follows the scene:
+//                              ☀ lit". No "as scene" chip here (the DM: just bright, dim, dark; ▸ Maps has it).
+//   Props light themselves    the scene's switch (SCENE_LIGHTING_KEY.auto), as the box's "This scene" row.
+// Each tap writes as the 🔥 box (lightpanel.js setMap / setScene) does, from the same lightui.js parts: the
+// map's value whole (mapDarkEdit) or the scene's lighting whole (sceneNext), a scene released to Smoke taken
+// back (takenBack), then every token's Smoke keys at once (fx/lightwriter.js writeNow, the writer's own
+// ctx). The line under them says what it did (mapDarkSaid / sceneSaid); a map whose stored remembered or
+// clear is drawn again by it is named there and in the 🪵 Live log (picksWaiting / picksDrawnAgain, with
+// fog/fog.js and fog/mapui.js loaded on their own: without them only that part is left out). No fog,
+// memory or roof controls here: they stay in the 🔥 box.
+import OBR from "./obr-sdk.js?v=9ef4c868";
+import { CH, isLocalOrigin, on, send } from "./bus.js?v=9ef4c868";
+import { PARTY_KEY, SCENE_LIGHTING_KEY } from "./keys.js?v=9ef4c868";
+import { isMap, mapDarkness, readGrid, sceneDarkness } from "./fx/darkness.js?v=9ef4c868";
+import { writeNow } from "./fx/lightwriter.js?v=9ef4c868";
+import { cleanParty } from "./gather.js?v=9ef4c868";
+import { DARKNESS, PROPS_TITLE, RELEASED_SAID, lightingOf, mapDarkEdit, mapDarkSaid, picksDrawnAgain, picksWaiting, propsLabel,
+         sceneNext, sceneSaid, takenBack } from "./lightui.js?v=9ef4c868";
+import { clickedIds, showTabs } from "./tabs.js?v=9ef4c868";
+
+const HOST = isLocalOrigin(location.origin) ? "local" : "pages";
+const clicked = clickedIds(location.search); // the 🎲 DND popover's items; [] elsewhere
+const nameBox = document.getElementById("name");
+const chipsBox = document.getElementById("chips");
+const follows = document.getElementById("follows");
+const props = document.getElementById("props");
+const said = document.getElementById("said");
+const chips = new Map(); // darkness code -> chip
+let pcIds = null; // the bridge heartbeat's PC ids, from this GM copy's background (as its writer has them)
+let drawn = null; // what the page shows now: {map, sceneMeta}
+
+// fog/fog.js (fogOn) and fog/mapui.js (mapRows, modeWord), as the 🔥 box loads them: only for the "drawn
+// again" line. null when either fails to load.
+const fogParts = Promise.all([import("./fog/fog.js?v=9ef4c868"), import("./fog/mapui.js?v=9ef4c868")]).then(([fog, ui]) => ({ fog, ui }), () => null);
+
+// The one map image right-clicked (else selected), or null.
+async function theMap() {
+  const ids = clicked.length ? clicked : (await OBR.player.getSelection()) || [];
+  const items = ids.length ? await OBR.scene.items.getItems(ids) : [];
+  return items.length === 1 && isMap(items[0]) ? items[0] : null;
+}
+
+// The maps' fog rows while 🌫 Our fog is on (the box's mapRowsNow), else none.
+async function fogRows() {
+  const parts = await fogParts;
+  if (!parts) return [];
+  const [items, sceneMeta, grid] = await Promise.all([OBR.scene.items.getItems(), OBR.scene.getMetadata(), readGrid(OBR)]);
+  return parts.fog.fogOn(sceneMeta) ? parts.ui.mapRows({ items, grid, sceneMeta }) : [];
+}
+// Before a tap: the maps whose stored pick waits on 🌑. After it: which are drawn again. Neither ever stops
+// the write: a failure only leaves the line out.
+async function waiting() {
+  try { return picksWaiting(await fogRows()); } catch { return new Map(); }
+}
+async function drawnAgain(before) {
+  if (!before.size) return "";
+  try {
+    const parts = await fogParts;
+    return picksDrawnAgain(before, await fogRows(), (m) => (parts?.ui?.modeWord ? parts.ui.modeWord(m) : m));
+  } catch { return ""; }
+}
+
+function say(text, cls = "ok") {
+  said.dataset.tapped = "1";
+  said.className = cls;
+  said.textContent = text;
+  said.title = text;
+}
+// The tap's line, as the box's darkSaid: logged too (this device's background: the 🪵 Live log) when a
+// stored pick came back, else only said.
+async function done(text, before) {
+  const again = await drawnAgain(before);
+  if (!again) return say(text);
+  say(text + again, "warn");
+  try { send(OBR, CH.LOCAL_ASK, { need: "fog-log", host: HOST, kind: "map", text: text + again }, "LOCAL"); } catch { /* the log is optional */ }
+}
+
+// A scene released to Smoke is ours again (the box's takeBack). Returns whether it was released.
+async function takeBack() {
+  const next = takenBack(await OBR.scene.getMetadata());
+  if (!next) return false;
+  await OBR.scene.setMetadata({ [SCENE_LIGHTING_KEY]: next });
+  return true;
+}
+// Every token's Smoke keys at once (a seer's range depends on where it stands), as the box's replanAll.
+async function replanAll() {
+  const [items, roomMeta] = await Promise.all([OBR.scene.items.getItems(), OBR.room.getMetadata().catch(() => ({}))]);
+  const r = await writeNow(OBR, items.map((i) => i.id), null, { party: cleanParty(roomMeta?.[PARTY_KEY]), pcTokens: pcIds });
+  return { n: r.wrote.length, items };
+}
+
+// ☀ / 🌒 / 🌑: the map's own darkness (the box's setMap).
+async function setDark(code) {
+  const map = await theMap();
+  if (!map) return say("Right-click one map", "warn");
+  const before = await waiting();
+  await OBR.scene.items.updateItems([map.id], mapDarkEdit(code));
+  const back = await takeBack();
+  const { n, items } = await replanAll();
+  await done(mapDarkSaid((items.find((i) => i.id === map.id) || map).name, code, n, back), before);
+}
+
+// Props light themselves: the switch flipped from what it shows (the box's setScene({ auto: !l.auto })).
+async function setAuto() {
+  const sceneMeta = drawn?.sceneMeta ?? (await OBR.scene.getMetadata());
+  const l = lightingOf(sceneMeta);
+  const patch = { auto: !l.auto };
+  const before = await waiting();
+  const next = sceneNext(sceneMeta, patch);
+  await OBR.scene.setMetadata({ [SCENE_LIGHTING_KEY]: next });
+  const { n } = await replanAll();
+  await done(sceneSaid(next, patch, n, l.managed), before);
+}
+
+async function show() {
+  const [map, sceneMeta] = await Promise.all([theMap(), OBR.scene.getMetadata()]);
+  drawn = { map, sceneMeta };
+  const own = mapDarkness(map); // null: none of its own (it follows the scene)
+  const here = DARKNESS.find((d) => d.value === sceneDarkness(sceneMeta));
+  const l = lightingOf(sceneMeta);
+  nameBox.textContent = map ? map.name || "Map" : "Right-click one map";
+  nameBox.title = nameBox.textContent;
+  for (const [code, b] of chips) {
+    b.className = map && own === code ? "on" : "";
+    b.disabled = !map;
+  }
+  follows.textContent = map && !own ? `Follows the scene: ${here.icon} ${here.label}` : "";
+  props.textContent = propsLabel(l.auto);
+  props.className = l.auto ? "on" : "";
+  props.disabled = false;
+  // Before any tap: a scene released to Smoke says so (the box's warning).
+  if (!said.dataset.tapped) {
+    said.className = l.managed ? "dim" : "warn";
+    said.textContent = l.managed ? "" : RELEASED_SAID;
+    said.title = said.textContent;
+  }
+}
+
+// One redraw at a time (the scene changes often while tokens move); a change meanwhile redraws once more.
+let busy = false, again = false;
+async function refresh() {
+  if (busy) {
+    again = true;
+    return;
+  }
+  busy = true;
+  try {
+    do {
+      again = false;
+      await show();
+    } while (again);
+  } catch (e) {
+    console.warn("dnd-npc: ☀ Scene lights", e);
+  } finally {
+    busy = false;
+  }
+}
+
+// Taps run one at a time, each on what the one before wrote.
+let picking = Promise.resolve();
+function tap(fn) {
+  picking = picking.then(fn).catch((e) => {
+    console.warn("dnd-npc: ☀ Scene lights", e);
+    say(`Couldn't: ${e?.error?.message || e?.message || e}`, "bad");
+  });
+  return picking.then(refresh);
+}
+
+for (const d of DARKNESS) {
+  const b = document.createElement("button");
+  b.textContent = `${d.icon} ${d.label}`;
+  b.title = d.about;
+  b.disabled = true;
+  b.onclick = () => tap(() => setDark(d.value));
+  chips.set(d.value, b);
+  chipsBox.append(b);
+}
+props.textContent = propsLabel(false);
+props.title = PROPS_TITLE;
+props.onclick = () => tap(setAuto);
+
+OBR.onReady(() => {
+  showTabs(OBR, document, location);
+  // The heartbeat's PC ids (the same the lights writer plans with), from this GM copy's background.
+  on(OBR, CH.LOCAL_STATE, (s) => {
+    if (s?.host !== HOST) return;
+    if (Array.isArray(s.pc_tokens)) pcIds = s.pc_tokens.map(String);
+  });
+  send(OBR, CH.LOCAL_ASK, { need: "state", host: HOST }, "LOCAL");
+  refresh();
+  OBR.scene.items.onChange(refresh);
+  OBR.scene.onMetadataChange(refresh);
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,410 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  html, body { height: 100%; }
+  body { margin: 0; font: 13px/1.4 system-ui, sans-serif; color: #fff; display: flex; flex-direction: column; }
+  #top { flex: none; padding: 10px 14px 0; }
+  #main { flex: 1; min-height: 0; overflow-y: auto; padding: 2px 14px 12px; }
+  h1 { font-size: 15px; margin: 0 0 4px; }
+  h4 { margin: 12px 0 4px; font-size: 11px; letter-spacing: .08em; text-transform: uppercase; opacity: .7; }
+  .ok { color: #7fd99a; } .warn { color: #f0c36b; } .bad { color: #f08a7b; } .dim { opacity: .65; }
+  ul { margin: 0; padding-left: 18px; }
+  p { margin: 4px 0; }
+  button { margin: 6px 6px 0 0; padding: 6px 12px; border: 0; border-radius: 6px; background: rgba(255,255,255,.12);
+           color: inherit; font: inherit; cursor: pointer; }
+  button:hover { background: rgba(255,255,255,.2); }
+  label { display: flex; gap: 8px; align-items: flex-start; margin: 5px 0; cursor: pointer; }
+  label input { margin-top: 3px; }
+  select { font: inherit; color: inherit; background: rgba(255,255,255,.12); border: 0; border-radius: 6px; padding: 3px 6px; }
+  select option { color: #000; }
+  .small { font-size: 11px; }
+  [hidden] { display: none !important; }
+  #statusline { margin: 0 0 2px; }
+  #statusline.dim { opacity: .75; }
+  #relay-line { margin: 0 0 2px; }
+  #tabs { display: flex; gap: 3px; margin-top: 6px; border-bottom: 1px solid rgba(255,255,255,.18); }
+  #tabs button { margin: 0; padding: 5px 9px; border-radius: 6px 6px 0 0; background: transparent; opacity: .7; }
+  #tabs button:hover { background: rgba(255,255,255,.1); opacity: 1; }
+  #tabs button.on { background: rgba(255,255,255,.16); opacity: 1; font-weight: 600; }
+  #lt-said { margin: 4px 0 0; }
+  #lt-said:empty { display: none; }
+  #goto { margin: 8px 0; }
+  #goto h4 { margin-top: 4px; }
+  #goto button { margin: 0 4px 4px 0; padding: 4px 10px; }
+  #goto button:hover { background: rgba(255,255,255,.25); }
+  #projector { margin: 4px 0 8px; }
+  #projector button { margin: 4px 4px 0 0; padding: 4px 10px; }
+  #pj-lines p { margin: 2px 0; }
+  #lighting h5 { margin: 8px 0 2px; font-size: 10px; letter-spacing: .06em; text-transform: uppercase; opacity: .55; }
+  #lt-release { font-size: 11px; padding: 4px 10px; margin-top: 12px; }
+</style>
+</head>
+<body>
+<div id="top">
+<h1 id="title">🗺 DND NPC</h1>
+<div id="statusline" class="dim">Asking the extension…</div>
+<p id="relay-line" class="small dim" hidden>Everything else is in the DND NPC box.</p>
+<div id="tabs">
+<button data-tab="table" title="📍 Go to PC and 📺 Projector">🎲 Table</button>
+<button data-tab="light" title="🌫 Our fog, the scene's darkness, ▸ Maps and ▸ Lights">🔥 Light</button>
+<button data-tab="check" title="Is the voice system listening, and what on this map isn't linked yet">✅ Check</button>
+<button data-tab="setup" title="The bridge, this device, Screens heard and the 🪵 Live log">⚙ Setup</button>
+</div>
+<div id="lt-said" class="small" data-pane="light" hidden></div>
+</div>
+
+<div id="main">
+<section data-pane="table" hidden>
+<div id="goto" hidden><h4>📍 Go to PC</h4><div id="pcs"></div></div>
+<div id="projector"><h4>📺 Projector</h4>
+<div id="pj-lines" class="small"><p class="dim">Loading…</p></div>
+<button id="pj-view" title="The projector shows what this screen shows, zoom too, and holds it there whatever Sync View does">📺 Show my view</button>
+<button id="pj-off" title="Let go of the projector: Sync View moves it again" hidden>🔓 Unlock</button>
+</div>
+</section>
+
+<section data-pane="light" hidden>
+<div id="lighting">
+<div id="lt-fog"></div>
+<div id="lt-scene"><p class="dim small">Loading…</p></div>
+<div id="lt-maps"></div>
+<div id="lt-lights"></div>
+<button id="lt-release" title="Gives every token our lights manage back to plain Smoke &amp; Spectre (sight and darkvision back in Smoke's own panel)">Release lights to Smoke</button>
+</div>
+</section>
+
+<section data-pane="check" hidden>
+<h4>✅ The voice system and this map's links</h4>
+<div id="app" class="dim">Checking…</div>
+<button id="again">Check again</button>
+</section>
+
+<section data-pane="setup" hidden>
+<h4>The bridge</h4>
+<div id="status" class="dim">Asking the extension…</div>
+<div id="buttons"></div>
+
+<h4>This device</h4>
+<p class="small dim" id="copy-note"></p>
+<div id="device">
+<label><input type="checkbox" id="aim"> <span>🎯 Open the aim tool here</span></label>
+<label><input type="checkbox" id="table"> <span>📺 This screen is the table's screen</span></label>
+<label>✨ Effects here <select id="quality">
+  <option value="auto">auto (panel's choice)</option><option value="full">full</option>
+  <option value="lite">lite</option><option value="off">off</option></select></label>
+<button id="test">🧪 Test effect here</button> <span id="test-note" class="small"></span>
+</div>
+<details class="small" style="margin-top:8px" id="advanced"><summary class="dim">Advanced</summary>
+<label id="here-row"><input type="checkbox" id="here"> <span>🖥 Try to be the bridge from this copy<br>
+  <span class="dim">Leave it off. Chrome stops the Pages site reaching the DND panel on this PC (probe P2, Oct 2026),
+  so the Dell's bridge is the “DND NPC (this PC)” copy.</span></span></label>
+<label><input type="checkbox" id="scene"> <span>Also send through the scene (only when two copies of the
+  extension can't hear each other: the dual install's fallback)</span></label>
+</details>
+
+<h4>Screens heard</h4>
+<div id="lt-screens"></div>
+
+<div id="livelog"><h4>🪵 Live log</h4>
+<p class="small dim">🌫 Our fog and its doors, on every screen (newest first).</p>
+<button id="ll-copy" title="Copy every line shown here">Copy</button> <span id="ll-said" class="small"></span>
+<div id="ll-lines"><p class="dim small">Loading…</p></div>
+</div>
+</section>
+</div>
+<script type="module">
+// The extension's box. A player is sent to their own spells (player.html). The GM gets one status
+// line at the top (is this tab the bridge to the DND panel; red on every tab when something's wrong)
+// and four tabs; the box remembers the last one on this screen (🎲 Table the first time):
+//
+//   🎲 Table   "📍 Go to PC": one button per PC token, which pans the view there (goto.js). Then
+//              "📺 Projector" (views.js): whether the projector holds the view you locked (the table
+//              screens report it), and 📺 Show my view / 🔓 Unlock. Right-click → 🎲 DND → 📺 aims it too.
+//   🔥 Light   (lightpanel.js, needs no panel) "🌫 Our fog" on top (our own vision layer, fog/fog.js, off
+//              unless the DM turns it on; this device's background writes it), the scene's darkness,
+//              ▸ Maps (each main map → its buildings → their floors), ▸ Lights (PCs, NPCs & monsters,
+//              Objects) and "Release lights to Smoke" at the bottom. What a tap did shows under the tabs.
+//   ✅ Check   the map check: is the voice system listening, and what on this map isn't linked yet.
+//   ⚙ Setup   the bridge's details and buttons, this device's settings, Advanced, the screens heard,
+//              and "🪵 Live log": every screen's fog and door lines, as this copy's background collects
+//              them (keys.js FOG_LOG_LOCAL_CH), with a Copy button.
+//
+// On the Dell's GM tab two copies of the extension run side by side (the dual install): the one
+// the panel serves, "DND NPC (this PC)", which is the bridge, and the Pages one, "DND NPC", which
+// draws and aims. Both boxes hear every LOCAL message, so this box tags what it asks with its own
+// copy's host and only shows the answers from its own copy. While this copy only relays (relay_only),
+// its box shows the status line, ✅ Check and ⚙ Setup, and says everything else is in the other box.
+import OBR from "./obr-sdk.js?v=9ef4c868";
+import { CH, LS, QUALITIES, ask, isLocalOrigin, lsGet, lsSet, on, send } from "./bus.js?v=9ef4c868";
+import { goToPc, pcLabel, scenePcs } from "./goto.js?v=9ef4c868";
+import { noPcsText } from "./gather.js?v=9ef4c868";
+import { FOG_LOG_LOCAL_CH, PROJECTOR_KEY } from "./keys.js?v=9ef4c868";
+
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+const list = (items) => `<ul>${items.map((i) => `<li>${esc(i)}</li>`).join("")}</ul>`;
+const local = isLocalOrigin(location.origin);
+const HOST = local ? "local" : "pages";
+let heard = false;
+let lighting = null; // lightpanel.js once loaded
+let liveLog = null; // its 🪵 Live log
+let logWaiting = null; // the live log's last lines, when they came before lightpanel.js
+let views = null; // views.js once loaded (📺 Projector)
+let lastState = null;
+
+// ---- the tabs: the last one picked on this screen (this copy's localStorage; lsGet/lsSet never
+// throw, so the box opens on 🎲 Table without storage) ----
+const TAB_KEY = "dnd-npc/box-tab";
+const TABS = ["table", "light", "check", "setup"];
+const RELAY_TABS = ["check", "setup"]; // a copy that only relays: everything else is in the other box
+let relay = false;
+let tab = TABS.includes(lsGet(TAB_KEY)) ? lsGet(TAB_KEY) : "table";
+
+function showTab(want, save) {
+  const allowed = relay ? RELAY_TABS : TABS;
+  const t = allowed.includes(want) ? want : allowed[0];
+  for (const b of document.querySelectorAll("#tabs button")) {
+    b.hidden = !allowed.includes(b.dataset.tab);
+    b.className = b.dataset.tab === t ? "on" : "";
+  }
+  for (const p of document.querySelectorAll("[data-pane]")) p.hidden = p.dataset.pane !== t;
+  if (save) {
+    tab = t;
+    lsSet(TAB_KEY, t);
+  }
+}
+
+function setRelay(on) {
+  if (on === relay) return;
+  relay = on;
+  $("relay-line").hidden = !on;
+  showTab(tab, false); // the DM's own pick comes back when this copy draws again
+}
+
+const BRIDGE_TEXT = {
+  bridge: ["ok", "✅ This tab is the bridge to the DND panel"],
+  legacy: ["ok", "✅ This tab feeds the DND panel (older panel: the 1-second loop)"],
+  standby: ["warn", "⏸ Standby: another tab is the bridge"],
+  finding: ["dim", "🔎 Looking for the DND panel on this PC…"],
+  starting: ["dim", "⏳ Starting: is the “DND NPC” copy on this tab too?"],
+  "no-panel": ["bad", "❌ No DND panel found"],
+  off: ["dim", "○ Effects and aiming only (this copy never talks to the panel)"],
+  failed: ["bad", "❌ The bridge failed to load"],
+};
+
+// The one line at the top of every tab.
+function statusLine(cls, text) {
+  $("statusline").className = cls;
+  $("statusline").textContent = text;
+}
+
+function render(s) {
+  heard = true;
+  const b = s.bridge || {};
+  const sameTabBridge = !local && s.heard && s.heard.conn === s.conn && b.state !== "bridge";
+  const [cls, text] = sameTabBridge ? ["ok", "✅ The “DND NPC (this PC)” copy on this tab is the bridge"]
+    : BRIDGE_TEXT[b.state] || ["dim", b.state || "?"];
+  statusLine(cls, text);
+  setRelay(!!s.relay_only);
+  // ⚙ Setup: the details under the status line's words
+  let html = "";
+  if (b.base && (b.state === "bridge" || b.state === "legacy")) {
+    html += `<p class="small dim">${esc(b.base)} · panel ${esc(b.panel || "?")} · ${b.screens ?? 0} other screen(s)</p>`;
+  }
+  if (b.reason && b.state !== "bridge" && !sameTabBridge) html += `<p class="small">${esc(b.reason)}</p>`;
+  if (s.relay_only) {
+    html += `<p class="small warn">The “DND NPC” copy (from the Pages site) draws and aims on this tab; this copy only relays.</p>`;
+  }
+  if (s.heard && b.state !== "bridge") {
+    html += `<p class="small ${s.heard.age_s > 15 ? "warn" : "ok"}">Bridge heard ${s.heard.age_s} s ago (panel ${esc(s.heard.panel)}).</p>`;
+  } else if (!s.heard && b.state !== "bridge" && b.state !== "legacy" && b.state !== "starting") {
+    html += `<p class="small warn">No bridge heard yet: is the Dell's GM tab open, with the panel running?</p>`;
+  }
+  if (!s.relay_only) {
+    html += s.fx_ok ? `<p class="small ok">✨ Effects ready</p>`
+      : `<p class="small bad">✨ Effects unavailable${s.errors?.fx ? ` (${esc(s.errors.fx)})` : ""}</p>`;
+    if (s.started && !s.aim_ok) html += `<p class="small warn">🎯 Aim tool unavailable${s.errors?.aim ? ` (${esc(s.errors.aim)})` : ""}</p>`;
+  }
+  html += `<p class="small dim">build ${esc(s.build)} · ${esc(s.host)} · ${esc(s.kind)}</p>`;
+  $("status").className = "";
+  $("status").innerHTML = html;
+
+  const box = $("buttons");
+  box.innerHTML = "";
+  const button = (need, label) => {
+    const el = document.createElement("button");
+    el.textContent = label;
+    el.onclick = () => askBg(need);
+    box.append(el);
+  };
+  if (b.state === "standby") button("force", "Make this tab the bridge");
+  if (b.state === "no-panel" || (b.state === "off" && s.opted_in)) button("find-panel", "Look again");
+
+  // This copy's part on this tab, and the controls that only matter where it draws.
+  $("copy-note").textContent = s.relay_only
+    ? "Effects, aiming, 📍 Go to PC, 🧭 Bring PCs here and the right-click 🎲 DND come from the “DND NPC” copy: use its box for those. "
+      + "Right-click a map → 🏘 Map setup (Set up interiors, Place tokens, Check portals) comes from this copy (it needs this PC's interiors.json)."
+    : local ? "Served by the DND panel on this PC: on the Dell's GM tab this copy is the bridge (automatic)."
+    : "On the Dell, the “DND NPC (this PC)” copy (served by the panel) is the bridge; this copy draws and aims.";
+  $("device").style.display = s.relay_only ? "none" : "";
+  $("here").checked = !!s.opted_in && !local;
+  $("aim").checked = !!s.aim_here;
+  $("table").checked = !!s.table_screen;
+  $("scene").checked = !!s.scene_bus;
+  $("quality").value = QUALITIES.includes(s.quality) ? s.quality : "auto";
+  if (s.note !== undefined) $("test-note").textContent = s.note || "";
+}
+
+function askBg(need) {
+  send(OBR, CH.LOCAL_ASK, { need, host: HOST }, "LOCAL");
+}
+
+async function goTo(id) {
+  try {
+    await goToPc(id);
+    await OBR.action.close();
+  } catch (e) {
+    OBR.notification.show(`📍 Going to the PC failed: ${e?.error?.message || e?.message || e}`, "ERROR");
+  }
+}
+
+async function pcButtons() {
+  const box = document.getElementById("pcs");
+  const { pcs, party } = await scenePcs();
+  box.innerHTML = "";
+  for (const pc of pcs) {
+    const b = document.createElement("button");
+    b.textContent = pcLabel(pc);
+    b.onclick = () => goTo(pc.item.id);
+    box.append(b);
+  }
+  if (!pcs.length) box.innerHTML = `<span class="warn">${esc(noPcsText(party))}</span>`;
+  document.getElementById("goto").hidden = false;
+}
+
+// 📺 Projector: the scene's lock, what the table screens say about it, and this tab's own Sync View.
+async function projectorBox(s = lastState) {
+  lastState = s;
+  if (!views) return;
+  let lock = null, ownSync = false;
+  try {
+    if (await OBR.scene.isReady()) lock = views.lockOf((await OBR.scene.getMetadata())?.[PROJECTOR_KEY]);
+  } catch { /* no scene: not locked */ }
+  try { ownSync = !!(await OBR.player.getSyncView()); } catch { /* an older Owlbear */ }
+  const lines = views.projectorLines({ lock, screens: s?.projector || [], ownSync, now: Date.now() });
+  $("pj-lines").innerHTML = lines.map((l) => `<p class="${esc(l.cls)}">${esc(l.text)}</p>`).join("");
+  $("pj-off").hidden = !lock?.on;
+}
+
+async function aimProjector(how) {
+  if (!views) return;
+  try {
+    const r = await views.aimProjector(OBR, how);
+    OBR.notification.show(r.text, r.ok ? "SUCCESS" : "WARNING");
+  } catch (e) {
+    OBR.notification.show(`📺 Aiming the projector failed: ${e?.error?.message || e?.message || e}`, "ERROR");
+  }
+  projectorBox();
+}
+
+async function check() {
+  const app = $("app");
+  let c;
+  try {
+    c = await ask(OBR, "/api/map/check");
+  } catch (e) {
+    app.innerHTML = `<p class="bad">❌ Can't reach the voice system from here: ${esc(e.message)}.</p>`;
+    return;
+  }
+  if (!c.connected) {
+    app.innerHTML = `<p class="warn">The voice system is running but hasn't heard from the map yet. Wait a few seconds.</p>`;
+    return;
+  }
+  const some = (x) => (Array.isArray(x) ? x : []);
+  let html = `<p class="ok">✅ Connected to the voice system</p>`;
+  // Asked through the bridge from a device that can't receive it privately, names come as counts.
+  const counted = (n, what) => `<p class="dim">${Number(n) || 0} ${what} (names only on the Dell's tab).</p>`;
+  html += `<h4>Rooms marked on this map</h4>` + (some(c.rooms).length ? list(c.rooms)
+    : c.rooms_count ? counted(c.rooms_count, "room(s) marked") : `<p class="warn">None yet: right-click a drawing → 🎲 DND → 🗺 Mark as place.</p>`);
+  if (c.unmarked) html += `<p class="warn">${c.unmarked} drawing(s) not marked as a place (fine if they're just decoration).</p>`;
+  if (some(c.unknown_places).length) html += `<p class="bad">Marked with a place this adventure doesn't have: ${esc(c.unknown_places.join(", "))}. Mark them again.</p>`;
+  html += `<h4>Party tokens</h4>` + (some(c.pcs).length ? list(c.pcs) : `<p class="warn">None found.</p>`);
+  if (some(c.pcs_missing).length) html += `<p class="warn">No token for: ${esc(c.pcs_missing.join(", "))}. Name a token after them, or right-click → 🎲 DND → 🏷 This is…</p>`;
+  html += `<h4>NPC tokens</h4>` + (some(c.npcs).length ? list(c.npcs)
+    : c.npcs_count ? counted(c.npcs_count, "NPC token(s)") : `<p>None.</p>`);
+  if (some(c.creatures).length) html += `<h4>Other tokens (not linked; fine for monsters)</h4>` + list(c.creatures);
+  else if (c.creatures_count) html += `<p class="dim">${c.creatures_count} other token(s) not linked (fine for monsters).</p>`;
+  app.className = "";
+  app.innerHTML = html;
+}
+
+$("title").textContent = local ? "🗺 DND NPC (this PC)" : "🗺 DND NPC";
+for (const b of document.querySelectorAll("#tabs button")) b.onclick = () => showTab(b.dataset.tab, true);
+showTab(tab, false);
+if (local) $("here-row").style.display = "none"; // automatic: the panel serves this copy
+$("here").onchange = (e) => { lsSet(LS.BRIDGE_HERE, e.target.checked ? "1" : null); askBg(e.target.checked ? "find-panel" : "refresh"); };
+$("aim").onchange = (e) => { lsSet(LS.AIM_HERE, e.target.checked ? null : "0"); askBg("refresh"); };
+$("table").onchange = (e) => { lsSet(LS.TABLE_SCREEN, e.target.checked ? "1" : null); askBg("refresh"); };
+$("scene").onchange = (e) => { lsSet(LS.SCENE_BUS, e.target.checked ? "1" : null); askBg("refresh"); };
+$("quality").onchange =(e) => { lsSet(LS.QUALITY, e.target.value === "auto" ? null : e.target.value); askBg("refresh"); };
+$("test").onclick = () => { $("test-note").textContent = "…"; askBg("test"); };
+$("again").onclick = check;
+$("pj-view").onclick = () => aimProjector({ view: true });
+$("pj-off").onclick = () => aimProjector({ off: true });
+
+OBR.onReady(async () => {
+  if ((await OBR.player.getRole()) !== "GM") {
+    location.replace("./player.html" + location.search); // "Your spells & attacks"
+    return;
+  }
+  on(OBR, CH.LOCAL_STATE, (s) => { // the other copy's answers aren't ours
+    if (s?.host !== HOST) return;
+    render(s);
+    try { lighting?.state(s); } catch (e) { console.warn("dnd-npc: 🔥 Light", e); }
+    projectorBox(s).catch((e) => console.warn("dnd-npc: 📺 Projector", e));
+  });
+  // 🪵 Live log: this copy's background sends its lines (on open, and when there are new ones).
+  on(OBR, FOG_LOG_LOCAL_CH, (m) => {
+    if (m?.host !== HOST) return;
+    if (liveLog) liveLog.show(m.lines, m.error);
+    else logWaiting = m;
+  });
+  // 📺 Projector: loaded on its own too.
+  import("./views.js?v=9ef4c868").then((m) => {
+    views = m;
+    projectorBox();
+  }).catch((e) => {
+    $("pj-lines").innerHTML = `<p class="bad">📺 Didn't load: ${esc(e?.message || e)}. Reload the room.</p>`;
+    $("pj-view").hidden = true;
+  });
+  // 🔥 Light: loaded on its own, so the rest of this box works whatever happens to it.
+  import("./lightpanel.js?v=9ef4c868").then((m) => {
+    const css = document.createElement("style");
+    css.textContent = m.LIGHTING_CSS;
+    document.head.append(css);
+    lighting = m.startLighting(OBR, { scene: $("lt-scene"), maps: $("lt-maps"), lights: $("lt-lights"), screens: $("lt-screens"),
+                                      said: $("lt-said"), release: $("lt-release"), fog: $("lt-fog") },
+                               { ask: (need, extra) => send(OBR, CH.LOCAL_ASK, { need, host: HOST, ...extra }, "LOCAL") });
+    liveLog = m.startLiveLog({ lines: $("ll-lines"), copy: $("ll-copy"), said: $("ll-said") });
+    if (logWaiting) liveLog.show(logWaiting.lines, logWaiting.error);
+    askBg("log");
+  }).catch((e) => {
+    $("lt-scene").innerHTML = `<p class="bad small">🔥 Light didn't load: ${esc(e?.message || e)}. Reload the room.</p>`;
+    $("ll-lines").innerHTML = `<p class="bad small">🪵 The live log didn't load: ${esc(e?.message || e)}.</p>`;
+  });
+  askBg("state");
+  askBg("log");
+  setInterval(() => askBg("state"), 2000);
+  pcButtons().catch((e) => console.warn("dnd-npc go-to list failed", e));
+  setTimeout(() => {
+    if (heard) return;
+    statusLine("bad", "The extension's background didn't answer. Reload the room.");
+    $("status").innerHTML = `<p class="bad">The extension's background didn't answer. Reload the room.</p>`;
+  }, 4000);
+  check();
+});
+</script>
+</body>
+</html>

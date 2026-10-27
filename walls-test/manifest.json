@@ -1,0 +1,16 @@
+{
+  "name": "DND NPC (walls test)",
+  "version": "2.2002.0",
+  "manifest_version": 1,
+  "author": "dnd-npc",
+  "description": "Spell effects, aiming and map sync for the DND NPC table.",
+  "icon": "https://versaielle.github.io/dnd-owlbear/walls-test/icon.svg",
+  "background_url": "https://versaielle.github.io/dnd-owlbear/walls-test/background.html?v=9ef4c868",
+  "action": {
+    "title": "DND NPC (walls test)",
+    "icon": "https://versaielle.github.io/dnd-owlbear/walls-test/icon.svg",
+    "popover": "https://versaielle.github.io/dnd-owlbear/walls-test/popover.html?v=9ef4c868",
+    "width": 380,
+    "height": 560
+  }
+}
